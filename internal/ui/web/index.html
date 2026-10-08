@@ -10,9 +10,98 @@
 <body>
   <header>
     <h1>ssh-cli</h1>
-    <p>本地配置与审计。不启动这个页面时，命令行和审计日志照常工作。密码只通过表单提交，不会出现在审计记录里。</p>
+    <p>本地配置与审计。不启动这个页面时，命令行和审计日志照常工作。密码只通过表单提交，不会出现在审计记录里。环境、分组、命名策略和已知主机密钥与命令行写同一份配置。</p>
   </header>
   <main>
+    <section>
+      <h2>环境</h2>
+      <p id="env-error" class="error" hidden></p>
+      <table>
+        <thead><tr><th>名称</th><th>标签</th><th>颜色</th><th>上限</th><th>默认策略</th><th>禁止外流</th><th></th></tr></thead>
+        <tbody id="envs"></tbody>
+      </table>
+      <h3 id="env-title">添加环境</h3>
+      <form id="env-form">
+        <label>名称 <input name="name" required autocomplete="off"></label>
+        <label>标签 <input name="label" autocomplete="off"></label>
+        <label>颜色 <input name="color" placeholder="red" autocomplete="off"></label>
+        <label>上限
+          <select name="maxMode" required>
+            <option value="readonly">readonly</option>
+            <option value="standard">standard</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+        <label>默认策略 <input name="defaultPolicy" placeholder="readonly" autocomplete="off"></label>
+        <label class="check"><input name="noDataOutflow" type="checkbox"> 禁止数据外流</label>
+        <div class="row">
+          <button type="submit">保存</button>
+          <button type="button" id="env-clear" class="secondary">清空</button>
+        </div>
+      </form>
+    </section>
+    <section>
+      <h2>分组</h2>
+      <p id="group-error" class="error" hidden></p>
+      <table>
+        <thead><tr><th>名称</th><th>环境</th><th>策略</th><th>主机</th><th>受保护路径</th><th></th></tr></thead>
+        <tbody id="groups"></tbody>
+      </table>
+      <h3 id="group-title">添加分组</h3>
+      <form id="group-form">
+        <label>名称 <input name="name" required autocomplete="off"></label>
+        <label>环境 <select name="env" id="group-env" required></select></label>
+        <label>策略 <input name="policy" placeholder="留空或 readonly" autocomplete="off"></label>
+        <label>受保护路径 <input name="protectedPaths" placeholder="/root/app" autocomplete="off"></label>
+        <div class="row">
+          <button type="submit">保存</button>
+          <button type="button" id="group-clear" class="secondary">清空</button>
+        </div>
+      </form>
+    </section>
+    <section>
+      <h2>命名策略</h2>
+      <p class="muted">危险命令的 allow / deny / confirm。内置 readonly、standard、admin 可以用编辑写成覆盖。策略 HMAC 不在这一版。</p>
+      <p id="policy-error" class="error" hidden></p>
+      <table>
+        <thead><tr><th>名称</th><th>来源</th><th>模式</th><th>拒绝</th><th>确认</th><th></th></tr></thead>
+        <tbody id="policies"></tbody>
+      </table>
+      <h3 id="policy-title">添加策略</h3>
+      <form id="policy-form">
+        <label>名称 <input name="name" required autocomplete="off"></label>
+        <label>模式
+          <select name="mode">
+            <option value="">不设置</option>
+            <option value="readonly">readonly</option>
+            <option value="standard">standard</option>
+            <option value="admin">admin</option>
+          </select>
+        </label>
+        <label class="span">allow（每行一条，留空表示不限制） <textarea name="allow"></textarea></label>
+        <label class="check"><input name="allowEmpty" type="checkbox"> 空 allow（这一层不允许任何命令）</label>
+        <label class="span">deny <textarea name="deny"></textarea></label>
+        <label class="span">confirm <textarea name="confirm"></textarea></label>
+        <label>受保护路径 <input name="protectedPaths" autocomplete="off"></label>
+        <label>upload
+          <select name="upload"><option value="">不设置</option><option value="true">true</option><option value="false">false</option></select>
+        </label>
+        <label>download
+          <select name="download"><option value="">不设置</option><option value="true">true</option><option value="false">false</option></select>
+        </label>
+        <label>forward
+          <select name="forward"><option value="">不设置</option><option value="true">true</option><option value="false">false</option></select>
+        </label>
+        <label>relay
+          <select name="relay"><option value="">不设置</option><option>allow</option><option>deny</option><option>source-only</option></select>
+        </label>
+        <label>service 动作 <input name="service" placeholder="status,restart" autocomplete="off"></label>
+        <div class="row">
+          <button type="submit">保存</button>
+          <button type="button" id="policy-clear" class="secondary">清空</button>
+        </div>
+      </form>
+    </section>
     <section>
       <h2>主机</h2>
       <div id="catalog-error" class="error" hidden></div>
@@ -43,6 +132,15 @@
         </div>
         <p id="form-error" class="error" hidden></p>
       </form>
+    </section>
+    <section>
+      <h2>已知主机密钥</h2>
+      <p class="muted">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙；已经记下的钥匙如果变了，仍然会拒绝。</p>
+      <p id="known-error" class="error" hidden></p>
+      <table>
+        <thead><tr><th>标记</th><th>类型</th><th>指纹</th><th>注释</th><th></th></tr></thead>
+        <tbody id="known"></tbody>
+      </table>
     </section>
     <section>
       <h2>审计</h2>

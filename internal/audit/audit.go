@@ -28,6 +28,9 @@ const (
 	OpUpload      = "upload"
 	OpDownload    = "download"
 	OpPolicyCheck = "policy_check"
+	OpStatus      = "status"
+	OpService     = "service"
+	OpKeys        = "keys"
 
 	StatusOK      = "ok"
 	StatusDenied  = "denied"

@@ -527,6 +527,61 @@ func renderArgs(args []Arg) string {
 
 func quote(s string) string { return `"` + s + `"` }
 
+// Merge combines command and capability decisions. Any denial wins, and a
+// denial clears confirmation. Confirmation is kept when every part allows it.
+func Merge(parts ...Decision) Decision {
+	out := Decision{Allowed: true}
+	for _, p := range parts {
+		if p.Mode != "" {
+			out.Mode = p.Mode
+		}
+		out.Commands = append(out.Commands, p.Commands...)
+		out.Findings = append(out.Findings, p.Findings...)
+		if !p.Allowed {
+			out.Allowed = false
+		}
+		if p.NeedsConfirm {
+			out.NeedsConfirm = true
+		}
+	}
+	if !out.Allowed {
+		out.NeedsConfirm = false
+	}
+	return out
+}
+
+// DecideService checks the merged service-action capability.
+// An unset capability allows every action except where readonly defaults apply,
+// which Resolve already folds into Effective.Service.
+func DecideService(eff Effective, action string) Decision {
+	dec := Decision{Mode: string(eff.Mode), Allowed: true}
+	action = strings.TrimSpace(action)
+	if eff.ServiceAll {
+		return dec
+	}
+	for _, item := range eff.Service {
+		if item == action {
+			return dec
+		}
+	}
+	dec.Allowed = false
+	dec.Findings = append(dec.Findings, Finding{
+		Layer: "capability", Kind: "deny", Detail: "service action " + action + " is not permitted",
+	})
+	return dec
+}
+
+// Builtin returns a fresh copy of a built-in named policy.
+func Builtin(name string) (*config.Policy, bool) {
+	p, ok := builtinPolicies()[name]
+	return p, ok && p != nil
+}
+
+// BuiltinNames lists the built-in policy names in stable order.
+func BuiltinNames() []string {
+	return []string{"admin", "readonly", "standard"}
+}
+
 // DecideCapability checks upload/download (and a protected remote path).
 func DecideCapability(eff Effective, capability, remotePath string) Decision {
 	dec := Decision{Mode: string(eff.Mode), Allowed: true}

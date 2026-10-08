@@ -6,14 +6,14 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/catalog"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
-	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
 
 func (a *App) groupCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "group", Short: "Manage groups"}
-	cmd.AddCommand(a.groupAdd(), a.groupList(), a.groupRemove(), a.groupSetEnv())
+	cmd.AddCommand(a.groupAdd(), a.groupList(), a.groupEdit(), a.groupRemove(), a.groupSetEnv())
 	return cmd
 }
 
@@ -26,39 +26,51 @@ func (a *App) groupAdd() *cobra.Command {
 		Short: "Add a group with exactly one env label",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if !config.ValidName(name) {
-				return exitcode.New(exitcode.Usage, "invalid group name %q", name)
-			}
 			if envName == "" {
 				return exitcode.New(exitcode.Usage, "--env is required")
 			}
-			return config.Update(a.Dir, func(cfg *config.Config) error {
-				if _, ok := cfg.Groups[name]; ok {
-					return exitcode.New(exitcode.Usage, "group %q already exists", name)
-				}
-				if _, ok := cfg.Envs[envName]; !ok {
-					return exitcode.New(exitcode.Usage, "unknown env %q", envName)
-				}
-				if policy != "" && !guard.KnownPolicy(cfg, policy) {
-					return exitcode.New(exitcode.Usage, "unknown policy %q", policy)
-				}
-				if cfg.Groups == nil {
-					cfg.Groups = map[string]*config.Group{}
-				}
-				cfg.Groups[name] = &config.Group{
-					Env:            envName,
-					Policy:         policy,
-					ProtectedPaths: splitList(paths),
-					Hosts:          map[string]*config.Host{},
-				}
-				return nil
-			})
+			return catalogErr(catalog.AddGroup(a.Dir, catalog.GroupDraft{
+				Name:           args[0],
+				Env:            envName,
+				Policy:         policy,
+				ProtectedPaths: splitList(paths),
+			}))
 		},
 	}
 	cmd.Flags().StringVar(&envName, "env", "", "env label (required, exactly one)")
 	cmd.Flags().StringVar(&policy, "policy", "", "named policy")
 	cmd.Flags().StringArrayVar(&paths, "protected-path", nil, "protected remote path (repeatable)")
+	return cmd
+}
+
+func (a *App) groupEdit() *cobra.Command {
+	var policy string
+	var paths []string
+	var clearPolicy bool
+	var clearPaths bool
+	cmd := &cobra.Command{
+		Use:   "edit <name>",
+		Short: "Edit a group's named policy or protected paths",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			draft := catalog.GroupDraft{Name: args[0], ClearPolicy: clearPolicy}
+			if cmd.Flags().Changed("policy") {
+				draft.HasPolicy = true
+				draft.Policy = policy
+			}
+			if clearPaths {
+				draft.HasPaths = true
+			} else if cmd.Flags().Changed("protected-path") {
+				draft.HasPaths = true
+				draft.ProtectedPaths = splitList(paths)
+			}
+			return catalogErr(catalog.EditGroup(a.Dir, draft))
+		},
+	}
+	cmd.Flags().StringVar(&policy, "policy", "", "named policy (empty clears it)")
+	cmd.Flags().StringArrayVar(&paths, "protected-path", nil, "protected remote path (repeatable; replaces the list)")
+	cmd.Flags().BoolVar(&clearPolicy, "clear-policy", false, "remove the named policy")
+	cmd.Flags().BoolVar(&clearPaths, "clear-protected-paths", false, "remove protected paths")
 	return cmd
 }
 
@@ -110,18 +122,7 @@ func (a *App) groupRemove() *cobra.Command {
 		Short: "Remove an empty group",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			return config.Update(a.Dir, func(cfg *config.Config) error {
-				g, ok := cfg.Groups[name]
-				if !ok {
-					return exitcode.New(exitcode.Usage, "group %q not found", name)
-				}
-				if len(g.Hosts) > 0 {
-					return exitcode.New(exitcode.Usage, "group %q still has %d host(s)", name, len(g.Hosts))
-				}
-				delete(cfg.Groups, name)
-				return nil
-			})
+			return catalogErr(catalog.RemoveGroup(a.Dir, args[0]))
 		},
 	}
 }
@@ -132,71 +133,93 @@ func (a *App) groupSetEnv() *cobra.Command {
 		Short: "Change a group's env label",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name, envName := args[0], args[1]
-			return config.Update(a.Dir, func(cfg *config.Config) error {
-				g, ok := cfg.Groups[name]
-				if !ok {
-					return exitcode.New(exitcode.Usage, "group %q not found", name)
-				}
-				if _, ok := cfg.Envs[envName]; !ok {
-					return exitcode.New(exitcode.Usage, "unknown env %q", envName)
-				}
-				if g.Env == "prod" && envName != "prod" {
-					fmt.Fprintf(a.Err, "warning: group %s env changed from prod to %s\n", name, envName)
-				}
-				g.Env = envName
-				return nil
-			})
+			prev, err := catalog.SetGroupEnv(a.Dir, args[0], args[1])
+			if err != nil {
+				return catalogErr(err)
+			}
+			if prev == "prod" && args[1] != "prod" {
+				fmt.Fprintf(a.Err, "warning: group %s env changed from prod to %s\n", args[0], args[1])
+			}
+			return nil
 		},
 	}
 }
 
 func (a *App) envCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "env", Short: "Manage env label definitions"}
-	cmd.AddCommand(a.envAdd(), a.envList(), a.envRemove())
+	cmd.AddCommand(a.envAdd(), a.envList(), a.envEdit(), a.envRemove())
 	return cmd
 }
 
 func (a *App) envAdd() *cobra.Command {
 	var label, color, maxMode, defPol string
+	var noOut bool
 	cmd := &cobra.Command{
 		Use:   "add <name>",
 		Short: "Define an env label",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			if !config.ValidName(name) {
-				return exitcode.New(exitcode.Usage, "invalid env name %q", name)
-			}
-			mode := config.Mode(maxMode)
-			if !mode.Valid() {
-				return exitcode.New(exitcode.Usage, "--max-mode must be readonly, standard, or admin")
-			}
-			return config.Update(a.Dir, func(cfg *config.Config) error {
-				if _, ok := cfg.Envs[name]; ok {
-					return exitcode.New(exitcode.Usage, "env %q already exists", name)
-				}
-				if defPol != "" && !guard.KnownPolicy(cfg, defPol) {
-					return exitcode.New(exitcode.Usage, "unknown policy %q", defPol)
-				}
-				if cfg.Envs == nil {
-					cfg.Envs = map[string]*config.Env{}
-				}
-				if label == "" {
-					label = name
-				}
-				cfg.Envs[name] = &config.Env{
-					Label: label, Color: color, MaxMode: mode, DefaultPolicy: defPol,
-				}
-				return nil
-			})
+			return catalogErr(catalog.AddEnv(a.Dir, catalog.EnvDraft{
+				Name:          args[0],
+				Label:         label,
+				Color:         color,
+				MaxMode:       maxMode,
+				DefaultPolicy: defPol,
+				NoDataOutflow: noOut,
+			}))
 		},
 	}
 	cmd.Flags().StringVar(&label, "label", "", "display label")
 	cmd.Flags().StringVar(&color, "color", "", "color name (red, yellow, green)")
 	cmd.Flags().StringVar(&maxMode, "max-mode", "", "mode ceiling: readonly, standard, or admin")
 	cmd.Flags().StringVar(&defPol, "default-policy", "", "named policy applied to every group in this env")
+	cmd.Flags().BoolVar(&noOut, "no-data-outflow", false, "mark the env as forbidding data outflow")
 	_ = cmd.MarkFlagRequired("max-mode")
+	return cmd
+}
+
+func (a *App) envEdit() *cobra.Command {
+	var label, color, maxMode, defPol string
+	var noOut, allowOut, clearPol bool
+	cmd := &cobra.Command{
+		Use:   "edit <name>",
+		Short: "Edit an env label",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if noOut && allowOut {
+				return exitcode.New(exitcode.Usage, "use only one of --no-data-outflow and --allow-data-outflow")
+			}
+			draft := catalog.EnvDraft{Name: args[0], ClearDefaultPolicy: clearPol}
+			if cmd.Flags().Changed("label") {
+				draft.HasLabel = true
+				draft.Label = label
+			}
+			if cmd.Flags().Changed("color") {
+				draft.HasColor = true
+				draft.Color = color
+			}
+			if cmd.Flags().Changed("max-mode") {
+				draft.HasMaxMode = true
+				draft.MaxMode = maxMode
+			}
+			if cmd.Flags().Changed("default-policy") {
+				draft.HasDefaultPolicy = true
+				draft.DefaultPolicy = defPol
+			}
+			if noOut || allowOut {
+				draft.HasNoDataOutflow = true
+				draft.NoDataOutflow = noOut
+			}
+			return catalogErr(catalog.EditEnv(a.Dir, draft))
+		},
+	}
+	cmd.Flags().StringVar(&label, "label", "", "display label")
+	cmd.Flags().StringVar(&color, "color", "", "color name")
+	cmd.Flags().StringVar(&maxMode, "max-mode", "", "mode ceiling: readonly, standard, or admin")
+	cmd.Flags().StringVar(&defPol, "default-policy", "", "named default policy (empty clears it)")
+	cmd.Flags().BoolVar(&clearPol, "clear-default-policy", false, "remove the default policy")
+	cmd.Flags().BoolVar(&noOut, "no-data-outflow", false, "forbid data outflow")
+	cmd.Flags().BoolVar(&allowOut, "allow-data-outflow", false, "allow data outflow")
 	return cmd
 }
 
@@ -220,11 +243,15 @@ func (a *App) envList() *cobra.Command {
 				Color         string `json:"color,omitempty"`
 				MaxMode       string `json:"maxMode"`
 				DefaultPolicy string `json:"defaultPolicy,omitempty"`
+				NoDataOutflow bool   `json:"noDataOutflow,omitempty"`
 			}
 			views := make([]view, 0, len(names))
 			for _, name := range names {
 				e := cfg.Envs[name]
-				views = append(views, view{Name: name, Label: e.Label, Color: e.Color, MaxMode: string(e.MaxMode), DefaultPolicy: e.DefaultPolicy})
+				views = append(views, view{
+					Name: name, Label: e.Label, Color: e.Color, MaxMode: string(e.MaxMode),
+					DefaultPolicy: e.DefaultPolicy, NoDataOutflow: e.NoDataOutflow,
+				})
 			}
 			if a.JSON {
 				return a.emit(map[string]any{"envs": views})
@@ -245,19 +272,7 @@ func (a *App) envRemove() *cobra.Command {
 		Short: "Remove an env label that no group uses",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			name := args[0]
-			return config.Update(a.Dir, func(cfg *config.Config) error {
-				if _, ok := cfg.Envs[name]; !ok {
-					return exitcode.New(exitcode.Usage, "env %q not found", name)
-				}
-				for gname, g := range cfg.Groups {
-					if g != nil && g.Env == name {
-						return exitcode.New(exitcode.Usage, "env %q is still used by group %q", name, gname)
-					}
-				}
-				delete(cfg.Envs, name)
-				return nil
-			})
+			return catalogErr(catalog.RemoveEnv(a.Dir, args[0]))
 		},
 	}
 }

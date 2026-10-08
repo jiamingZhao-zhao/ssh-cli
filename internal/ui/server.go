@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/catalog"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 )
 
@@ -30,9 +31,21 @@ func Handler(dir string, allowRemote bool) http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/catalog", s.catalog)
 	mux.HandleFunc("GET /api/audit", s.auditList)
+	mux.HandleFunc("GET /api/known-hosts", s.knownHosts)
 	mux.HandleFunc("POST /api/hosts", s.addHost)
 	mux.HandleFunc("POST /api/hosts/update", s.updateHost)
 	mux.HandleFunc("POST /api/hosts/remove", s.removeHost)
+	mux.HandleFunc("POST /api/envs", s.addEnv)
+	mux.HandleFunc("POST /api/envs/update", s.updateEnv)
+	mux.HandleFunc("POST /api/envs/remove", s.removeEnv)
+	mux.HandleFunc("POST /api/groups", s.addGroup)
+	mux.HandleFunc("POST /api/groups/update", s.updateGroup)
+	mux.HandleFunc("POST /api/groups/remove", s.removeGroup)
+	mux.HandleFunc("POST /api/groups/set-env", s.setGroupEnv)
+	mux.HandleFunc("POST /api/policies", s.addPolicy)
+	mux.HandleFunc("POST /api/policies/update", s.updatePolicy)
+	mux.HandleFunc("POST /api/policies/remove", s.removePolicy)
+	mux.HandleFunc("POST /api/known-hosts/remove", s.removeKnownHost)
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		panic(err)
@@ -109,22 +122,27 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		Color         string `json:"color,omitempty"`
 		MaxMode       string `json:"maxMode"`
 		DefaultPolicy string `json:"defaultPolicy,omitempty"`
+		NoDataOutflow bool   `json:"noDataOutflow,omitempty"`
 	}
 	type groupView struct {
-		Name  string `json:"name"`
-		Env   string `json:"env"`
-		Hosts int    `json:"hosts"`
+		Name   string   `json:"name"`
+		Env    string   `json:"env"`
+		Policy string   `json:"policy,omitempty"`
+		Hosts  int      `json:"hosts"`
+		Paths  []string `json:"protectedPaths,omitempty"`
 	}
 	type hostView struct {
-		Alias   string   `json:"alias"`
-		Group   string   `json:"group"`
-		Env     string   `json:"env"`
-		Host    string   `json:"host"`
-		Port    int      `json:"port"`
-		User    string   `json:"user"`
-		Auth    string   `json:"auth"`
-		Tags    []string `json:"tags,omitempty"`
-		Default bool     `json:"default,omitempty"`
+		Alias    string   `json:"alias"`
+		Group    string   `json:"group"`
+		Env      string   `json:"env"`
+		Host     string   `json:"host"`
+		Port     int      `json:"port"`
+		User     string   `json:"user"`
+		Auth     string   `json:"auth"`
+		Identity string   `json:"identity,omitempty"`
+		Policy   string   `json:"policy,omitempty"`
+		Tags     []string `json:"tags,omitempty"`
+		Default  bool     `json:"default,omitempty"`
 	}
 	var envs []envView
 	for name, e := range cfg.Envs {
@@ -134,6 +152,7 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		envs = append(envs, envView{
 			Name: name, Label: e.Label, Color: e.Color,
 			MaxMode: string(e.MaxMode), DefaultPolicy: e.DefaultPolicy,
+			NoDataOutflow: e.NoDataOutflow,
 		})
 	}
 	var groups []groupView
@@ -141,7 +160,9 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		if g == nil {
 			continue
 		}
-		groups = append(groups, groupView{Name: name, Env: g.Env, Hosts: len(g.Hosts)})
+		groups = append(groups, groupView{
+			Name: name, Env: g.Env, Policy: g.Policy, Hosts: len(g.Hosts), Paths: g.ProtectedPaths,
+		})
 	}
 	var hosts []hostView
 	for alias, h := range cfg.Index() {
@@ -151,7 +172,8 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		hosts = append(hosts, hostView{
 			Alias: alias, Group: h.Group, Env: h.EnvName,
 			Host: h.Host.Host, Port: h.Host.PortOrDefault(), User: h.Host.User,
-			Auth: authOf(h.Host), Tags: h.Host.Tags, Default: cfg.Default == alias,
+			Auth: authOf(h.Host), Identity: h.Host.Identity, Policy: h.Host.Policy,
+			Tags: h.Host.Tags, Default: cfg.Default == alias,
 		})
 	}
 	if envs == nil {
@@ -163,7 +185,9 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 	if hosts == nil {
 		hosts = []hostView{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"envs": envs, "groups": groups, "hosts": hosts})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"envs": envs, "groups": groups, "hosts": hosts, "policies": catalog.ListPolicies(cfg),
+	})
 }
 
 func (s *service) auditList(w http.ResponseWriter, r *http.Request) {
@@ -189,7 +213,7 @@ func (s *service) addHost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := AddHost(s.dir, draft); err != nil {
+	if err := catalog.AddHost(s.dir, draft, catalog.Options{}); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -202,7 +226,7 @@ func (s *service) updateHost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := UpdateHost(s.dir, draft); err != nil {
+	if err := catalog.UpdateHost(s.dir, draft, catalog.Options{}); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -215,7 +239,7 @@ func (s *service) removeHost(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if err := RemoveHost(s.dir, draft.Alias); err != nil {
+	if err := catalog.RemoveHost(s.dir, draft.Alias, catalog.Options{}); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -250,25 +274,25 @@ func filterFromQuery(r *http.Request) (audit.Filter, error) {
 	return f, nil
 }
 
-func draftFromRequest(r *http.Request) (HostDraft, error) {
+func draftFromRequest(r *http.Request) (catalog.HostDraft, error) {
 	if r.URL.Query().Has("password") || strings.Contains(r.URL.RawQuery, "password=") {
-		return HostDraft{}, fmt.Errorf("password must be sent in the request body")
+		return catalog.HostDraft{}, fmt.Errorf("password must be sent in the request body")
 	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
-		return HostDraft{}, err
+		return catalog.HostDraft{}, err
 	}
 	ct := r.Header.Get("Content-Type")
 	if strings.Contains(ct, "json") || (len(body) > 0 && body[0] == '{') {
 		var raw map[string]json.RawMessage
 		if err := json.Unmarshal(body, &raw); err != nil {
-			return HostDraft{}, fmt.Errorf("invalid JSON body")
+			return catalog.HostDraft{}, fmt.Errorf("invalid JSON body")
 		}
 		return draftFromMap(raw)
 	}
 	r.Body = io.NopCloser(strings.NewReader(string(body)))
 	if err := r.ParseForm(); err != nil {
-		return HostDraft{}, err
+		return catalog.HostDraft{}, err
 	}
 	raw := map[string]json.RawMessage{}
 	for k, vals := range r.PostForm {
@@ -277,15 +301,15 @@ func draftFromRequest(r *http.Request) (HostDraft, error) {
 		}
 		b, err := json.Marshal(vals[0])
 		if err != nil {
-			return HostDraft{}, err
+			return catalog.HostDraft{}, err
 		}
 		raw[k] = b
 	}
 	return draftFromMap(raw)
 }
 
-func draftFromMap(raw map[string]json.RawMessage) (HostDraft, error) {
-	var d HostDraft
+func draftFromMap(raw map[string]json.RawMessage) (catalog.HostDraft, error) {
+	var d catalog.HostDraft
 	if v, ok := raw["alias"]; ok {
 		_ = json.Unmarshal(v, &d.Alias)
 	}
@@ -303,11 +327,11 @@ func draftFromMap(raw map[string]json.RawMessage) (HostDraft, error) {
 		if err := json.Unmarshal(v, &n); err != nil {
 			var s string
 			if err2 := json.Unmarshal(v, &s); err2 != nil {
-				return HostDraft{}, fmt.Errorf("invalid port")
+				return catalog.HostDraft{}, fmt.Errorf("invalid port")
 			}
 			parsed, err3 := strconv.Atoi(strings.TrimSpace(s))
 			if err3 != nil {
-				return HostDraft{}, fmt.Errorf("invalid port")
+				return catalog.HostDraft{}, fmt.Errorf("invalid port")
 			}
 			n = parsed
 		}
@@ -320,7 +344,7 @@ func draftFromMap(raw map[string]json.RawMessage) (HostDraft, error) {
 	if v, ok := raw["password"]; ok {
 		d.HasPassword = true
 		if err := json.Unmarshal(v, &d.Password); err != nil {
-			return HostDraft{}, fmt.Errorf("invalid password")
+			return catalog.HostDraft{}, fmt.Errorf("invalid password")
 		}
 	}
 	if v, ok := raw["identity"]; ok {
@@ -339,7 +363,7 @@ func draftFromMap(raw map[string]json.RawMessage) (HostDraft, error) {
 		} else {
 			var s string
 			if err := json.Unmarshal(v, &s); err != nil {
-				return HostDraft{}, fmt.Errorf("invalid tags")
+				return catalog.HostDraft{}, fmt.Errorf("invalid tags")
 			}
 			d.Tags = splitCSV(s)
 		}

@@ -36,6 +36,21 @@ func prodReadonlyHost(groupPolicy string, inlineAllow *[]string) (*config.Config
 	return cfg, config.ResolvedHost{Alias: "main", Group: "g", EnvName: "prod", Env: env, GroupDef: g, Host: h}
 }
 
+func TestDecideServiceReadonly(t *testing.T) {
+	cfg, host := prodReadonlyHost("", nil)
+	eff := resolve(t, cfg, host, false)
+	if d := DecideService(eff, "status"); !d.Allowed {
+		t.Fatalf("status: %+v", d)
+	}
+	if d := DecideService(eff, "restart"); d.Allowed {
+		t.Fatalf("restart should be denied: %+v", d)
+	}
+	merged := Merge(DecideService(eff, "restart"), Decide(eff, "systemctl restart nginx"))
+	if merged.Allowed || merged.NeedsConfirm {
+		t.Fatalf("merged restart: %+v", merged)
+	}
+}
+
 func TestProdReadonlyCeiling(t *testing.T) {
 	cfg, host := prodReadonlyHost("admin", nil)
 	eff := resolve(t, cfg, host, false)

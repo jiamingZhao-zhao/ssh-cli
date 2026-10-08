@@ -14,8 +14,12 @@ func (a *App) policyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "policy",
 		Short: "Show the effective policy for a host",
+		Long: `Show the merged policy for a host, explain one command, and edit named policies.
+
+policy add and policy edit write hosts.yaml through the same store as the localhost UI.
+Signing those edits (policy HMAC) is not part of this version.`,
 	}
-	cmd.AddCommand(a.policyShow(), a.policyExplain())
+	cmd.AddCommand(a.policyShow(), a.policyExplain(), a.policyList(), a.policyAdd(), a.policyEdit(), a.policyRemove())
 	return cmd
 }
 

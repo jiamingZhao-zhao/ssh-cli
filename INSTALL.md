@@ -9,6 +9,8 @@
 
 `os` 是 `linux`、`darwin`、`windows`；`arch` 是 `amd64` 或 `arm64`。可选的 `checksums.txt` 是 sha256sum 清单。仓库目前还没有 GitHub Release 时，下面的下载命令会失败，可以先用 `go build`。
 
+`install.sh`、`install.ps1`、`install.cmd` 和 `ssh-cli update` 用同一种方式找最新版本：请求 `https://github.com/<仓库>/releases/latest`，从重定向的 `Location`（`/releases/tag/<tag>`）读出标签，再下载 `https://github.com/<仓库>/releases/download/<tag>/...`。这些路径都不访问 `api.github.com`。`ssh-cli update` 在直接解析失败且设置了 `GITHUB_TOKEN` 时，才会用该 token 回退到 Releases API；不设置 token 也能更新。
+
 ## Linux / macOS
 
 装到 `~/.local/bin`（可用 `SSH_CLI_BIN` 改目录），不需要 root：
@@ -46,7 +48,7 @@ curl.exe -fsSL -o %TEMP%\ssh-cli-install.cmd https://raw.githubusercontent.com/j
 
 ### PowerShell
 
-`install.ps1` 仍可用。它通过 .NET 写入用户 Path，当前会话和新打开的终端都会带上：
+`install.ps1` 仍可用，解析最新版本的方式和 `install.cmd` 相同（`releases/latest` 重定向，不访问 `api.github.com`）。它通过 .NET 写入用户 Path，当前会话和新打开的终端都会带上：
 
 ```powershell
 irm https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.ps1 | iex

@@ -125,10 +125,15 @@ func (a *App) command() *cobra.Command {
 		Long: `ssh-cli runs remote commands and SFTP transfers with encrypted credentials and a policy engine.
 
 Print this build with "ssh-cli version", "ssh-cli --version", "ssh-cli -V", or "ssh-cli -version".
-Install a newer GitHub release with "ssh-cli update" (opt-in; nothing updates in the background).`,
+Install a newer GitHub release with "ssh-cli update" (opt-in; nothing updates in the background).
+
+status, service, and keys use the same host selection and policy engine as exec.
+import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the same hosts.yaml.`,
 		Example: `  ssh-cli version
   ssh-cli -h
-  ssh-cli update --check`,
+  ssh-cli update --check
+  ssh-cli status -H main
+  ssh-cli import ssh-ops --help`,
 		Version:       version.String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -171,6 +176,10 @@ Install a newer GitHub release with "ssh-cli update" (opt-in; nothing updates in
 		a.execCmd(),
 		a.uploadCmd(),
 		a.downloadCmd(),
+		a.statusCmd(),
+		a.serviceCmd(),
+		a.keysCmd(),
+		a.importCmd(),
 		a.policyCmd(),
 		a.auditCmd(),
 		a.uiCmd(),

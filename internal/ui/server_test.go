@@ -162,6 +162,65 @@ func TestUISmoke(t *testing.T) {
 	}
 }
 
+func TestUIConfigParity(t *testing.T) {
+	dir := t.TempDir()
+	h := Handler(dir, false)
+	index := httptest.NewRequest(http.MethodGet, "/", nil)
+	index.RemoteAddr = "127.0.0.1:9"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, index)
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "环境") || !strings.Contains(rr.Body.String(), "已知主机密钥") || !strings.Contains(rr.Body.String(), "命名策略") {
+		t.Fatalf("index %d %s", rr.Code, rr.Body.String())
+	}
+	post := func(path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:9"
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	if w := post("/api/envs", `{"name":"dev","label":"开发","maxMode":"admin","noDataOutflow":true}`); w.Code != 200 {
+		t.Fatalf("env %d %s", w.Code, w.Body.String())
+	}
+	if w := post("/api/groups", `{"name":"sandbox","env":"dev","protectedPaths":["/root/app"]}`); w.Code != 200 {
+		t.Fatalf("group %d %s", w.Code, w.Body.String())
+	}
+	if w := post("/api/policies", `{"name":"tight","mode":"readonly","deny":["shutdown"],"confirm":["systemctl restart"]}`); w.Code != 200 {
+		t.Fatalf("policy %d %s", w.Code, w.Body.String())
+	}
+	if w := post("/api/policies/update", `{"name":"tight","mode":"standard","deny":["shutdown","poweroff"],"confirm":["systemctl restart"]}`); w.Code != 200 {
+		t.Fatalf("policy update %d %s", w.Code, w.Body.String())
+	}
+	if w := post("/api/envs/update", `{"name":"dev","label":"开发","maxMode":"standard","defaultPolicy":"tight"}`); w.Code != 200 {
+		t.Fatalf("env update %d %s", w.Code, w.Body.String())
+	}
+	if w := post("/api/groups/set-env", `{"name":"sandbox","env":"dev"}`); w.Code != 200 {
+		t.Fatalf("set-env %d %s", w.Code, w.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
+	req.RemoteAddr = "127.0.0.1:9"
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	body := rr.Body.String()
+	for _, fragment := range []string{`"name":"dev"`, `"name":"sandbox"`, `"name":"tight"`, "poweroff", `"maxMode":"standard"`} {
+		if !strings.Contains(body, fragment) {
+			t.Fatalf("catalog missing %s\n%s", fragment, body)
+		}
+	}
+	if w := post("/api/known-hosts/remove", `{"marker":"192.0.2.10"}`); w.Code == 200 {
+		t.Fatalf("missing known host removed: %s", w.Body.String())
+	}
+	yamlBytes, err := os.ReadFile(filepath.Join(dir, "hosts.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(yamlBytes), "noDataOutflow: true") || !strings.Contains(string(yamlBytes), "shutdown") {
+		t.Fatalf("yaml\n%s", yamlBytes)
+	}
+}
+
 func seedEnvGroup(t *testing.T, dir string) {
 	t.Helper()
 	err := os.WriteFile(filepath.Join(dir, "hosts.yaml"), []byte(`

@@ -31,6 +31,11 @@ When checksums.txt is missing, ssh-cli prints a warning and continues.
 A published checksum that does not match is a hard error.
 
 --repo or SSH_CLI_REPO selects owner/name (default jiamingZhao-zhao/ssh-cli).
+The latest tag is read from https://github.com/<repo>/releases/latest (the
+redirect to /releases/tag/<tag>). Archives and checksums.txt are downloaded
+from /releases/download/<tag>/, not the GitHub REST API, so anonymous API
+rate limits do not block an update. GITHUB_TOKEN is optional: it is sent to
+api.github.com only when that direct lookup fails.
 --check prints current and latest without installing.
 Installing asks you to type the release version on a TTY. --yes skips that
 prompt and is rejected when there is no TTY.`,
