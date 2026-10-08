@@ -5,6 +5,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"strings"
+	"time"
+
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/transfer"
@@ -40,11 +44,13 @@ func (a *App) transfer(kind, src, dst string) error {
 	if kind == "download" {
 		remote, local = src, dst
 	}
+	meta := a.auditMeta(kind, "", src, dst)
 	cfg, hosts, err := a.loadSelection()
 	if err != nil {
+		a.auditSelectionError(meta, hosts, err)
 		return err
 	}
-	plan, err := a.plan(cfg, hosts, func(eff guard.Effective) guard.Decision {
+	plan, err := a.plan(cfg, hosts, meta, func(eff guard.Effective) guard.Decision {
 		return guard.DecideCapability(eff, kind, remote)
 	})
 	if err != nil {
@@ -61,18 +67,25 @@ func (a *App) transfer(kind, src, dst string) error {
 	for _, p := range plan {
 		if p.dec.NeedsConfirm {
 			if err := confirmAlias(p.host.Alias, a.Yes); err != nil {
+				a.logDenial(meta, p.host, &p.dec, err.Error())
 				return err
 			}
 		}
 		a.header(p.host)
+		start := time.Now()
 		client, err := a.dial(p.host)
+		hostMeta := meta
+		hostMeta.started = start
 		res := result{Host: p.host.Alias, Group: p.host.Group, Env: p.host.EnvName}
 		if err != nil {
 			res.Error = err.Error()
 			fmt.Fprintf(a.Err, "error: %s: %s\n", p.host.Alias, err.Error())
-			final = preferCode(final, exitcode.From(err))
+			st, code := statusOf(0, err)
+			final = preferCode(final, code)
 			results = append(results, res)
-			record(p.host, kind+" "+remote, ruleOf(p.dec), exitcode.From(err))
+			if logErr := a.logRemote(hostMeta, p.host, p.dec, st, code, err.Error(), err.Error()); logErr != nil {
+				return logErr
+			}
 			continue
 		}
 		log := func(msg string) { fmt.Fprintf(a.Err, "warning: %s\n", msg) }
@@ -83,16 +96,28 @@ func (a *App) transfer(kind, src, dst string) error {
 		}
 		client.Close()
 		code := 0
+		st := audit.StatusOK
+		summary := kind + " ok"
+		reason := ""
 		if err != nil {
 			res.Error = err.Error()
 			fmt.Fprintf(a.Err, "error: %s: %s\n", p.host.Alias, err.Error())
 			code = exitcode.Connect
+			st = audit.StatusError
+			msg := strings.ToLower(err.Error())
+			if strings.Contains(msg, "timed out") || strings.Contains(msg, "i/o timeout") || strings.Contains(msg, "deadline exceeded") {
+				st = audit.StatusTimeout
+			}
+			summary = err.Error()
+			reason = err.Error()
 			final = preferCode(final, code)
 		} else if !a.JSON {
 			fmt.Fprintf(a.Err, "%s ok: %s\n", kind, p.host.Alias)
 		}
 		results = append(results, res)
-		record(p.host, kind+" "+remote, ruleOf(p.dec), code)
+		if logErr := a.logRemote(hostMeta, p.host, p.dec, st, code, summary, reason); logErr != nil {
+			return logErr
+		}
 	}
 	if a.JSON {
 		if err := a.emit(map[string]any{"op": kind, "results": results}); err != nil {

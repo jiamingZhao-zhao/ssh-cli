@@ -1,7 +1,8 @@
 # ssh-cli 设计提纲（草案 v0.1）
 
 > 目标：用 Go 重写本地 `ssh-ops`（Python + paramiko），产出**零依赖的单文件 CLI**，在没装 Python 的 Windows / macOS / Linux 上拷过去就能用；同时补上凭据加密、危险命令硬拦截、对 agent 友好的输出。
-> 状态：只有设计，**尚未写代码**。仓库：<https://github.com/jiamingZhao-zhao/ssh-cli>
+> 状态：M0/M1、策略引擎、安装/`update`、强制审计日志和可选本机 UI 已实现。`relay`、`elevate`、策略 HMAC、GoReleaser、SKILL.md 仍未做。下面正文仍是设计草案；审计的用法见 README 的「审计」和「本地界面」。
+> 仓库：<https://github.com/jiamingZhao-zhao/ssh-cli>
 
 ---
 
@@ -43,7 +44,7 @@
 | F17 | 发布流水线 | 新增 | P1 | GitHub Actions + GoReleaser |
 | F18 | agent 用 SKILL.md | 新增 | P2 | 替换现有 ssh-ops skill |
 | F19 | 连接复用 daemon | 新增 | P2 | 视性能需要再做 |
-| F20 | 审计日志（本地记录执行过的命令） | 新增 | P2 | 不记录敏感参数 |
+| F20 | 审计日志（本地记录执行过的命令） | 新增 | 已实现 | JSONL 追加，含策略拒绝；不记录密码。可选 `ssh-cli ui` 只读这份日志 |
 
 ---
 
