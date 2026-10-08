@@ -9,12 +9,13 @@
 <body>
   <header>
     <h1>ssh-cli</h1>
-    <p>本地配置与审计。不启动这个页面时，命令行和审计日志照常工作。分组、主机标签和危险命令规则写进同一份 hosts.yaml。密码只通过主机表单提交，不会出现在审计记录里。</p>
+    <p>本地配置与审计。不启动这个页面时，命令行和审计日志照常工作。分组、主机标签、危险命令规则和已知主机密钥写进同一份配置。密码只通过主机表单提交，不会出现在审计记录里。</p>
     <nav>
       <a href="#groups">分组</a>
       <a href="#tags">标签</a>
       <a href="#policy">危险命令</a>
       <a href="#hosts-panel">主机</a>
+      <a href="#known-panel">已知主机密钥</a>
       <a href="#audit-panel">审计</a>
     </nav>
   </header>
@@ -185,6 +186,17 @@
         </div>
         <p id="form-error" class="error" hidden></p>
       </form>
+    </section>
+    <section id="known-panel">
+      <h2>已知主机密钥</h2>
+      <p class="muted">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙；已经记下的钥匙如果变了，仍然会拒绝。</p>
+      <p id="known-error" class="error" hidden></p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>标记</th><th>类型</th><th>指纹</th><th></th></tr></thead>
+          <tbody id="known"></tbody>
+        </table>
+      </div>
     </section>
     <section id="audit-panel">
       <h2>审计</h2>

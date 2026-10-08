@@ -31,6 +31,8 @@ th { font-size: 0.78rem; letter-spacing: 0.03em; color: var(--muted); }
 form { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 0.6rem; margin-top: 0.8rem; }
 form .muted { grid-column: 1 / -1; margin: 0; }
 label { display: flex; flex-direction: column; gap: 0.2rem; font-size: 0.85rem; }
+textarea { font: inherit; padding: 0.35rem 0.45rem; border: 1px solid var(--line); min-height: 4.2rem; background: white; color: var(--ink); }
+.span { grid-column: 1 / -1; }
 input, select, button {
   font: inherit;
   padding: 0.35rem 0.45rem;

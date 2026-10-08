@@ -2,6 +2,7 @@
 # Install the latest ssh-cli release into a user-writable directory.
 # Default destination: ~/.local/bin (override with SSH_CLI_BIN).
 # Default repo: jiamingZhao-zhao/ssh-cli (override with SSH_CLI_REPO=owner/name).
+# The tag comes from the releases/latest redirect, not api.github.com.
 set -eu
 
 repo="${SSH_CLI_REPO:-jiamingZhao-zhao/ssh-cli}"
@@ -29,32 +30,56 @@ if ! command -v curl >/dev/null 2>&1; then
   exit 1
 fi
 
+owner=${repo%%/*}
+name=${repo#*/}
+case "$owner" in
+  ""|*"/"*|*[!A-Za-z0-9_.-]*)
+    echo "invalid repo ${repo} (want owner/name)" >&2
+    exit 1
+    ;;
+esac
+case "$name" in
+  ""|*"/"*|*[!A-Za-z0-9_.-]*)
+    echo "invalid repo ${repo} (want owner/name)" >&2
+    exit 1
+    ;;
+esac
+
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT
 
-curl -fsSL -A ssh-cli-install -H "Accept: application/vnd.github+json" \
-  -o "$tmp/release.json" "https://api.github.com/repos/${repo}/releases/latest"
-
-tag=$(sed -n 's/.*"tag_name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$tmp/release.json" | head -n 1)
-ver=${tag#v}
-ver=${ver#V}
+# Resolve the tag from the releases/latest redirect. Do not call api.github.com.
+lookup=$(curl -sS -A ssh-cli-install -D "$tmp/headers" -o "$tmp/latest.html" -w '%{http_code}' \
+  "https://github.com/${repo}/releases/latest" || true)
+location=$(awk 'tolower($1)=="location:" {print $2}' "$tmp/headers" | tail -n 1 | tr -d '\r')
+tag=$(printf '%s\n' "$location" | sed -n 's#.*/releases/tag/\([A-Za-z0-9._+-][A-Za-z0-9._+-]*\).*#\1#p' | head -n 1)
+if [ -z "$tag" ]; then
+  tag=$(sed -n 's#.*rel="canonical"[^>]*href="[^"]*/releases/tag/\([A-Za-z0-9._+-][A-Za-z0-9._+-]*\)".*#\1#p' "$tmp/latest.html" | head -n 1)
+fi
+case "$tag" in
+  ""|*[!A-Za-z0-9._+-]*)
+    echo "could not read the latest release tag (HTTP ${lookup})" >&2
+    exit 1
+    ;;
+esac
+ver=$tag
+case "$ver" in
+  v*|V*) ver=${ver#?} ;;
+esac
 if [ -z "$ver" ]; then
-  echo "could not read tag_name from the latest release" >&2
+  echo "could not read the latest release tag (HTTP ${lookup})" >&2
   exit 1
 fi
 
 asset="ssh-cli_${ver}_${goos}_${arch}.tar.gz"
-url=$(sed -n "s/.*\"browser_download_url\"[[:space:]]*:[[:space:]]*\"\\([^\"]*\\/${asset}\\)\".*/\\1/p" "$tmp/release.json" | head -n 1)
-if [ -z "$url" ]; then
-  echo "latest release has no ${asset}" >&2
-  exit 1
-fi
+url="https://github.com/${repo}/releases/download/${tag}/${asset}"
+sums="https://github.com/${repo}/releases/download/${tag}/checksums.txt"
 
 curl -fsSL -A ssh-cli-install -o "$tmp/$asset" "$url"
 
-sums=$(sed -n 's/.*"browser_download_url"[[:space:]]*:[[:space:]]*"\([^"]*checksums\.txt\)".*/\1/p' "$tmp/release.json" | head -n 1)
-if [ -n "$sums" ]; then
-  curl -fsSL -A ssh-cli-install -o "$tmp/checksums.txt" "$sums"
+sum_code=$(curl -sS -A ssh-cli-install -o "$tmp/checksums.txt" -w '%{http_code}' "$sums" || true)
+if [ "$sum_code" = "200" ]; then
+  :
   want=$(awk -v f="$asset" '
     {
       name = $NF
@@ -78,8 +103,11 @@ if [ -n "$sums" ]; then
     echo "checksum mismatch for ${asset}" >&2
     exit 1
   fi
-else
+elif [ "$sum_code" = "404" ]; then
   echo "warning: release has no checksums.txt; the download was not verified" >&2
+else
+  echo "checksum download failed (HTTP ${sum_code})" >&2
+  exit 1
 fi
 
 mkdir -p "$tmp/out" "$dest"

@@ -191,6 +191,10 @@ func envFromMap(raw map[string]json.RawMessage) (EnvDraft, error) {
 		d.HasDefaultPolicy = true
 		d.DefaultPolicy = s
 	}
+	if v, ok := raw["noDataOutflow"]; ok {
+		d.HasNoDataOutflow = true
+		d.NoDataOutflow = truthy(v)
+	}
 	return d, nil
 }
 

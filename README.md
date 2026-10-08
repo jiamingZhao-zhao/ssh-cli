@@ -2,7 +2,7 @@
 
 零依赖的单文件 SSH 运维 CLI（Go）。远程命令、文件上传下载；凭据加密存储，危险命令拦截，对 agent 友好的输出。
 
-当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本），以及强制审计日志和可选的本机 UI。中继、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
+当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。中继、连接复用、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
 
 ## 构建
 
@@ -44,7 +44,7 @@ curl.exe -fsSL -o %TEMP%\ssh-cli-install.cmd https://raw.githubusercontent.com/j
 
 `install.ps1` 仍然可用。两者都默认装到 `%LOCALAPPDATA%\ssh-cli\bin`，目录不在 PATH 里时写入用户 Path。详见 [INSTALL.md](INSTALL.md)。
 
-`version`、`--version`、`-V`、`-version` 打印同一行。`update` 从 GitHub Release 下载当前平台的资产并替换正在运行的二进制，只在执行该命令时发生。没有 `checksums.txt` 时会警告并继续；校验和不匹配则拒绝安装。非交互终端不能确认安装（退出码 253）。仓库和资产名见 [INSTALL.md](INSTALL.md)。
+`version`、`--version`、`-V`、`-version` 打印同一行。`update` 从 GitHub Release 下载当前平台的资产并替换正在运行的二进制，只在执行该命令时发生。最新版本来自 `https://github.com/<仓库>/releases/latest` 的重定向，资产和 `checksums.txt` 从 `releases/download/<tag>/` 直接下载，不访问 `api.github.com`，因此不受匿名 API 速率限制影响。只有在这次直接解析失败、并且环境里设置了 `GITHUB_TOKEN` 时，才会回退到 Releases API。没有 `checksums.txt` 时会警告并继续；校验和不匹配则拒绝安装。非交互终端不能确认安装（退出码 253）。仓库和资产名见 [INSTALL.md](INSTALL.md)。
 
 ## 配置目录
 
@@ -85,7 +85,7 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 
 `//root/...` 会还原成 `/root/...`，用来避开 Git Bash 对绝对路径的改写。
 
-内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。自定义 allow/deny 写在这份配置里：可以手改，也可以用本地界面改。命令行还没有 `policy edit`。
+内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。`policy add` / `policy edit` / `policy remove` 和本机 UI 写同一份 `hosts.yaml`。策略 HMAC 仍未做。
 
 ## 权限怎么算
 
@@ -123,6 +123,33 @@ ssh-cli env remove lab
 
 `env add prod` 和 `env remove prod` 都会拒绝。
 
+## 导入
+
+`import ssh-ops` 只读本地 YAML 或 JSON，不会去连清单里的主机。密码加密进 `secrets.json`，不写进 `hosts.yaml`。格式写在命令帮助里：
+
+```bash
+ssh-cli import ssh-ops --help
+ssh-cli import ssh-ops --dry-run ./servers.yaml
+ssh-cli import ssh-ops ./servers.yaml
+```
+
+导入成功后会提示删掉仍含明文密码的清单。
+
+## 状态、服务、公钥
+
+这三个命令用和 `exec` 一样的 `-H` / `-g` / `-t` / `--env` 选择，并且走同一套策略检查。成功、失败和被拒绝都会追加审计 JSONL。
+
+```bash
+ssh-cli status -H main
+ssh-cli service -H main status nginx
+ssh-cli service -H main restart nginx
+ssh-cli keys -H main --path .ssh/authorized_keys
+ssh-cli keys known list
+ssh-cli keys known remove 192.0.2.10:22
+```
+
+`status` 做连通性和一组固定的只读检查（主机名、负载、内存、磁盘、监听端口）。`service` 只是 `systemctl <action> <name>`，动作限于 `status` / `start` / `stop` / `restart` / `reload`，服务名有字面量限制；只读策略默认只允许 `status`，`restart` / `stop` 仍按确认规则处理。`keys` 打印远端 `authorized_keys` 的 SHA256 指纹。`keys known` 查看或删除本机 `known_hosts`：删掉一条之后，下次连接会记下看到的第一把钥匙；还留在文件里的钥匙如果变了，仍然拒绝。
+
 ## 审计
 
 每次 `exec`、`upload`、`download` 都会在配置目录追加一条 JSONL，包括策略预检拒绝（内置危险命令、确认类命令、能力开关）、超时、认证失败、连接失败，以及远程非零退出。不记录密码、私钥或明文密钥；命令里的 `password=...` 一类片段会打成 `[redacted]`。
@@ -141,7 +168,7 @@ ssh-cli audit tail --follow
 
 ## 本地界面（可选）
 
-只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、主机）并查看审计日志。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。执行命令仍走 `exec` / `upload` / `download`。
+只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，并查看审计日志。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。执行命令仍走 `exec` / `upload` / `download`。
 
 ```bash
 ssh-cli ui
@@ -184,4 +211,4 @@ SSH_CLI_INTEGRATION=1 go test ./internal/integration -count=1
 
 ## 这次没做
 
-`relay`、`status`、`service`、`keys`、`run`、`elevate`、策略 HMAC、命令行 `policy edit`、从 ssh-ops 导入、GoReleaser 发版、SKILL.md。本地界面可以直接改 `hosts.yaml` 里的命名策略和分组 / 主机规则。`config.VerifyPolicy` 仍是留给 HMAC 的空实现。审计日志已经落盘。CI 会把六个平台的压缩包和 `checksums.txt` 作为构建产物上传，但不会自动创建 GitHub Release。
+`relay`、连接复用、`run`、`elevate`、策略 HMAC、GoReleaser 发版、SKILL.md。`config.VerifyPolicy` 仍是留给 HMAC 的空实现。审计日志已经落盘。CI 会把六个平台的压缩包和 `checksums.txt` 作为构建产物上传，但不会自动创建 GitHub Release。

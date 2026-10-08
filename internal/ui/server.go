@@ -44,6 +44,9 @@ func Handler(dir string, allowRemote bool) http.Handler {
 	mux.HandleFunc("POST /api/envs", s.addEnv)
 	mux.HandleFunc("POST /api/envs/update", s.updateEnv)
 	mux.HandleFunc("POST /api/envs/remove", s.removeEnv)
+	mux.HandleFunc("POST /api/groups/set-env", s.setGroupEnv)
+	mux.HandleFunc("GET /api/known-hosts", s.knownHosts)
+	mux.HandleFunc("POST /api/known-hosts/remove", s.removeKnownHost)
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		panic(err)

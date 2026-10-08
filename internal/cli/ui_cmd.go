@@ -18,7 +18,10 @@ func (a *App) uiCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "ui",
 		Short: "Start the optional localhost UI",
-		Long: `Start a localhost-only web UI for groups, host tags, policy rules, hosts, and the audit timeline.
+		Long: `Start a localhost-only web UI for groups, host tags, policy rules, envs, hosts, known_hosts, and the audit timeline.
+
+The page edits the same hosts.yaml, known_hosts, and secret store as the CLI.
+Built-in env labels (dev, test, preprod, prod) are shown and cannot be changed.
 
 The default bind is 127.0.0.1:7788. Binding 0.0.0.0 or any other non-loopback
 address is refused unless --allow-non-loopback is set, which prints a warning.

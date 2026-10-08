@@ -14,6 +14,8 @@ const policyForm = document.querySelector("#policy-form");
 const policyError = document.querySelector("#policy-error");
 const envForm = document.querySelector("#env-form");
 const envError = document.querySelector("#env-error");
+const knownBody = document.querySelector("#known");
+const knownError = document.querySelector("#known-error");
 
 let catalog = { envs: [], groups: [], hosts: [], policies: [] };
 let editing = false;
@@ -666,5 +668,33 @@ document.querySelector("#audit-filter").addEventListener("submit", async (ev) =>
   }
 });
 
+async function loadKnown() {
+  showError(knownError, "");
+  const data = await readJSON(await fetch("/api/known-hosts"));
+  knownBody.replaceChildren();
+  for (const entry of data.knownHosts || []) {
+    const tr = document.createElement("tr");
+    tr.append(cell(entry.marker), cell(entry.keyType), cell(entry.fingerprint));
+    const actions = document.createElement("td");
+    const rm = document.createElement("button");
+    rm.type = "button";
+    rm.className = "secondary";
+    rm.textContent = "删除";
+    rm.addEventListener("click", async () => {
+      if (!window.confirm("删除已知主机密钥 " + entry.marker + "？下次连接会重新记录第一把钥匙。")) return;
+      try {
+        await postJSON("/api/known-hosts/remove", { marker: entry.marker });
+        await loadKnown();
+      } catch (err) {
+        showError(knownError, err.message);
+      }
+    });
+    actions.append(rm);
+    tr.append(actions);
+    knownBody.appendChild(tr);
+  }
+}
+
 loadCatalog().catch((err) => showError(catalogError, err.message));
+loadKnown().catch((err) => showError(knownError, err.message));
 loadAudit("").catch((err) => showError(auditError, err.message));

@@ -8,10 +8,10 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -159,9 +159,7 @@ func TestReplaceBinary(t *testing.T) {
 func TestRunCheckAndInstall(t *testing.T) {
 	const payload = "#!/bin/sh\necho updated\n"
 	srv, hits := releaseServer(t, "1.2.3", "linux", "amd64", []byte(payload), true, false, 0)
-	old := APIBase
-	APIBase = srv.URL
-	t.Cleanup(func() { APIBase = old })
+	useReleaseBase(t, srv.URL)
 
 	ctx := context.Background()
 	res, err := Run(ctx, updateOpts(t, "dev", true, false))
@@ -215,9 +213,7 @@ func TestRunCheckAndInstall(t *testing.T) {
 
 func TestRunMissingChecksumWarns(t *testing.T) {
 	srv, _ := releaseServer(t, "1.2.3", "linux", "amd64", []byte("bin"), false, false, 0)
-	old := APIBase
-	APIBase = srv.URL
-	t.Cleanup(func() { APIBase = old })
+	useReleaseBase(t, srv.URL)
 	dest := filepath.Join(t.TempDir(), "ssh-cli")
 	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
@@ -240,9 +236,7 @@ func TestRunMissingChecksumWarns(t *testing.T) {
 
 func TestRunChecksumMismatch(t *testing.T) {
 	srv, _ := releaseServer(t, "1.2.3", "linux", "amd64", []byte("bin"), true, true, 0)
-	old := APIBase
-	APIBase = srv.URL
-	t.Cleanup(func() { APIBase = old })
+	useReleaseBase(t, srv.URL)
 	dest := filepath.Join(t.TempDir(), "ssh-cli")
 	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
@@ -266,9 +260,7 @@ func TestRunChecksumMismatch(t *testing.T) {
 
 func TestRunConfirmRefusedDoesNotDownload(t *testing.T) {
 	srv, hits := releaseServer(t, "1.2.3", "linux", "amd64", []byte("bin"), true, false, 0)
-	old := APIBase
-	APIBase = srv.URL
-	t.Cleanup(func() { APIBase = old })
+	useReleaseBase(t, srv.URL)
 	dest := filepath.Join(t.TempDir(), "ssh-cli")
 	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
@@ -292,9 +284,7 @@ func TestRunConfirmRefusedDoesNotDownload(t *testing.T) {
 
 func TestRunForceReinstallsSameVersion(t *testing.T) {
 	srv, hits := releaseServer(t, "1.2.3", "linux", "amd64", []byte("same"), true, false, 0)
-	old := APIBase
-	APIBase = srv.URL
-	t.Cleanup(func() { APIBase = old })
+	useReleaseBase(t, srv.URL)
 	dest := filepath.Join(t.TempDir(), "ssh-cli")
 	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
@@ -311,11 +301,141 @@ func TestRunForceReinstallsSameVersion(t *testing.T) {
 	}
 }
 
+func TestTagFromReleaseURL(t *testing.T) {
+	for _, raw := range []string{
+		"https://github.com/acme/ssh-cli/releases/tag/v1.2.3",
+		"/acme/ssh-cli/releases/tag/v1.2.3",
+		"https://github.com/acme/ssh-cli/releases/tag/v1.2.3?ref=1",
+	} {
+		u, err := url.Parse(raw)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := tagFromURL(u); got != "v1.2.3" {
+			t.Fatalf("%s -> %q", raw, got)
+		}
+	}
+	html := []byte(`<link rel="canonical" href="https://github.com/acme/ssh-cli/releases/tag/v0.3.0">`)
+	if got := tagFromHTML(html); got != "v0.3.0" {
+		t.Fatal(got)
+	}
+	if _, err := releaseFromTag("acme/ssh-cli", "../v1"); err == nil {
+		t.Fatal("accepted unsafe tag")
+	}
+}
+
+func TestRunDirectPageWithoutRedirect(t *testing.T) {
+	const ver = "1.2.3"
+	name := AssetName(ver, "linux", "amd64")
+	archive := tarGz(t, "ssh-cli", []byte("page"))
+	sum := sha256.Sum256(archive)
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/example/ssh-cli/releases/latest" {
+			w.Header().Set("Content-Type", "text/html")
+			fmt.Fprintf(w, `<link rel="canonical" href="%s/example/ssh-cli/releases/tag/v%s">`, srv.URL, ver)
+			return
+		}
+		if r.URL.Path == "/example/ssh-cli/releases/download/v"+ver+"/"+name {
+			_, _ = w.Write(archive)
+			return
+		}
+		if strings.HasSuffix(r.URL.Path, "/checksums.txt") {
+			fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/repos/") {
+			t.Errorf("API call %s", r.URL.Path)
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	useReleaseBase(t, srv.URL)
+	dest := filepath.Join(t.TempDir(), "ssh-cli")
+	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Run(context.Background(), Options{
+		Repo: "example/ssh-cli", Current: "0.1.0", GOOS: "linux", GOARCH: "amd64",
+		Client: srv.Client(), ExePath: dest,
+	})
+	if err != nil || !res.Installed || !res.ChecksumVerified {
+		t.Fatalf("%+v %v", res, err)
+	}
+}
+
+func TestRunAPIFallbackRequiresToken(t *testing.T) {
+	const ver = "2.0.0"
+	name := AssetName(ver, "linux", "amd64")
+	archive := tarGz(t, "ssh-cli", []byte("api"))
+	sum := sha256.Sum256(archive)
+	var apiHits int
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") && !strings.Contains(r.URL.Path, "/repos/") {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		if r.URL.Path == "/repos/example/ssh-cli/releases/latest" {
+			apiHits++
+			if r.Header.Get("Authorization") != "Bearer test-token" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			fmt.Fprintf(w, `{"tag_name":"v%s","assets":[{"name":%q,"browser_download_url":%q},{"name":%q,"browser_download_url":%q}]}`,
+				ver, name, srv.URL+"/files/"+name, ChecksumsName, srv.URL+"/files/checksums.txt")
+			return
+		}
+		if r.URL.Path == "/files/"+name {
+			_, _ = w.Write(archive)
+			return
+		}
+		if r.URL.Path == "/files/checksums.txt" {
+			fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+
+	oldRelease, oldAPI := ReleaseBase, APIBase
+	ReleaseBase, APIBase = srv.URL, srv.URL
+	t.Cleanup(func() {
+		ReleaseBase, APIBase = oldRelease, oldAPI
+	})
+	t.Setenv("GITHUB_TOKEN", "")
+	_, err := Run(context.Background(), Options{
+		Repo: "example/ssh-cli", Current: "0.1.0", GOOS: "linux", GOARCH: "amd64",
+		Client: srv.Client(), Check: true,
+	})
+	var ee *exitcode.Error
+	if !asExit(err, &ee) || ee.Code != exitcode.Connect {
+		t.Fatalf("without token: %v", err)
+	}
+	if apiHits != 0 {
+		t.Fatalf("API called without token: %d", apiHits)
+	}
+
+	t.Setenv("GITHUB_TOKEN", "test-token")
+	dest := filepath.Join(t.TempDir(), "ssh-cli")
+	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	res, err := Run(context.Background(), Options{
+		Repo: "example/ssh-cli", Current: "0.1.0", GOOS: "linux", GOARCH: "amd64",
+		Client: srv.Client(), ExePath: dest,
+	})
+	if err != nil || !res.Installed || !res.ChecksumVerified || res.Latest != ver {
+		t.Fatalf("%+v %v", res, err)
+	}
+	if apiHits != 1 {
+		t.Fatalf("api hits %d", apiHits)
+	}
+}
+
 func TestRunNetworkAndRepoErrors(t *testing.T) {
 	srv, _ := releaseServer(t, "1.2.3", "linux", "amd64", []byte("bin"), false, false, http.StatusBadGateway)
-	old := APIBase
-	APIBase = srv.URL
-	t.Cleanup(func() { APIBase = old })
+	useReleaseBase(t, srv.URL)
 	_, err := Run(context.Background(), Options{Repo: "example/ssh-cli", Client: srv.Client(), GOOS: "linux", GOARCH: "amd64", Check: true})
 	var ee *exitcode.Error
 	if !asExit(err, &ee) || ee.Code != exitcode.Connect {
@@ -347,6 +467,14 @@ func updateOpts(t *testing.T, current string, check, force bool) Options {
 	}
 }
 
+func useReleaseBase(t *testing.T, base string) {
+	t.Helper()
+	old := ReleaseBase
+	ReleaseBase = base
+	t.Cleanup(func() { ReleaseBase = old })
+	t.Setenv("GITHUB_TOKEN", "")
+}
+
 func releaseServer(t *testing.T, ver, goos, goarch string, payload []byte, checksum, badSum bool, status int) (*httptest.Server, *int) {
 	t.Helper()
 	name := AssetName(ver, goos, goarch)
@@ -358,30 +486,32 @@ func releaseServer(t *testing.T, ver, goos, goarch string, payload []byte, check
 	}
 	sum := sha256.Sum256(archive)
 	hits := 0
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/repos/example/ssh-cli/releases/latest" {
+	tag := "v" + ver
+	prefix := "/example/ssh-cli/releases/download/" + tag + "/"
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/example/ssh-cli/releases/latest" {
 			if status != 0 {
 				w.WriteHeader(status)
 				return
 			}
-			type item struct {
-				Name string `json:"name"`
-				URL  string `json:"browser_download_url"`
-			}
-			assets := []item{{Name: name, URL: srv.URL + "/a/" + name}}
-			if checksum {
-				assets = append(assets, item{Name: ChecksumsName, URL: srv.URL + "/a/checksums.txt"})
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v" + ver, "assets": assets})
+			http.Redirect(w, r, "/example/ssh-cli/releases/tag/"+tag, http.StatusFound)
 			return
 		}
-		if r.URL.Path == "/a/"+name {
+		if strings.Contains(r.URL.Path, "/repos/") {
+			t.Errorf("update contacted the releases API: %s", r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		if r.URL.Path == prefix+name {
 			hits++
 			_, _ = w.Write(archive)
 			return
 		}
-		if r.URL.Path == "/a/checksums.txt" {
+		if r.URL.Path == prefix+ChecksumsName {
+			if !checksum {
+				http.NotFound(w, r)
+				return
+			}
 			hexsum := hex.EncodeToString(sum[:])
 			if badSum {
 				hexsum = strings.Repeat("ab", 32)

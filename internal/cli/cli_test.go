@@ -2,12 +2,10 @@ package cli
 
 import (
 	"bytes"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"testing"
 
@@ -196,6 +194,10 @@ func TestRootHelpListsCommands(t *testing.T) {
 			"Print the version",
 			"ssh-cli version",
 			"ssh-cli update --check",
+			"Check connectivity and basic host health",
+			"Check or change a remote service",
+			"List remote authorized keys or local known_hosts",
+			"Import hosts and groups from a local inventory file",
 		} {
 			if !strings.Contains(text, fragment) {
 				t.Fatalf("%v help missing %q\n%s", args, fragment, text)
@@ -213,9 +215,9 @@ func TestUpdateCheckAndNonTTYRefusal(t *testing.T) {
 	ttyCheck = func() bool { return false }
 	t.Cleanup(func() { ttyCheck = defaultTTY })
 	srv := updateReleaseServer(t)
-	oldBase := update.APIBase
-	update.APIBase = srv.URL
-	t.Cleanup(func() { update.APIBase = oldBase })
+	oldBase := update.ReleaseBase
+	update.ReleaseBase = srv.URL
+	t.Cleanup(func() { update.ReleaseBase = oldBase })
 	dest := filepath.Join(t.TempDir(), "ssh-cli")
 	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
@@ -259,12 +261,13 @@ func TestUpdateCheckAndNonTTYRefusal(t *testing.T) {
 
 func updateReleaseServer(t *testing.T) *httptest.Server {
 	t.Helper()
-	name := update.AssetName("1.2.3", runtime.GOOS, runtime.GOARCH)
-	var srv *httptest.Server
-	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
-			fmt.Fprintf(w, `{"tag_name":"v1.2.3","assets":[{"name":%q,"browser_download_url":%q}]}`, name, srv.URL+"/a/"+name)
+			http.Redirect(w, r, "/example/ssh-cli/releases/tag/v1.2.3", http.StatusFound)
 			return
+		}
+		if strings.Contains(r.URL.Path, "/repos/") {
+			t.Errorf("update contacted the releases API: %s", r.URL.Path)
 		}
 		http.NotFound(w, r)
 	}))

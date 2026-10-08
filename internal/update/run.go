@@ -58,7 +58,7 @@ func Run(ctx context.Context, opt Options) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	selected, err := selectAsset(rel.assets, rel.version, opt.GOOS, opt.GOARCH)
+	selected, err := rel.asset(AssetName(rel.version, opt.GOOS, opt.GOARCH))
 	if err != nil {
 		return Result{}, err
 	}
@@ -73,8 +73,9 @@ func Run(ctx context.Context, opt Options) (Result, error) {
 		UpdateAvailable: available,
 		Ahead:           ahead,
 	}
-	sums, hasSums := findAsset(rel.assets, ChecksumsName)
-	if !hasSums {
+	sums, sumsListed := rel.checksums()
+	trySums := sumsListed || rel.prefix != ""
+	if !trySums {
 		res.Warning = noChecksumWarning
 	}
 	if opt.Check || (!available && !opt.Force) {
@@ -89,20 +90,27 @@ func Run(ctx context.Context, opt Options) (Result, error) {
 	if err != nil {
 		return res, err
 	}
-	if hasSums {
-		sumBody, err := httpGet(ctx, opt.Client, sums.url)
+	if trySums {
+		sumBody, missing, err := httpGetOptional(ctx, opt.Client, sums.url)
 		if err != nil {
 			return res, err
 		}
-		parsed, err := ParseChecksums(sumBody)
-		if err != nil {
-			return res, err
+		if missing {
+			if sumsListed {
+				return res, errUsage("checksums.txt is missing")
+			}
+			res.Warning = noChecksumWarning
+		} else {
+			parsed, err := ParseChecksums(sumBody)
+			if err != nil {
+				return res, err
+			}
+			if err := verifyChecksum(selected.name, body, parsed); err != nil {
+				return res, err
+			}
+			res.ChecksumVerified = true
+			res.Warning = ""
 		}
-		if err := verifyChecksum(selected.name, body, parsed); err != nil {
-			return res, err
-		}
-		res.ChecksumVerified = true
-		res.Warning = ""
 	}
 	bin, err := extractBinary(selected.name, opt.GOOS, body)
 	if err != nil {

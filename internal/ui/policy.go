@@ -33,10 +33,13 @@ type EnvDraft struct {
 	MaxMode       string
 	DefaultPolicy string
 
+	NoDataOutflow bool
+
 	HasLabel         bool
 	HasColor         bool
 	HasMaxMode       bool
 	HasDefaultPolicy bool
+	HasNoDataOutflow bool
 }
 
 // AddPolicy creates a named policy. Naming a built-in copies that built-in
@@ -196,6 +199,7 @@ func AddEnv(dir string, in EnvDraft) error {
 		}
 		cfg.Envs[name] = &config.Env{
 			Label: label, Color: color, MaxMode: mode, DefaultPolicy: def,
+			NoDataOutflow: in.NoDataOutflow,
 		}
 		return nil
 	})
@@ -211,7 +215,7 @@ func UpdateEnv(dir string, in EnvDraft) error {
 	if config.IsBuiltinEnv(name) {
 		return fmt.Errorf("env %q is built-in and cannot be changed", name)
 	}
-	if !in.HasLabel && !in.HasColor && !in.HasMaxMode && !in.HasDefaultPolicy {
+	if !in.HasLabel && !in.HasColor && !in.HasMaxMode && !in.HasDefaultPolicy && !in.HasNoDataOutflow {
 		return fmt.Errorf("no changes given")
 	}
 	if in.HasMaxMode {
@@ -239,6 +243,9 @@ func UpdateEnv(dir string, in EnvDraft) error {
 				return fmt.Errorf("unknown policy %q", def)
 			}
 			env.DefaultPolicy = def
+		}
+		if in.HasNoDataOutflow {
+			env.NoDataOutflow = in.NoDataOutflow
 		}
 		return nil
 	})

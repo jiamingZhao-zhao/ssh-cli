@@ -7,10 +7,9 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/catalog"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
-	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
-	"github.com/jiamingZhao-zhao/ssh-cli/internal/secrets"
 )
 
 func (a *App) hostCmd() *cobra.Command {
@@ -62,9 +61,6 @@ func (a *App) hostAdd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			alias := args[0]
-			if !config.ValidName(alias) {
-				return exitcode.New(exitcode.Usage, "invalid host alias %q", alias)
-			}
 			if f.group == "" || f.address == "" || f.user == "" {
 				return exitcode.New(exitcode.Usage, "--group, --host, and --user are required")
 			}
@@ -74,58 +70,28 @@ func (a *App) hostAdd() *cobra.Command {
 			if err := checkPort(f.port); err != nil {
 				return err
 			}
-			var password string
+			draft := catalog.HostDraft{
+				Alias:      alias,
+				Group:      f.group,
+				Address:    f.address,
+				User:       f.user,
+				Identity:   f.identity,
+				Policy:     f.policy,
+				Tags:       splitList(f.tags),
+				SetDefault: f.def,
+			}
+			if f.port != 0 {
+				p := f.port
+				draft.Port = &p
+			}
 			if f.identity == "" {
 				pw, err := readPassword(a.In, a.Err, f.pwStdin)
 				if err != nil {
 					return err
 				}
-				password = pw
+				draft.Password = pw
 			}
-			return config.Update(a.Dir, func(cfg *config.Config) error {
-				if _, ok := cfg.Find(alias); ok {
-					return exitcode.New(exitcode.Usage, "host %q already exists", alias)
-				}
-				g, ok := cfg.Groups[f.group]
-				if !ok {
-					return exitcode.New(exitcode.Usage, "group %q not found", f.group)
-				}
-				if f.policy != "" && !guard.KnownPolicy(cfg, f.policy) {
-					return exitcode.New(exitcode.Usage, "unknown policy %q", f.policy)
-				}
-				h := &config.Host{
-					Host:   f.address,
-					User:   f.user,
-					Port:   normalizePort(f.port),
-					Tags:   splitList(f.tags),
-					Policy: f.policy,
-				}
-				if f.identity != "" {
-					h.Auth = "key"
-					h.Identity = f.identity
-				} else {
-					h.Auth = "password"
-					h.PasswordRef = f.group + "." + alias
-					st, err := secrets.Open(a.Dir, secrets.Options{Warn: a.Err})
-					if err != nil {
-						return err
-					}
-					if err := st.Put(h.PasswordRef, password); err != nil {
-						return err
-					}
-					if err := st.Save(); err != nil {
-						return err
-					}
-				}
-				if g.Hosts == nil {
-					g.Hosts = map[string]*config.Host{}
-				}
-				g.Hosts[alias] = h
-				if f.def {
-					cfg.Default = alias
-				}
-				return nil
-			})
+			return catalogErr(catalog.AddHost(a.Dir, draft, catalog.Options{Warn: a.Err}))
 		},
 	}
 	bindHostFlags(cmd, &f, true)
@@ -165,6 +131,7 @@ func (a *App) hostList() *cobra.Command {
 				User        string   `json:"user"`
 				Auth        string   `json:"auth"`
 				Tags        []string `json:"tags,omitempty"`
+				Policy      string   `json:"policy,omitempty"`
 				PasswordRef string   `json:"passwordRef,omitempty"`
 			}
 			views := make([]view, 0, len(aliases))
@@ -173,7 +140,8 @@ func (a *App) hostList() *cobra.Command {
 				views = append(views, view{
 					Alias: alias, Group: h.Group, Env: h.EnvName,
 					Host: h.Host.Host, Port: h.Host.PortOrDefault(), User: h.Host.User,
-					Auth: authLabel(h.Host), Tags: h.Host.Tags, PasswordRef: h.Host.PasswordRef,
+					Auth: authLabel(h.Host), Tags: h.Host.Tags, Policy: h.Host.Policy,
+					PasswordRef: h.Host.PasswordRef,
 				})
 			}
 			if a.JSON {
@@ -195,29 +163,7 @@ func (a *App) hostRemove() *cobra.Command {
 		Short: "Remove one host",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			alias := args[0]
-			return config.Update(a.Dir, func(cfg *config.Config) error {
-				found, ok := cfg.Find(alias)
-				if !ok {
-					return exitcode.New(exitcode.Usage, "host %q not found", alias)
-				}
-				ref := found.Host.PasswordRef
-				delete(found.GroupDef.Hosts, alias)
-				if cfg.Default == alias {
-					cfg.Default = ""
-				}
-				if ref != "" && cfg.PasswordRefs()[ref] == 0 {
-					st, err := secrets.Open(a.Dir, secrets.Options{Warn: a.Err})
-					if err != nil {
-						return err
-					}
-					st.Delete(ref)
-					if err := st.Save(); err != nil {
-						return err
-					}
-				}
-				return nil
-			})
+			return catalogErr(catalog.RemoveHost(a.Dir, args[0], catalog.Options{Warn: a.Err}))
 		},
 	}
 }
@@ -230,12 +176,37 @@ func (a *App) hostEdit() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			alias := args[0]
-			changed := cmd.Flags().Changed("group") || cmd.Flags().Changed("host") || cmd.Flags().Changed("port") ||
-				cmd.Flags().Changed("user") || cmd.Flags().Changed("identity") || cmd.Flags().Changed("password-stdin") ||
-				cmd.Flags().Changed("policy") || cmd.Flags().Changed("tag") || cmd.Flags().Changed("set-default") ||
-				cmd.Flags().Changed("clear-tags")
-			if !changed {
-				return exitcode.New(exitcode.Usage, "no changes given")
+			draft := catalog.HostDraft{Alias: alias}
+			if cmd.Flags().Changed("group") {
+				draft.HasGroup = true
+				draft.Group = f.group
+			}
+			if cmd.Flags().Changed("host") {
+				draft.HasAddress = true
+				draft.Address = f.address
+			}
+			if cmd.Flags().Changed("port") {
+				draft.HasPort = true
+				p := f.port
+				draft.Port = &p
+			}
+			if cmd.Flags().Changed("user") {
+				draft.HasUser = true
+				draft.User = f.user
+			}
+			if cmd.Flags().Changed("policy") {
+				draft.HasPolicy = true
+				draft.Policy = f.policy
+			}
+			if cmd.Flags().Changed("tag") {
+				draft.HasTags = true
+				draft.Tags = splitList(f.tags)
+			}
+			if f.clearTag {
+				draft.ClearTags = true
+			}
+			if f.def {
+				draft.SetDefault = true
 			}
 			if f.clearTag && cmd.Flags().Changed("tag") {
 				return exitcode.New(exitcode.Usage, "use only one of --tag and --clear-tags")
@@ -246,96 +217,19 @@ func (a *App) hostEdit() *cobra.Command {
 			if err := checkPort(f.port); err != nil {
 				return err
 			}
-			var password string
+			if cmd.Flags().Changed("identity") {
+				draft.HasIdentity = true
+				draft.Identity = f.identity
+			}
 			if f.pwStdin {
 				pw, err := readPassword(a.In, a.Err, true)
 				if err != nil {
 					return err
 				}
-				password = pw
+				draft.HasPassword = true
+				draft.Password = pw
 			}
-			return config.Update(a.Dir, func(cfg *config.Config) error {
-				found, ok := cfg.Find(alias)
-				if !ok {
-					return exitcode.New(exitcode.Usage, "host %q not found", alias)
-				}
-				h := found.Host
-				oldRef := h.PasswordRef
-				if cmd.Flags().Changed("group") {
-					g, ok := cfg.Groups[f.group]
-					if !ok {
-						return exitcode.New(exitcode.Usage, "group %q not found", f.group)
-					}
-					delete(found.GroupDef.Hosts, alias)
-					if g.Hosts == nil {
-						g.Hosts = map[string]*config.Host{}
-					}
-					g.Hosts[alias] = h
-					found.GroupDef = g
-					found.Group = f.group
-				}
-				if cmd.Flags().Changed("host") {
-					if strings.TrimSpace(f.address) == "" {
-						return exitcode.New(exitcode.Usage, "empty address")
-					}
-					h.Host = f.address
-				}
-				if cmd.Flags().Changed("port") {
-					h.Port = normalizePort(f.port)
-				}
-				if cmd.Flags().Changed("user") {
-					if f.user == "" {
-						return exitcode.New(exitcode.Usage, "empty user")
-					}
-					h.User = f.user
-				}
-				if cmd.Flags().Changed("policy") {
-					if f.policy != "" && !guard.KnownPolicy(cfg, f.policy) {
-						return exitcode.New(exitcode.Usage, "unknown policy %q", f.policy)
-					}
-					h.Policy = f.policy
-				}
-				if cmd.Flags().Changed("tag") {
-					h.Tags = splitList(f.tags)
-				}
-				if f.clearTag {
-					h.Tags = nil
-				}
-				if f.def {
-					cfg.Default = alias
-				}
-				st, err := secrets.Open(a.Dir, secrets.Options{Warn: a.Err})
-				if err != nil {
-					return err
-				}
-				dirtySecrets := false
-				if f.identity != "" {
-					h.Auth = "key"
-					h.Identity = f.identity
-					h.PasswordRef = ""
-				}
-				if password != "" {
-					h.Auth = "password"
-					h.Identity = ""
-					if h.PasswordRef == "" {
-						h.PasswordRef = found.Group + "." + alias
-					}
-					if err := st.Put(h.PasswordRef, password); err != nil {
-						return err
-					}
-					dirtySecrets = true
-				}
-				if oldRef != "" && oldRef != h.PasswordRef && cfg.PasswordRefs()[oldRef] == 0 {
-					st.Delete(oldRef)
-					dirtySecrets = true
-				}
-				if dirtySecrets {
-					if err := st.Save(); err != nil {
-						return err
-					}
-				}
-				return nil
-			})
+			return catalogErr(catalog.UpdateHost(a.Dir, draft, catalog.Options{Warn: a.Err}))
 		},
 	}
 	bindHostFlags(cmd, &f, false)
@@ -362,14 +256,14 @@ func checkPort(port int) error {
 	return nil
 }
 
-func normalizePort(port int) int {
-	if port == 22 {
-		return 0
-	}
-	return port
-}
-
 func (a *App) table(headers []string, rows [][]string) {
 	p := a.printer()
 	p.Table(headers, rows)
+}
+
+func catalogErr(err error) error {
+	if err == nil {
+		return nil
+	}
+	return exitcode.New(exitcode.Usage, "%s", err.Error())
 }

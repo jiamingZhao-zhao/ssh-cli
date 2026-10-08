@@ -2,6 +2,7 @@
 # Default destination: %LOCALAPPDATA%\ssh-cli\bin (override with SSH_CLI_BIN).
 # Default repo: jiamingZhao-zhao/ssh-cli (override with SSH_CLI_REPO=owner/name).
 # If the destination is not already on PATH, it is appended to the user Path.
+# The tag comes from the releases/latest redirect, not api.github.com.
 $ErrorActionPreference = 'Stop'
 
 $repo = if ($env:SSH_CLI_REPO) { $env:SSH_CLI_REPO } else { 'jiamingZhao-zhao/ssh-cli' }
@@ -13,28 +14,75 @@ switch -Regex ($env:PROCESSOR_ARCHITECTURE) {
     default { throw "unsupported architecture: $env:PROCESSOR_ARCHITECTURE" }
 }
 
-$headers = @{
-    'User-Agent' = 'ssh-cli-install'
-    'Accept'     = 'application/vnd.github+json'
+if ($repo -notmatch '^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$') {
+    throw "invalid repo '$repo' (want owner/name)"
 }
-$rel = Invoke-RestMethod -Headers $headers -Uri "https://api.github.com/repos/$repo/releases/latest"
-$ver = $rel.tag_name.TrimStart('v').TrimStart('V')
+
+# Tag comes from the releases/latest redirect. Do not call api.github.com.
+$latestUrl = "https://github.com/$repo/releases/latest"
+$req = [System.Net.HttpWebRequest]::Create($latestUrl)
+$req.AllowAutoRedirect = $false
+$req.UserAgent = 'ssh-cli-install'
+$req.Method = 'GET'
+$req.Timeout = 60000
+$req.Accept = 'text/html'
+try {
+    $resp = $req.GetResponse()
+} catch [System.Net.WebException] {
+    $resp = $_.Exception.Response
+    if (-not $resp) { throw }
+}
+try {
+    $status = [int]$resp.StatusCode
+    $loc = [string]$resp.Headers['Location']
+    $tag = $null
+    if ($loc -match '/releases/tag/([A-Za-z0-9._+-]+)') {
+        $tag = $Matches[1]
+    }
+    if (-not $tag -and $status -eq 200) {
+        $reader = New-Object System.IO.StreamReader($resp.GetResponseStream())
+        $html = $reader.ReadToEnd()
+        $reader.Close()
+        if ($html -match 'rel="canonical"[^>]*href="[^"]*/releases/tag/([A-Za-z0-9._+-]+)"') {
+            $tag = $Matches[1]
+        }
+    }
+} finally {
+    $resp.Close()
+}
+if (-not $tag) {
+    throw "could not read the latest release tag (HTTP $status)"
+}
+$ver = $tag
+if ($ver.StartsWith('v') -or $ver.StartsWith('V')) {
+    $ver = $ver.Substring(1)
+}
+if (-not $ver) {
+    throw "could not read the latest release tag (HTTP $status)"
+}
 $name = "ssh-cli_${ver}_windows_${arch}.zip"
-$asset = $rel.assets | Where-Object { $_.name -eq $name } | Select-Object -First 1
-if (-not $asset) {
-    throw "latest release has no $name"
-}
+$download = "https://github.com/$repo/releases/download/$tag/$name"
+$sumUrl = "https://github.com/$repo/releases/download/$tag/checksums.txt"
+$headers = @{ 'User-Agent' = 'ssh-cli-install' }
 
 $tmp = Join-Path ([System.IO.Path]::GetTempPath()) ("ssh-cli-install-" + [guid]::NewGuid().ToString('n'))
 New-Item -ItemType Directory -Path $tmp | Out-Null
 try {
     $zip = Join-Path $tmp $name
-    Invoke-WebRequest -Headers $headers -Uri $asset.browser_download_url -OutFile $zip
+    Invoke-WebRequest -Headers $headers -Uri $download -OutFile $zip -UseBasicParsing
 
-    $sums = $rel.assets | Where-Object { $_.name -eq 'checksums.txt' } | Select-Object -First 1
-    if ($sums) {
-        $sumFile = Join-Path $tmp 'checksums.txt'
-        Invoke-WebRequest -Headers $headers -Uri $sums.browser_download_url -OutFile $sumFile
+    $sumFile = Join-Path $tmp 'checksums.txt'
+    $haveSums = $false
+    try {
+        Invoke-WebRequest -Headers $headers -Uri $sumUrl -OutFile $sumFile -UseBasicParsing
+        $haveSums = $true
+    } catch {
+        $code = 0
+        if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
+        if ($code -ne 404) { throw }
+        Write-Warning 'release has no checksums.txt; the download was not verified'
+    }
+    if ($haveSums) {
         $want = $null
         foreach ($line in Get-Content $sumFile) {
             $parts = $line.Trim() -split '\s+'
@@ -48,8 +96,6 @@ try {
         if (-not $want) { throw "checksums.txt has no entry for $name" }
         $got = (Get-FileHash -Algorithm SHA256 -Path $zip).Hash.ToLower()
         if ($want -ne $got) { throw "checksum mismatch for $name" }
-    } else {
-        Write-Warning 'release has no checksums.txt; the download was not verified'
     }
 
     $out = Join-Path $tmp 'out'
