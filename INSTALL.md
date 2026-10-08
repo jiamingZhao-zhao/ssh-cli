@@ -29,7 +29,7 @@ curl -fsSL https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/insta
 curl.exe -fsSL -o %TEMP%\ssh-cli-install.cmd https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.cmd && %TEMP%\ssh-cli-install.cmd
 ```
 
-版本来自 `https://github.com/<仓库>/releases/latest` 的重定向：响应头 `Location` 指向 `/releases/tag/<tag>`。脚本不访问 `api.github.com`，因此不受匿名 API 速率限制影响。下载地址是 `https://github.com/<仓库>/releases/download/<tag>/ssh-cli_<version>_windows_<arch>.zip`（`<version>` 是 tag 去掉一个前导 `v`）。
+版本来自 `https://github.com/<仓库>/releases/latest` 的重定向：响应头 `Location` 指向 `/releases/tag/<tag>`。脚本不访问 `api.github.com`，因此不受匿名 API 速率限制影响。下载地址是 `https://github.com/<仓库>/releases/download/<tag>/ssh-cli_<version>_windows_<arch>.zip`（`<version>` 是 tag 去掉一个前导 `v`）。解压只用系统自带的 `tar.exe -xf <zip> -C <目录>`。Windows 的 `tar.exe` 是 bsdtar，不接受 GNU 的 `--force-local`。
 
 固定版本（前导 `v` 可有可无，会按仓库的 `v` 标签去下载）：
 

@@ -124,7 +124,9 @@ call :VerifySum
 if errorlevel 1 goto :fail
 
 :ExtractZip
-"%TAR%" --force-local -xf "%ASSET%" -C out
+rem Windows tar.exe is bsdtar. It rejects GNU-only flags such as --force-local.
+rem The zip name is relative (no drive-letter colon), so a plain local extract is enough.
+"%TAR%" -xf "%ASSET%" -C out
 set "TAR_ERR=%ERRORLEVEL%"
 if not "%TAR_ERR%"=="0" (
   echo(tar.exe could not extract %ASSET% 1>&2
