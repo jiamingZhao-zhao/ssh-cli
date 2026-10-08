@@ -13,6 +13,9 @@ rem The zip is https://github.com/<repo>/releases/download/<tag>/ssh-cli_<ver>_w
 rem User Path is written with WMI (HKCU\Environment), not setx, so values
 rem longer than 1024 characters are kept. An existing directory on the user
 rem or machine Path is not appended again.
+rem
+rem This file is stored with CRLF line endings. Do not convert it to LF.
+rem cmd.exe misses a label that straddles a 512-byte boundary in an LF-only file.
 
 set "SELF=%~f0"
 if not defined SSH_CLI_REPO set "SSH_CLI_REPO=jiamingZhao-zhao/ssh-cli"
