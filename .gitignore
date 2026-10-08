@@ -1,0 +1,9 @@
+/ssh-cli
+/ssh-cli.exe
+/bin/
+/dist/
+*.exe
+*.test
+coverage.out
+.idea/
+.vscode/
