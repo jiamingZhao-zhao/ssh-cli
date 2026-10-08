@@ -1,6 +1,7 @@
 # Install the latest ssh-cli release into a user-writable directory.
 # Default destination: %LOCALAPPDATA%\ssh-cli\bin (override with SSH_CLI_BIN).
 # Default repo: jiamingZhao-zhao/ssh-cli (override with SSH_CLI_REPO=owner/name).
+# If the destination is not already on PATH, it is appended to the user Path.
 $ErrorActionPreference = 'Stop'
 
 $repo = if ($env:SSH_CLI_REPO) { $env:SSH_CLI_REPO } else { 'jiamingZhao-zhao/ssh-cli' }
@@ -60,9 +61,50 @@ try {
     Copy-Item -Force $exe.FullName (Join-Path $dest 'ssh-cli.exe')
     Write-Output "installed $(Join-Path $dest 'ssh-cli.exe') ($ver)"
 
-    $entries = @($env:PATH -split ';' | ForEach-Object { $_.TrimEnd('\') })
-    if ($entries -notcontains $dest.TrimEnd('\')) {
-        Write-Output "Add $dest to PATH, then run: ssh-cli version"
+    # Compare entries case-insensitively and ignore trailing backslashes.
+    $destNorm = $dest.Trim().TrimEnd('\')
+    $onPath = {
+        param([string]$PathValue, [string]$Dir)
+        if ([string]::IsNullOrWhiteSpace($PathValue) -or [string]::IsNullOrWhiteSpace($Dir)) { return $false }
+        $needle = $Dir.Trim().TrimEnd('\')
+        foreach ($entry in ($PathValue -split ';')) {
+            $item = $entry.Trim().TrimEnd('\')
+            if ($item -and ($item -ieq $needle)) { return $true }
+        }
+        return $false
+    }
+
+    $userPath = [Environment]::GetEnvironmentVariable('Path', 'User')
+    $machinePath = [Environment]::GetEnvironmentVariable('Path', 'Machine')
+    $onUser = & $onPath $userPath $destNorm
+    $onMachine = & $onPath $machinePath $destNorm
+    $onSession = & $onPath $env:PATH $destNorm
+
+    # New terminals see User + Machine. Skip the user write when either already
+    # has this directory so a second install does not append a duplicate.
+    $updatedUser = $false
+    if (-not $onUser -and -not $onMachine) {
+        if ([string]::IsNullOrWhiteSpace($userPath)) {
+            $newUserPath = $destNorm
+        } else {
+            $newUserPath = $userPath.TrimEnd().TrimEnd(';') + ';' + $destNorm
+        }
+        [Environment]::SetEnvironmentVariable('Path', $newUserPath, 'User')
+        $updatedUser = $true
+    }
+    $updatedSession = $false
+    if (-not $onSession) {
+        if ([string]::IsNullOrEmpty($env:PATH)) {
+            $env:PATH = $destNorm
+        } else {
+            $env:PATH = $env:PATH.TrimEnd(';') + ';' + $destNorm
+        }
+        $updatedSession = $true
+    }
+    if ($updatedUser) {
+        Write-Output "Added $destNorm to user PATH. Current session already updated; new terminals pick it up."
+    } elseif ($updatedSession) {
+        Write-Output "Added $destNorm to the current session PATH. New terminals already include it."
     }
 } finally {
     if (Test-Path $tmp) {
