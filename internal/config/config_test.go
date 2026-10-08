@@ -199,6 +199,71 @@ func TestSelect(t *testing.T) {
 	}
 }
 
+func TestBuiltinEnvsEnsuredOnLoad(t *testing.T) {
+	dir := t.TempDir()
+	cfg, err := Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, FileName)); !os.IsNotExist(err) {
+		t.Fatal("load of a missing file should not create hosts.yaml")
+	}
+	assertBuiltinEnvs(t, cfg)
+
+	body := []byte(`
+version: 1
+envs:
+  prod:
+    label: 放开
+    color: green
+    maxMode: admin
+    defaultPolicy: admin
+    breakGlass: {enabled: true, maxTtl: 30m}
+    noDataOutflow: true
+  lab:
+    label: 实验
+    maxMode: admin
+groups:
+  hunan-prod:
+    env: prod
+    hosts: {}
+`)
+	if err := os.WriteFile(filepath.Join(dir, FileName), body, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err = Load(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertBuiltinEnvs(t, cfg)
+	prod := cfg.Envs["prod"]
+	if prod.BreakGlass == nil || prod.BreakGlass.MaxTTL != "30m" || !prod.NoDataOutflow {
+		t.Fatalf("extra env fields dropped: %+v", prod)
+	}
+	if cfg.Envs["lab"] == nil || cfg.Envs["lab"].Label != "实验" {
+		t.Fatal("custom env was dropped")
+	}
+	if _, ok := cfg.Groups["hunan-prod"]; !ok {
+		t.Fatal("group missing")
+	}
+}
+
+func assertBuiltinEnvs(t *testing.T, cfg *Config) {
+	t.Helper()
+	want := map[string]Env{
+		"dev":     {Label: "开发", Color: "green", MaxMode: ModeAdmin, DefaultPolicy: "standard"},
+		"test":    {Label: "测试", Color: "yellow", MaxMode: ModeStandard, DefaultPolicy: "standard"},
+		"preprod": {Label: "预生产", Color: "orange", MaxMode: ModeStandard, DefaultPolicy: "standard"},
+		"prod":    {Label: "生产", Color: "red", MaxMode: ModeReadonly, DefaultPolicy: "readonly"},
+	}
+	for name, canon := range want {
+		got := cfg.Envs[name]
+		if got == nil || got.Label != canon.Label || got.Color != canon.Color || got.MaxMode != canon.MaxMode || got.DefaultPolicy != canon.DefaultPolicy {
+			t.Fatalf("env %s = %+v, want %+v", name, got, canon)
+		}
+	}
+}
+
 func TestResolveDirEnv(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("SSH_CLI_HOME", dir)

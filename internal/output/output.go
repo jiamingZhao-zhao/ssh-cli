@@ -114,7 +114,7 @@ func IsTerminal(w io.Writer) bool {
 	return term.IsTerminal(int(f.Fd()))
 }
 
-// Paint wraps s in an ANSI color when enabled. color is red, yellow, or green.
+// Paint wraps s in an ANSI color when enabled. color is red, orange, yellow, or green.
 func Paint(enabled bool, color, s string) string {
 	if !enabled || s == "" {
 		return s
@@ -123,6 +123,8 @@ func Paint(enabled bool, color, s string) string {
 	switch strings.ToLower(color) {
 	case "red":
 		code = "31"
+	case "orange":
+		code = "38;5;208"
 	case "yellow":
 		code = "33"
 	case "green":

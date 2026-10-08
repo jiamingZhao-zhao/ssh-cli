@@ -67,9 +67,7 @@ curl.exe -fsSL -o %TEMP%\ssh-cli-install.cmd https://raw.githubusercontent.com/j
 示例地址只用文档网段 `192.0.2.0/24`，不要写真实主机。
 
 ```bash
-ssh-cli env add prod --label 生产 --color red --max-mode readonly --default-policy readonly
-ssh-cli env add test --label 测试 --color yellow --max-mode standard --default-policy standard
-
+ssh-cli env list
 ssh-cli group add app-prod --env prod --protected-path /root/app
 ssh-cli group add app-test --env test
 
@@ -87,7 +85,7 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 
 `//root/...` 会还原成 `/root/...`，用来避开 Git Bash 对绝对路径的改写。
 
-内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。自定义 allow/deny 目前写在配置文件里（`policy edit` 属于后续迭代）。
+内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。自定义 allow/deny 写在这份配置里：可以手改，也可以用本地界面改。命令行还没有 `policy edit`。
 
 ## 权限怎么算
 
@@ -101,7 +99,29 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 - 多台主机先整体预检，有一台被拒绝就整批取消；`--skip-denied` 改为跳过被拒绝的主机。
 - 一次选择跨了多个环境，必须加 `--allow-cross-env`。选择里包含 `prod` 且多于一台时，整批强制只读。
 
-主机必须属于且只属于一个分组，环境从分组继承，主机上不能写 `env`。`tags` 只用于 `-t` 选择。
+主机必须属于且只属于一个分组，环境从分组继承，主机上不能写 `env`。`tags` 只用于 `-t` 选择，分组没有 `tags` 字段。
+
+## 环境标签
+
+每次读取配置都会带上四个内置环境。它们的显示名、颜色、`maxMode` 和 `defaultPolicy` 不能改，也不能删除。文件里如果缺了，或者这四项被改过，加载时会改回下表。环境上另外保存的 `breakGlass`、`noDataOutflow` 会留下。
+
+| 名称 | 显示名 | 颜色 | maxMode | 默认策略 |
+|------|--------|------|---------|----------|
+| `dev` | 开发 | green | admin | standard |
+| `test` | 测试 | yellow | standard | standard |
+| `preprod` | 预生产 | orange | standard | standard |
+| `prod` | 生产 | red | readonly | readonly |
+
+分组可以挂到任何一个环境，包括内置的，例如 `ssh-cli group add hunan-prod --env prod`。
+
+自定义环境可以加、改、删。名字不能是上面四个。还被分组使用的自定义环境不能删。
+
+```bash
+ssh-cli env add lab --label 实验 --color green --max-mode admin --default-policy standard
+ssh-cli env remove lab
+```
+
+`env add prod` 和 `env remove prod` 都会拒绝。
 
 ## 审计
 
@@ -121,14 +141,23 @@ ssh-cli audit tail --follow
 
 ## 本地界面（可选）
 
-只给人类配置主机和查看同一份审计日志。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。
+只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、主机）并查看审计日志。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。执行命令仍走 `exec` / `upload` / `download`。
 
 ```bash
 ssh-cli ui
 ssh-cli ui --addr 127.0.0.1:7788
 ```
 
-默认只监听 `127.0.0.1:7788`。`0.0.0.0` 和其他非回环地址会拒绝，除非显式加上 `--allow-non-loopback`。该参数会打印警告：界面没有认证，不要暴露到网络上。用 Ctrl-C 停止。密码通过表单 POST 交给原来的加密存储，不会回显，也不会写入审计。
+打开 <http://127.0.0.1:7788> 之后：
+
+- **分组**：新建、修改环境、命名策略、行内 allow/deny/confirm 和受保护路径。有主机的分组不能删，和 `group remove` 一样。
+- **标签**：标签只在主机上，给 `ssh-cli -t` 选择用，分组没有 `tags` 字段。可以把一个标签加到该分组下的每台主机，或从全组去掉。
+- **危险命令**：内置环境只读；自定义环境可以改 `maxMode` 和 `defaultPolicy`。命名策略的 mode / allow / deny / confirm 可以新建或覆盖。分组和主机的行内规则在对应表单里改。某一层不写 allow 就是全集，写成空列表则会把这一层交空。内置硬拒绝不能关。
+- **主机**和**审计**跟以前一样。密码只通过主机表单 POST 进加密存储，不会回显，也不会写入审计。
+
+`relay`、`elevate` 和策略 HMAC 不在这个页面里配置。
+
+默认只监听 `127.0.0.1:7788`。`0.0.0.0` 和其他非回环地址会拒绝，除非显式加上 `--allow-non-loopback`。该参数会打印警告：界面没有认证，不要暴露到网络上。用 Ctrl-C 停止。
 
 ## 退出码
 
@@ -155,4 +184,4 @@ SSH_CLI_INTEGRATION=1 go test ./internal/integration -count=1
 
 ## 这次没做
 
-`relay`、`status`、`service`、`keys`、`run`、`elevate`、策略 HMAC、`policy edit`、从 ssh-ops 导入、GoReleaser 发版、SKILL.md。`config.VerifyPolicy` 仍是留给 HMAC 的空实现。审计日志已经落盘。CI 会把六个平台的压缩包和 `checksums.txt` 作为构建产物上传，但不会自动创建 GitHub Release。
+`relay`、`status`、`service`、`keys`、`run`、`elevate`、策略 HMAC、命令行 `policy edit`、从 ssh-ops 导入、GoReleaser 发版、SKILL.md。本地界面可以直接改 `hosts.yaml` 里的命名策略和分组 / 主机规则。`config.VerifyPolicy` 仍是留给 HMAC 的空实现。审计日志已经落盘。CI 会把六个平台的压缩包和 `checksums.txt` 作为构建产物上传，但不会自动创建 GitHub Release。

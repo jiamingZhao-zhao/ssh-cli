@@ -65,6 +65,17 @@ func errUnknownPolicy(name string) error { return unknownPolicy(name) }
 
 func (e unknownPolicy) Error() string { return "unknown policy " + string(e) }
 
+// BuiltinNames are the policies used when hosts.yaml does not override that name.
+func BuiltinNames() []string {
+	return []string{"readonly", "standard", "admin"}
+}
+
+// BuiltinPolicy returns a fresh copy of a built-in policy.
+func BuiltinPolicy(name string) (*config.Policy, bool) {
+	p, ok := builtinPolicies()[name]
+	return p, ok
+}
+
 // KnownPolicy reports whether name is built in or defined in cfg.
 func KnownPolicy(cfg *config.Config, name string) bool {
 	_, err := lookupPolicy(cfg, name)

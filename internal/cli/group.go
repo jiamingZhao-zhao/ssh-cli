@@ -165,6 +165,9 @@ func (a *App) envAdd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			if config.IsBuiltinEnv(name) {
+				return exitcode.New(exitcode.Usage, "env %q is built-in and cannot be changed", name)
+			}
 			if !config.ValidName(name) {
 				return exitcode.New(exitcode.Usage, "invalid env name %q", name)
 			}
@@ -193,7 +196,7 @@ func (a *App) envAdd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&label, "label", "", "display label")
-	cmd.Flags().StringVar(&color, "color", "", "color name (red, yellow, green)")
+	cmd.Flags().StringVar(&color, "color", "", "color name (red, orange, yellow, green)")
 	cmd.Flags().StringVar(&maxMode, "max-mode", "", "mode ceiling: readonly, standard, or admin")
 	cmd.Flags().StringVar(&defPol, "default-policy", "", "named policy applied to every group in this env")
 	_ = cmd.MarkFlagRequired("max-mode")
@@ -220,20 +223,28 @@ func (a *App) envList() *cobra.Command {
 				Color         string `json:"color,omitempty"`
 				MaxMode       string `json:"maxMode"`
 				DefaultPolicy string `json:"defaultPolicy,omitempty"`
+				Builtin       bool   `json:"builtin,omitempty"`
 			}
 			views := make([]view, 0, len(names))
 			for _, name := range names {
 				e := cfg.Envs[name]
-				views = append(views, view{Name: name, Label: e.Label, Color: e.Color, MaxMode: string(e.MaxMode), DefaultPolicy: e.DefaultPolicy})
+				views = append(views, view{
+					Name: name, Label: e.Label, Color: e.Color, MaxMode: string(e.MaxMode),
+					DefaultPolicy: e.DefaultPolicy, Builtin: config.IsBuiltinEnv(name),
+				})
 			}
 			if a.JSON {
 				return a.emit(map[string]any{"envs": views})
 			}
 			rows := make([][]string, len(views))
 			for i, v := range views {
-				rows[i] = []string{v.Name, v.Label, v.Color, v.MaxMode, v.DefaultPolicy}
+				locked := ""
+				if v.Builtin {
+					locked = "yes"
+				}
+				rows[i] = []string{v.Name, v.Label, v.Color, v.MaxMode, v.DefaultPolicy, locked}
 			}
-			a.table([]string{"NAME", "LABEL", "COLOR", "MAX_MODE", "DEFAULT_POLICY"}, rows)
+			a.table([]string{"NAME", "LABEL", "COLOR", "MAX_MODE", "DEFAULT_POLICY", "BUILTIN"}, rows)
 			return nil
 		},
 	}
@@ -246,6 +257,9 @@ func (a *App) envRemove() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			name := args[0]
+			if config.IsBuiltinEnv(name) {
+				return exitcode.New(exitcode.Usage, "env %q is built-in and cannot be changed", name)
+			}
 			return config.Update(a.Dir, func(cfg *config.Config) error {
 				if _, ok := cfg.Envs[name]; !ok {
 					return exitcode.New(exitcode.Usage, "env %q not found", name)

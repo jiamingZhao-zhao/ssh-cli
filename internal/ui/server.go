@@ -8,16 +8,17 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"io/fs"
 	"net"
 	"net/http"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
 
 //go:embed web/*
@@ -33,6 +34,16 @@ func Handler(dir string, allowRemote bool) http.Handler {
 	mux.HandleFunc("POST /api/hosts", s.addHost)
 	mux.HandleFunc("POST /api/hosts/update", s.updateHost)
 	mux.HandleFunc("POST /api/hosts/remove", s.removeHost)
+	mux.HandleFunc("POST /api/groups", s.addGroup)
+	mux.HandleFunc("POST /api/groups/update", s.updateGroup)
+	mux.HandleFunc("POST /api/groups/remove", s.removeGroup)
+	mux.HandleFunc("POST /api/groups/tags", s.groupTags)
+	mux.HandleFunc("POST /api/policies", s.addPolicy)
+	mux.HandleFunc("POST /api/policies/update", s.updatePolicy)
+	mux.HandleFunc("POST /api/policies/remove", s.removePolicy)
+	mux.HandleFunc("POST /api/envs", s.addEnv)
+	mux.HandleFunc("POST /api/envs/update", s.updateEnv)
+	mux.HandleFunc("POST /api/envs/remove", s.removeEnv)
 	sub, err := fs.Sub(webFS, "web")
 	if err != nil {
 		panic(err)
@@ -109,22 +120,34 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		Color         string `json:"color,omitempty"`
 		MaxMode       string `json:"maxMode"`
 		DefaultPolicy string `json:"defaultPolicy,omitempty"`
+		Builtin       bool   `json:"builtin,omitempty"`
 	}
 	type groupView struct {
-		Name  string `json:"name"`
-		Env   string `json:"env"`
-		Hosts int    `json:"hosts"`
+		Name           string   `json:"name"`
+		Env            string   `json:"env"`
+		Hosts          int      `json:"hosts"`
+		Policy         string   `json:"policy,omitempty"`
+		Allow          []string `json:"allow,omitempty"`
+		AllowSet       bool     `json:"allowSet"`
+		Deny           []string `json:"deny,omitempty"`
+		Confirm        []string `json:"confirm,omitempty"`
+		ProtectedPaths []string `json:"protectedPaths,omitempty"`
 	}
 	type hostView struct {
-		Alias   string   `json:"alias"`
-		Group   string   `json:"group"`
-		Env     string   `json:"env"`
-		Host    string   `json:"host"`
-		Port    int      `json:"port"`
-		User    string   `json:"user"`
-		Auth    string   `json:"auth"`
-		Tags    []string `json:"tags,omitempty"`
-		Default bool     `json:"default,omitempty"`
+		Alias    string   `json:"alias"`
+		Group    string   `json:"group"`
+		Env      string   `json:"env"`
+		Host     string   `json:"host"`
+		Port     int      `json:"port"`
+		User     string   `json:"user"`
+		Auth     string   `json:"auth"`
+		Tags     []string `json:"tags,omitempty"`
+		Policy   string   `json:"policy,omitempty"`
+		Allow    []string `json:"allow,omitempty"`
+		AllowSet bool     `json:"allowSet"`
+		Deny     []string `json:"deny,omitempty"`
+		Confirm  []string `json:"confirm,omitempty"`
+		Default  bool     `json:"default,omitempty"`
 	}
 	var envs []envView
 	for name, e := range cfg.Envs {
@@ -134,6 +157,7 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		envs = append(envs, envView{
 			Name: name, Label: e.Label, Color: e.Color,
 			MaxMode: string(e.MaxMode), DefaultPolicy: e.DefaultPolicy,
+			Builtin: config.IsBuiltinEnv(name),
 		})
 	}
 	var groups []groupView
@@ -141,19 +165,26 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		if g == nil {
 			continue
 		}
-		groups = append(groups, groupView{Name: name, Env: g.Env, Hosts: len(g.Hosts)})
+		view := groupView{Name: name, Env: g.Env, Hosts: len(g.Hosts), Policy: g.Policy}
+		fillRules(&view.Allow, &view.AllowSet, &view.Deny, &view.Confirm, g.Allow, g.Deny, g.Confirm)
+		view.ProtectedPaths = append([]string(nil), g.ProtectedPaths...)
+		groups = append(groups, view)
 	}
 	var hosts []hostView
 	for alias, h := range cfg.Index() {
 		if h.Host == nil {
 			continue
 		}
-		hosts = append(hosts, hostView{
+		view := hostView{
 			Alias: alias, Group: h.Group, Env: h.EnvName,
 			Host: h.Host.Host, Port: h.Host.PortOrDefault(), User: h.Host.User,
-			Auth: authOf(h.Host), Tags: h.Host.Tags, Default: cfg.Default == alias,
-		})
+			Auth: authOf(h.Host), Tags: h.Host.Tags, Policy: h.Host.Policy,
+			Default: cfg.Default == alias,
+		}
+		fillRules(&view.Allow, &view.AllowSet, &view.Deny, &view.Confirm, h.Host.Allow, h.Host.Deny, h.Host.Confirm)
+		hosts = append(hosts, view)
 	}
+	policies := policyCatalog(cfg)
 	if envs == nil {
 		envs = []envView{}
 	}
@@ -163,7 +194,73 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 	if hosts == nil {
 		hosts = []hostView{}
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"envs": envs, "groups": groups, "hosts": hosts})
+	writeJSON(w, http.StatusOK, map[string]any{"envs": envs, "groups": groups, "hosts": hosts, "policies": policies})
+}
+
+type policyView struct {
+	Name       string   `json:"name"`
+	Builtin    bool     `json:"builtin"`
+	Overridden bool     `json:"overridden,omitempty"`
+	Mode       string   `json:"mode,omitempty"`
+	Allow      []string `json:"allow,omitempty"`
+	AllowSet   bool     `json:"allowSet"`
+	Deny       []string `json:"deny,omitempty"`
+	Confirm    []string `json:"confirm,omitempty"`
+}
+
+func fillRules(allow *[]string, allowSet *bool, deny, confirm *[]string, srcAllow *[]string, srcDeny, srcConfirm []string) {
+	if srcAllow != nil {
+		*allowSet = true
+		*allow = append([]string(nil), (*srcAllow)...)
+	}
+	if len(srcDeny) > 0 {
+		*deny = append([]string(nil), srcDeny...)
+	}
+	if len(srcConfirm) > 0 {
+		*confirm = append([]string(nil), srcConfirm...)
+	}
+}
+
+func policyCatalog(cfg *config.Config) []policyView {
+	var out []policyView
+	seen := map[string]bool{}
+	for _, name := range guard.BuiltinNames() {
+		seen[name] = true
+		if cfg.Policies != nil {
+			if p, ok := cfg.Policies[name]; ok && p != nil {
+				out = append(out, policyViewFrom(name, p, true, true))
+				continue
+			}
+		}
+		if p, ok := guard.BuiltinPolicy(name); ok {
+			out = append(out, policyViewFrom(name, p, true, false))
+		}
+	}
+	var custom []string
+	for name, p := range cfg.Policies {
+		if p == nil || seen[name] {
+			continue
+		}
+		custom = append(custom, name)
+	}
+	sort.Strings(custom)
+	for _, name := range custom {
+		out = append(out, policyViewFrom(name, cfg.Policies[name], false, false))
+	}
+	if out == nil {
+		out = []policyView{}
+	}
+	return out
+}
+
+func policyViewFrom(name string, p *config.Policy, builtin, overridden bool) policyView {
+	view := policyView{Name: name, Builtin: builtin, Overridden: overridden}
+	if p == nil {
+		return view
+	}
+	view.Mode = string(p.Mode)
+	fillRules(&view.Allow, &view.AllowSet, &view.Deny, &view.Confirm, p.Allow, p.Deny, p.Confirm)
+	return view
 }
 
 func (s *service) auditList(w http.ResponseWriter, r *http.Request) {
@@ -251,35 +348,9 @@ func filterFromQuery(r *http.Request) (audit.Filter, error) {
 }
 
 func draftFromRequest(r *http.Request) (HostDraft, error) {
-	if r.URL.Query().Has("password") || strings.Contains(r.URL.RawQuery, "password=") {
-		return HostDraft{}, fmt.Errorf("password must be sent in the request body")
-	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	raw, err := readRaw(r)
 	if err != nil {
 		return HostDraft{}, err
-	}
-	ct := r.Header.Get("Content-Type")
-	if strings.Contains(ct, "json") || (len(body) > 0 && body[0] == '{') {
-		var raw map[string]json.RawMessage
-		if err := json.Unmarshal(body, &raw); err != nil {
-			return HostDraft{}, fmt.Errorf("invalid JSON body")
-		}
-		return draftFromMap(raw)
-	}
-	r.Body = io.NopCloser(strings.NewReader(string(body)))
-	if err := r.ParseForm(); err != nil {
-		return HostDraft{}, err
-	}
-	raw := map[string]json.RawMessage{}
-	for k, vals := range r.PostForm {
-		if len(vals) == 0 {
-			continue
-		}
-		b, err := json.Marshal(vals[0])
-		if err != nil {
-			return HostDraft{}, err
-		}
-		raw[k] = b
 	}
 	return draftFromMap(raw)
 }
@@ -344,6 +415,9 @@ func draftFromMap(raw map[string]json.RawMessage) (HostDraft, error) {
 			d.Tags = splitCSV(s)
 		}
 	}
+	if err := fillRuleFields(raw, &d.Allow, &d.Deny, &d.Confirm, &d.HasAllow, &d.HasDeny, &d.HasConfirm); err != nil {
+		return HostDraft{}, err
+	}
 	if v, ok := raw["setDefault"]; ok {
 		d.SetDefault = truthy(v)
 	}
@@ -393,6 +467,180 @@ func authOf(h *config.Host) string {
 		return "password"
 	}
 	return "unset"
+}
+
+func (s *service) addGroup(w http.ResponseWriter, r *http.Request) {
+	raw, err := readRaw(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	draft, err := groupFromMap(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := AddGroup(s.dir, draft); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *service) updateGroup(w http.ResponseWriter, r *http.Request) {
+	raw, err := readRaw(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	draft, err := groupFromMap(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := UpdateGroup(s.dir, draft); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *service) removeGroup(w http.ResponseWriter, r *http.Request) {
+	raw, err := readRaw(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	name, err := nameFromMap(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := RemoveGroup(s.dir, name); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *service) groupTags(w http.ResponseWriter, r *http.Request) {
+	raw, err := readRaw(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	group, add, remove, err := tagEditFromMap(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := ApplyGroupTags(s.dir, group, add, remove); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *service) addPolicy(w http.ResponseWriter, r *http.Request) {
+	s.writePolicy(w, r, AddPolicy)
+}
+
+func (s *service) updatePolicy(w http.ResponseWriter, r *http.Request) {
+	s.writePolicy(w, r, UpdatePolicy)
+}
+
+func (s *service) writePolicy(w http.ResponseWriter, r *http.Request, fn func(string, PolicyDraft) error) {
+	raw, err := readRaw(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	draft, err := policyFromMap(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := fn(s.dir, draft); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *service) removePolicy(w http.ResponseWriter, r *http.Request) {
+	raw, err := readRaw(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	name, err := nameFromMap(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := RemovePolicy(s.dir, name); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *service) addEnv(w http.ResponseWriter, r *http.Request) {
+	raw, err := readRaw(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	draft, err := envFromMap(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if !draft.HasMaxMode {
+		writeErr(w, http.StatusBadRequest, "maxMode must be readonly, standard, or admin")
+		return
+	}
+	if err := AddEnv(s.dir, draft); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *service) updateEnv(w http.ResponseWriter, r *http.Request) {
+	raw, err := readRaw(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	draft, err := envFromMap(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := UpdateEnv(s.dir, draft); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *service) removeEnv(w http.ResponseWriter, r *http.Request) {
+	raw, err := readRaw(r)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	name, err := nameFromMap(raw)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	if err := RemoveEnv(s.dir, name); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
