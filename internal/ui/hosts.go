@@ -23,6 +23,9 @@ type HostDraft struct {
 	Identity   string
 	Policy     string
 	Tags       []string
+	Allow      *[]string
+	Deny       []string
+	Confirm    []string
 	SetDefault bool
 	ClearTags  bool
 
@@ -34,6 +37,9 @@ type HostDraft struct {
 	HasIdentity bool
 	HasPolicy   bool
 	HasTags     bool
+	HasAllow    bool
+	HasDeny     bool
+	HasConfirm  bool
 }
 
 // AddHost creates one host. A password is stored through secrets.Store.
@@ -71,11 +77,14 @@ func AddHost(dir string, in HostDraft) error {
 			return fmt.Errorf("unknown policy %q", in.Policy)
 		}
 		h := &config.Host{
-			Host:   strings.TrimSpace(in.Address),
-			User:   strings.TrimSpace(in.User),
-			Port:   normalizePortPtr(in.Port),
-			Tags:   cleanTags(in.Tags),
-			Policy: in.Policy,
+			Host:    strings.TrimSpace(in.Address),
+			User:    strings.TrimSpace(in.User),
+			Port:    normalizePortPtr(in.Port),
+			Tags:    cleanTags(in.Tags),
+			Policy:  in.Policy,
+			Allow:   cloneListPtr(in.Allow),
+			Deny:    append([]string(nil), in.Deny...),
+			Confirm: append([]string(nil), in.Confirm...),
 		}
 		if strings.TrimSpace(in.Identity) != "" {
 			h.Auth = "key"
@@ -111,7 +120,8 @@ func UpdateHost(dir string, in HostDraft) error {
 		return err
 	}
 	changed := in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
-		in.HasPassword || in.HasPolicy || in.HasTags || in.SetDefault || in.ClearTags
+		in.HasPassword || in.HasPolicy || in.HasTags || in.HasAllow || in.HasDeny || in.HasConfirm ||
+		in.SetDefault || in.ClearTags
 	if !changed {
 		return fmt.Errorf("no changes given")
 	}
@@ -167,6 +177,15 @@ func UpdateHost(dir string, in HostDraft) error {
 		}
 		if in.ClearTags {
 			h.Tags = nil
+		}
+		if in.HasAllow {
+			h.Allow = cloneListPtr(in.Allow)
+		}
+		if in.HasDeny {
+			h.Deny = append([]string(nil), in.Deny...)
+		}
+		if in.HasConfirm {
+			h.Confirm = append([]string(nil), in.Confirm...)
 		}
 		if in.SetDefault {
 			cfg.Default = alias

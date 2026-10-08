@@ -46,3 +46,20 @@ button.danger { color: var(--danger); border-color: var(--danger); }
 .error { color: var(--danger); }
 .filters { align-items: end; }
 code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 0.85em; }
+nav { display: flex; flex-wrap: wrap; gap: 0.9rem; margin-top: 0.7rem; }
+nav a { color: var(--accent); }
+textarea {
+  font: 0.9rem/1.4 ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  min-height: 4.6rem;
+  padding: 0.35rem 0.45rem;
+  border: 1px solid var(--line);
+  background: white;
+  color: var(--ink);
+  resize: vertical;
+}
+.wide { grid-column: 1 / -1; }
+.table-wrap { overflow-x: auto; }
+.tag-line { display: flex; gap: 0.4rem; align-items: center; margin: 0.2rem 0; }
+.tag-line span { min-width: 4.5rem; }
+.tag-line input { flex: 1; min-width: 8rem; }
+button:disabled { opacity: 0.45; cursor: default; }

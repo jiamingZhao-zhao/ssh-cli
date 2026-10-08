@@ -227,12 +227,15 @@ func (s Selector) empty() bool {
 // ValidName reports whether name can be an alias, group, env, or policy.
 func ValidName(name string) bool { return nameRe.MatchString(name) }
 
-// Load reads hosts.yaml. A missing file is an empty version-1 config.
+// Load reads hosts.yaml. A missing or empty file is a version-1 config with
+// the four built-in env labels. Those labels are reset to their canonical
+// fields on every load.
 func Load(dir string) (*Config, error) {
 	path := filepath.Join(dir, FileName)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return &Config{Version: 1}, nil
+		cfg := &Config{Version: 1}
+		return cfg, cfg.prepare()
 	}
 	if err != nil {
 		return nil, err
@@ -241,7 +244,8 @@ func Load(dir string) (*Config, error) {
 		return nil, err
 	}
 	if len(bytes.TrimSpace(data)) == 0 {
-		return &Config{Version: 1}, nil
+		cfg := &Config{Version: 1}
+		return cfg, cfg.prepare()
 	}
 	if err := rejectHostEnv(data); err != nil {
 		return nil, err
@@ -256,10 +260,19 @@ func Load(dir string) (*Config, error) {
 	if cfg.Version != 1 {
 		return nil, fmt.Errorf("unsupported config version %d", cfg.Version)
 	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.prepare(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// prepare inserts the locked built-in envs and validates the document.
+func (c *Config) prepare() error {
+	if c.Version == 0 {
+		c.Version = 1
+	}
+	c.ensureBuiltinEnvs()
+	return c.Validate()
 }
 
 // Save writes the full document atomically. Callers that hold the directory
@@ -268,10 +281,7 @@ func Save(dir string, cfg *Config) error {
 	if cfg == nil {
 		return fmt.Errorf("nil config")
 	}
-	if cfg.Version == 0 {
-		cfg.Version = 1
-	}
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.prepare(); err != nil {
 		return err
 	}
 	var buf bytes.Buffer
