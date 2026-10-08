@@ -64,6 +64,7 @@ func Execute(args []string, in io.Reader, out, errw io.Writer) int {
 		fmt.Fprintf(errw, "error: %s\n", err)
 		return exitcode.Usage
 	}
+	args = normalizeArgs(args)
 	a := &App{In: in, Out: out, Err: errw}
 	root := a.command()
 	root.SetArgs(args)
@@ -90,6 +91,21 @@ func Execute(args []string, in io.Reader, out, errw io.Writer) int {
 	return code
 }
 
+// normalizeArgs accepts the single-dash form -version as --version.
+// pflag would otherwise read -version as a bundle of short flags.
+func normalizeArgs(args []string) []string {
+	out := append([]string(nil), args...)
+	for i, a := range out {
+		if a == "--" {
+			break
+		}
+		if a == "-version" {
+			out[i] = "--version"
+		}
+	}
+	return out
+}
+
 func rejectPasswordFlag(args []string) error {
 	for _, a := range args {
 		if a == "--" {
@@ -104,8 +120,15 @@ func rejectPasswordFlag(args []string) error {
 
 func (a *App) command() *cobra.Command {
 	root := &cobra.Command{
-		Use:           "ssh-cli",
-		Short:         "Encrypted SSH operations CLI",
+		Use:   "ssh-cli",
+		Short: "Encrypted SSH operations CLI",
+		Long: `ssh-cli runs remote commands and SFTP transfers with encrypted credentials and a policy engine.
+
+Print this build with "ssh-cli version", "ssh-cli --version", "ssh-cli -V", or "ssh-cli -version".
+Install a newer GitHub release with "ssh-cli update" (opt-in; nothing updates in the background).`,
+		Example: `  ssh-cli version
+  ssh-cli -h
+  ssh-cli update --check`,
 		Version:       version.String(),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -135,6 +158,11 @@ func (a *App) command() *cobra.Command {
 	f.StringArrayVarP(&a.Groups, "group", "g", nil, "group name (repeatable or comma-separated)")
 	f.StringArrayVarP(&a.Tags, "tag", "t", nil, "tag (repeatable or comma-separated; OR within tags)")
 	f.StringVar(&a.Env, "env", "", "restrict the selection to this env")
+	// Register --version/-V before Execute so cobra does not add the default -v shorthand.
+	// -version is rewritten to --version in normalizeArgs.
+	root.Flags().BoolP("version", "V", false, "print version and exit (also: -version)")
+	root.SetVersionTemplate("{{.Version}}\n")
+	root.CompletionOptions.HiddenDefaultCmd = true
 
 	root.AddCommand(
 		a.hostCmd(),
@@ -144,6 +172,7 @@ func (a *App) command() *cobra.Command {
 		a.uploadCmd(),
 		a.downloadCmd(),
 		a.policyCmd(),
+		a.updateCmd(),
 		a.versionCmd(),
 	)
 	return root
@@ -155,7 +184,7 @@ func (a *App) versionCmd() *cobra.Command {
 		Short: "Print the version",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if a.JSON {
-				return a.emit(map[string]string{"version": version.Version, "name": "ssh-cli"})
+				return a.emit(version.Info())
 			}
 			fmt.Fprintln(a.Out, version.String())
 			return nil

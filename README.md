@@ -2,7 +2,7 @@
 
 零依赖的单文件 SSH 运维 CLI（Go）。远程命令、文件上传下载；凭据加密存储，危险命令拦截，对 agent 友好的输出。
 
-当前是第 1 次迭代（设计提纲里的 M0 + M1，以及第 5 节策略引擎的核心）。中继、状态、服务管理、公钥审计、任务、破窗提权、策略 HMAC 与发布流水线还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。
+当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）和第 2 次迭代（版本号、`update`、安装脚本）。中继、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
 
 ## 构建
 
@@ -17,6 +17,26 @@ CGO_ENABLED=0 go build -o ssh-cli ./cmd/ssh-cli
 ```bash
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ssh-cli ./cmd/ssh-cli
 ```
+
+本地构建的版本号是 `dev`。发布包用 ldflags 写入版本、提交和日期（见 `scripts/package.sh`）：
+
+```bash
+CGO_ENABLED=0 go build -ldflags "-X github.com/jiamingZhao-zhao/ssh-cli/internal/version.Version=0.1.0 -X github.com/jiamingZhao-zhao/ssh-cli/internal/version.Commit=abc -X github.com/jiamingZhao-zhao/ssh-cli/internal/version.Date=2026-10-08T00:00:00Z" -o ssh-cli ./cmd/ssh-cli
+```
+
+## 安装、版本、更新
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.sh | sh
+ssh-cli -h
+ssh-cli version
+ssh-cli --version
+ssh-cli -V
+ssh-cli -version
+ssh-cli update --check
+```
+
+`version`、`--version`、`-V`、`-version` 打印同一行。`update` 从 GitHub Release 下载当前平台的资产并替换正在运行的二进制，只在执行该命令时发生。没有 `checksums.txt` 时会警告并继续；校验和不匹配则拒绝安装。非交互终端不能确认安装（退出码 253）。仓库和资产名见 [INSTALL.md](INSTALL.md)。
 
 ## 配置目录
 
@@ -95,8 +115,8 @@ go test ./...
 SSH_CLI_INTEGRATION=1 go test ./internal/integration -count=1
 ```
 
-集成测试在本机用 Docker 启动 `linuxserver/openssh-server`，只连接 `127.0.0.1`。没设置 `SSH_CLI_INTEGRATION=1` 且不在 CI 里时会跳过。
+集成测试在本机用 Docker 启动 `linuxserver/openssh-server`，只连接 `127.0.0.1`。没设置 `SSH_CLI_INTEGRATION=1` 时会跳过。
 
 ## 这次没做
 
-`relay`、`status`、`service`、`keys`、`run`、`elevate`、策略 HMAC、`policy edit`、审计日志落盘、从 ssh-ops 导入、GoReleaser。`internal/audit` 和 `config.VerifyPolicy` 是留给后续接上的空实现。
+`relay`、`status`、`service`、`keys`、`run`、`elevate`、策略 HMAC、`policy edit`、审计日志落盘、从 ssh-ops 导入、GoReleaser 发版、SKILL.md。`internal/audit` 和 `config.VerifyPolicy` 是留给后续接上的空实现。CI 会把六个平台的压缩包和 `checksums.txt` 作为构建产物上传，但不会自动创建 GitHub Release。

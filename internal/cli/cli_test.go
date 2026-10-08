@@ -2,10 +2,17 @@ package cli
 
 import (
 	"bytes"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/update"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/version"
 )
 
 func TestRejectPlaintextPasswordFlag(t *testing.T) {
@@ -110,6 +117,127 @@ func TestHostLifecycleAndPolicy(t *testing.T) {
 	if code != 0 {
 		t.Fatal("version")
 	}
+}
+
+func TestVersionSwitchesMatch(t *testing.T) {
+	want := version.String()
+	for _, args := range [][]string{
+		{"version"},
+		{"--version"},
+		{"-V"},
+		{"-version"},
+	} {
+		var out, errb bytes.Buffer
+		code := Execute(args, strings.NewReader(""), &out, &errb)
+		if code != 0 {
+			t.Fatalf("%v code %d stderr %s", args, code, errb.String())
+		}
+		if strings.TrimSpace(out.String()) != want {
+			t.Fatalf("%v stdout %q want %q", args, out.String(), want)
+		}
+	}
+	var out, errb bytes.Buffer
+	code := Execute([]string{"version", "--json"}, strings.NewReader(""), &out, &errb)
+	if code != 0 || !strings.Contains(out.String(), `"version": "dev"`) || strings.Contains(out.String(), "s3cret") {
+		t.Fatalf("json version %d %s %s", code, out.String(), errb.String())
+	}
+}
+
+func TestRootHelpListsCommands(t *testing.T) {
+	for _, args := range [][]string{{"-h"}, {"--help"}} {
+		var out, errb bytes.Buffer
+		code := Execute(args, strings.NewReader(""), &out, &errb)
+		if code != 0 {
+			t.Fatalf("%v code %d %s", args, code, errb.String())
+		}
+		text := out.String()
+		for _, fragment := range []string{
+			"Available Commands:",
+			"Manage hosts",
+			"Manage groups",
+			"Manage env label definitions",
+			"Run a remote command",
+			"Upload a file or directory over SFTP",
+			"Download a file or directory over SFTP",
+			"Show the effective policy for a host",
+			"Install the latest GitHub release",
+			"Print the version",
+			"ssh-cli version",
+			"ssh-cli update --check",
+		} {
+			if !strings.Contains(text, fragment) {
+				t.Fatalf("%v help missing %q\n%s", args, fragment, text)
+			}
+		}
+	}
+	var out, errb bytes.Buffer
+	code := Execute([]string{"update", "-h"}, strings.NewReader(""), &out, &errb)
+	if code != 0 || !strings.Contains(out.String(), "checksums.txt") || !strings.Contains(out.String(), "ssh-cli_<version>_") {
+		t.Fatalf("update help %d\n%s\n%s", code, out.String(), errb.String())
+	}
+}
+
+func TestUpdateCheckAndNonTTYRefusal(t *testing.T) {
+	ttyCheck = func() bool { return false }
+	t.Cleanup(func() { ttyCheck = defaultTTY })
+	srv := updateReleaseServer(t)
+	oldBase := update.APIBase
+	update.APIBase = srv.URL
+	t.Cleanup(func() { update.APIBase = oldBase })
+	dest := filepath.Join(t.TempDir(), "ssh-cli")
+	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldBin := update.CurrentBinary
+	update.CurrentBinary = func() (string, error) { return dest, nil }
+	t.Cleanup(func() { update.CurrentBinary = oldBin })
+
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	code := Execute([]string{"--config", dir, "update", "--check", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
+	if code != 0 {
+		t.Fatalf("check %d %s %s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "current: dev") || !strings.Contains(out.String(), "latest: 1.2.3") || !strings.Contains(out.String(), "update available") {
+		t.Fatalf("check output %s", out.String())
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || string(got) != "old" {
+		t.Fatal("check replaced the binary")
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = Execute([]string{"--config", dir, "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
+	if code != 253 || !strings.Contains(errb.String(), "interactive TTY") {
+		t.Fatalf("install without tty: %d %s %s", code, out.String(), errb.String())
+	}
+	got, _ = os.ReadFile(dest)
+	if string(got) != "old" {
+		t.Fatal("refused install replaced the binary")
+	}
+
+	out.Reset()
+	errb.Reset()
+	code = Execute([]string{"--config", dir, "--yes", "update", "--check"}, strings.NewReader(""), &out, &errb)
+	if code != 253 || !strings.Contains(errb.String(), "--yes") {
+		t.Fatalf("--yes update without tty: %d %s", code, errb.String())
+	}
+}
+
+func updateReleaseServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	name := update.AssetName("1.2.3", runtime.GOOS, runtime.GOARCH)
+	var srv *httptest.Server
+	srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			fmt.Fprintf(w, `{"tag_name":"v1.2.3","assets":[{"name":%q,"browser_download_url":%q}]}`, name, srv.URL+"/a/"+name)
+			return
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 func TestConfirmRequiresAlias(t *testing.T) {

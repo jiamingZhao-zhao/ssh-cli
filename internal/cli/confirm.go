@@ -31,13 +31,17 @@ func confirmAlias(alias string, yes bool) error {
 }
 
 func confirmFrom(alias string, in io.Reader, out io.Writer) error {
-	fmt.Fprintf(out, "type host alias %q to confirm: ", alias)
+	return confirmTyped(alias, "host alias", in, out)
+}
+
+func confirmTyped(expect, noun string, in io.Reader, out io.Writer) error {
+	fmt.Fprintf(out, "type %s %q to confirm: ", noun, expect)
 	line, err := bufio.NewReader(in).ReadString('\n')
 	if err != nil && line == "" {
-		return exitcode.New(exitcode.Denied, "confirmation failed for host %s", alias)
+		return exitcode.New(exitcode.Denied, "confirmation failed for %s %s", noun, expect)
 	}
-	if strings.TrimSpace(line) != alias {
-		return exitcode.New(exitcode.Denied, "confirmation did not match host alias %q", alias)
+	if strings.TrimSpace(line) != expect {
+		return exitcode.New(exitcode.Denied, "confirmation did not match %s %q", noun, expect)
 	}
 	return nil
 }
