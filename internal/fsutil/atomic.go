@@ -8,7 +8,8 @@ import (
 )
 
 // WriteAtomic replaces path with data via a same-directory temp file and rename.
-// mode is applied before the rename (0600 for config and secrets).
+// mode is applied before the rename (0600 for config and secrets). On Windows,
+// harden also installs a protected DACL granting only the current user full access.
 func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 	dir := filepath.Dir(path)
 	if err := os.MkdirAll(dir, 0o700); err != nil {

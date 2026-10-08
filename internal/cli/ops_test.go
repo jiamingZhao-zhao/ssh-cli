@@ -57,9 +57,9 @@ func TestImportHelpAndRoundTrip(t *testing.T) {
 	if code != 0 || !strings.Contains(stdout, "tight") || !strings.Contains(stdout, "readonly") {
 		t.Fatalf("policy list %d\n%s", code, stdout)
 	}
-	code, _, stderr = run("env", "edit", "dev", "--no-data-outflow")
+	code, _, stderr = run("env", "add", "lab", "--max-mode", "standard", "--no-data-outflow")
 	if code != 0 {
-		t.Fatalf("env edit %d %s", code, stderr)
+		t.Fatalf("env add %d %s", code, stderr)
 	}
 	yamlBytes, err := os.ReadFile(filepath.Join(dir, "hosts.yaml"))
 	if err != nil {
@@ -100,8 +100,6 @@ func TestStatusServiceAndKeys(t *testing.T) {
 			t.Fatalf("%v: %d\n%s\n%s", args, code, out, errb)
 		}
 	}
-	mustOK("env", "add", "prod", "--max-mode", "readonly", "--default-policy", "readonly")
-	mustOK("env", "add", "dev", "--max-mode", "admin", "--default-policy", "admin")
 	mustOK("group", "add", "app-prod", "--env", "prod")
 	mustOK("group", "add", "sandbox", "--env", "dev")
 	code, _, errb := runIn("s3cret-ops\n", "host", "add", "main", "--group", "app-prod", "--host", "192.0.2.10", "--user", "viewer", "--password-stdin", "--set-default")

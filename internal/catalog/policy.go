@@ -85,7 +85,7 @@ func ListPolicies(cfg *config.Config) []PolicyView {
 	sort.Strings(ordered)
 	out := make([]PolicyView, 0, len(ordered))
 	for _, name := range ordered {
-		_, builtin := guard.Builtin(name)
+		_, builtin := guard.BuiltinPolicy(name)
 		_, file := filePolicy(cfg, name)
 		source := "file"
 		switch {
@@ -112,7 +112,7 @@ func effectivePolicy(cfg *config.Config, name string) *config.Policy {
 	if p, ok := filePolicy(cfg, name); ok {
 		return p
 	}
-	p, _ := guard.Builtin(name)
+	p, _ := guard.BuiltinPolicy(name)
 	return p
 }
 
@@ -162,7 +162,7 @@ func addPolicy(cfg *config.Config, in PolicyDraft) error {
 	if _, ok := filePolicy(cfg, name); ok {
 		return fmt.Errorf("policy %q already exists", name)
 	}
-	if _, ok := guard.Builtin(name); ok {
+	if _, ok := guard.BuiltinPolicy(name); ok {
 		return fmt.Errorf("policy %q is built-in; use policy edit to override it", name)
 	}
 	pol, err := in.materialize()
@@ -190,7 +190,7 @@ func editPolicy(cfg *config.Config, in PolicyDraft) error {
 		return fmt.Errorf("invalid policy name %q", name)
 	}
 	current, inFile := filePolicy(cfg, name)
-	builtin, isBuiltin := guard.Builtin(name)
+	builtin, isBuiltin := guard.BuiltinPolicy(name)
 	if !inFile && !isBuiltin {
 		return fmt.Errorf("policy %q not found", name)
 	}
@@ -226,12 +226,12 @@ func RemovePolicy(dir, name string) error {
 func removePolicy(cfg *config.Config, name string) error {
 	name = strings.TrimSpace(name)
 	if _, ok := filePolicy(cfg, name); !ok {
-		if _, builtin := guard.Builtin(name); builtin {
+		if _, builtin := guard.BuiltinPolicy(name); builtin {
 			return fmt.Errorf("policy %q is built-in and is not overridden", name)
 		}
 		return fmt.Errorf("policy %q not found", name)
 	}
-	if _, builtin := guard.Builtin(name); !builtin {
+	if _, builtin := guard.BuiltinPolicy(name); !builtin {
 		if users := policyUsers(cfg, name); len(users) > 0 {
 			return fmt.Errorf("policy %q is still used by %s", name, strings.Join(users, ", "))
 		}

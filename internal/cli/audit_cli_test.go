@@ -45,9 +45,6 @@ func TestAuditDenialsUploadsAndRemoteResults(t *testing.T) {
 			t.Fatalf("%v: %d\n%s\n%s", args, code, out, errb)
 		}
 	}
-	mustOK("env", "add", "prod", "--label", "生产", "--max-mode", "readonly", "--default-policy", "readonly")
-	mustOK("env", "add", "test", "--label", "测试", "--max-mode", "standard", "--default-policy", "standard")
-	mustOK("env", "add", "dev", "--label", "开发", "--max-mode", "admin", "--default-policy", "admin")
 	mustOK("group", "add", "app-prod", "--env", "prod")
 	mustOK("group", "add", "app-test", "--env", "test")
 	mustOK("group", "add", "sandbox", "--env", "dev", "--policy", "admin")

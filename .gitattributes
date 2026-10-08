@@ -1,1 +1,6 @@
-install.cmd text eol=crlf
+# Store install.cmd bytes as CRLF. Do not mark it "text" or "eol=crlf":
+# those attributes keep LF in the git blob, and the Windows install curls
+# that blob from raw.githubusercontent.com. cmd.exe resets its 512-byte
+# label scan only on CRLF, so an LF-only file can miss a real label
+# (call :NeedTool) when the label straddles a chunk boundary.
+install.cmd -text

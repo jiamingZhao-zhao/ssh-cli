@@ -170,7 +170,7 @@ func (a *App) envAdd() *cobra.Command {
 		},
 	}
 	cmd.Flags().StringVar(&label, "label", "", "display label")
-	cmd.Flags().StringVar(&color, "color", "", "color name (red, yellow, green)")
+	cmd.Flags().StringVar(&color, "color", "", "color name (red, orange, yellow, green)")
 	cmd.Flags().StringVar(&maxMode, "max-mode", "", "mode ceiling: readonly, standard, or admin")
 	cmd.Flags().StringVar(&defPol, "default-policy", "", "named policy applied to every group in this env")
 	cmd.Flags().BoolVar(&noOut, "no-data-outflow", false, "mark the env as forbidding data outflow")
@@ -244,6 +244,7 @@ func (a *App) envList() *cobra.Command {
 				MaxMode       string `json:"maxMode"`
 				DefaultPolicy string `json:"defaultPolicy,omitempty"`
 				NoDataOutflow bool   `json:"noDataOutflow,omitempty"`
+				Builtin       bool   `json:"builtin,omitempty"`
 			}
 			views := make([]view, 0, len(names))
 			for _, name := range names {
@@ -251,6 +252,7 @@ func (a *App) envList() *cobra.Command {
 				views = append(views, view{
 					Name: name, Label: e.Label, Color: e.Color, MaxMode: string(e.MaxMode),
 					DefaultPolicy: e.DefaultPolicy, NoDataOutflow: e.NoDataOutflow,
+					Builtin: config.IsBuiltinEnv(name),
 				})
 			}
 			if a.JSON {
@@ -258,9 +260,13 @@ func (a *App) envList() *cobra.Command {
 			}
 			rows := make([][]string, len(views))
 			for i, v := range views {
-				rows[i] = []string{v.Name, v.Label, v.Color, v.MaxMode, v.DefaultPolicy}
+				locked := ""
+				if v.Builtin {
+					locked = "yes"
+				}
+				rows[i] = []string{v.Name, v.Label, v.Color, v.MaxMode, v.DefaultPolicy, locked}
 			}
-			a.table([]string{"NAME", "LABEL", "COLOR", "MAX_MODE", "DEFAULT_POLICY"}, rows)
+			a.table([]string{"NAME", "LABEL", "COLOR", "MAX_MODE", "DEFAULT_POLICY", "BUILTIN"}, rows)
 			return nil
 		},
 	}

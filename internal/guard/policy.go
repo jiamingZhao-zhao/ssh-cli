@@ -571,17 +571,6 @@ func DecideService(eff Effective, action string) Decision {
 	return dec
 }
 
-// Builtin returns a fresh copy of a built-in named policy.
-func Builtin(name string) (*config.Policy, bool) {
-	p, ok := builtinPolicies()[name]
-	return p, ok && p != nil
-}
-
-// BuiltinNames lists the built-in policy names in stable order.
-func BuiltinNames() []string {
-	return []string{"admin", "readonly", "standard"}
-}
-
 // DecideCapability checks upload/download (and a protected remote path).
 func DecideCapability(eff Effective, capability, remotePath string) Decision {
 	dec := Decision{Mode: string(eff.Mode), Allowed: true}

@@ -169,7 +169,7 @@ func TestUIConfigParity(t *testing.T) {
 	index.RemoteAddr = "127.0.0.1:9"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, index)
-	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "环境") || !strings.Contains(rr.Body.String(), "已知主机密钥") || !strings.Contains(rr.Body.String(), "命名策略") {
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "危险命令") || !strings.Contains(rr.Body.String(), "已知主机密钥") || !strings.Contains(rr.Body.String(), "标签只写在主机上") {
 		t.Fatalf("index %d %s", rr.Code, rr.Body.String())
 	}
 	post := func(path, body string) *httptest.ResponseRecorder {
@@ -181,10 +181,10 @@ func TestUIConfigParity(t *testing.T) {
 		h.ServeHTTP(w, req)
 		return w
 	}
-	if w := post("/api/envs", `{"name":"dev","label":"开发","maxMode":"admin","noDataOutflow":true}`); w.Code != 200 {
+	if w := post("/api/envs", `{"name":"lab","label":"实验","maxMode":"admin","noDataOutflow":true}`); w.Code != 200 {
 		t.Fatalf("env %d %s", w.Code, w.Body.String())
 	}
-	if w := post("/api/groups", `{"name":"sandbox","env":"dev","protectedPaths":["/root/app"]}`); w.Code != 200 {
+	if w := post("/api/groups", `{"name":"sandbox","env":"lab","protectedPaths":["/root/app"]}`); w.Code != 200 {
 		t.Fatalf("group %d %s", w.Code, w.Body.String())
 	}
 	if w := post("/api/policies", `{"name":"tight","mode":"readonly","deny":["shutdown"],"confirm":["systemctl restart"]}`); w.Code != 200 {
@@ -193,10 +193,10 @@ func TestUIConfigParity(t *testing.T) {
 	if w := post("/api/policies/update", `{"name":"tight","mode":"standard","deny":["shutdown","poweroff"],"confirm":["systemctl restart"]}`); w.Code != 200 {
 		t.Fatalf("policy update %d %s", w.Code, w.Body.String())
 	}
-	if w := post("/api/envs/update", `{"name":"dev","label":"开发","maxMode":"standard","defaultPolicy":"tight"}`); w.Code != 200 {
+	if w := post("/api/envs/update", `{"name":"lab","label":"实验","maxMode":"standard","defaultPolicy":"tight"}`); w.Code != 200 {
 		t.Fatalf("env update %d %s", w.Code, w.Body.String())
 	}
-	if w := post("/api/groups/set-env", `{"name":"sandbox","env":"dev"}`); w.Code != 200 {
+	if w := post("/api/groups/set-env", `{"name":"sandbox","env":"lab"}`); w.Code != 200 {
 		t.Fatalf("set-env %d %s", w.Code, w.Body.String())
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
@@ -204,7 +204,7 @@ func TestUIConfigParity(t *testing.T) {
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	body := rr.Body.String()
-	for _, fragment := range []string{`"name":"dev"`, `"name":"sandbox"`, `"name":"tight"`, "poweroff", `"maxMode":"standard"`} {
+	for _, fragment := range []string{`"name":"lab"`, `"name":"sandbox"`, `"name":"tight"`, "poweroff", `"maxMode":"standard"`} {
 		if !strings.Contains(body, fragment) {
 			t.Fatalf("catalog missing %s\n%s", fragment, body)
 		}

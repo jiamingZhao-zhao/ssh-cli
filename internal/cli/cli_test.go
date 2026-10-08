@@ -38,12 +38,12 @@ func TestHostLifecycleAndPolicy(t *testing.T) {
 		return code, out.String(), errb.String()
 	}
 	code, _, errb := run("env", "add", "prod", "--label", "生产", "--color", "red", "--max-mode", "readonly", "--default-policy", "readonly")
-	if code != 0 {
-		t.Fatalf("env add: %d %s", code, errb)
+	if code == 0 || !strings.Contains(errb, "built-in") {
+		t.Fatalf("env add builtin: %d %s", code, errb)
 	}
-	code, _, errb = run("env", "add", "dev", "--label", "开发", "--color", "green", "--max-mode", "admin", "--default-policy", "admin")
-	if code != 0 {
-		t.Fatalf("env add dev: %d %s", code, errb)
+	code, _, errb = run("env", "remove", "prod")
+	if code == 0 || !strings.Contains(errb, "built-in") {
+		t.Fatalf("env remove builtin: %d %s", code, errb)
 	}
 	code, _, errb = run("group", "add", "app-prod", "--env", "prod", "--protected-path", "/root/app")
 	if code != 0 {
@@ -114,6 +114,36 @@ func TestHostLifecycleAndPolicy(t *testing.T) {
 	code, _, _ = run("version")
 	if code != 0 {
 		t.Fatal("version")
+	}
+}
+
+func TestCustomEnvAndBuiltinGroup(t *testing.T) {
+	dir := t.TempDir()
+	run := func(args ...string) (int, string, string) {
+		t.Helper()
+		var out, errb bytes.Buffer
+		code := Execute(append([]string{"--config", dir}, args...), strings.NewReader(""), &out, &errb)
+		return code, out.String(), errb.String()
+	}
+	code, out, errb := run("env", "list")
+	if code != 0 || !strings.Contains(out, "preprod") || !strings.Contains(out, "预生产") || !strings.Contains(out, "orange") {
+		t.Fatalf("env list %d %s %s", code, out, errb)
+	}
+	code, _, errb = run("env", "add", "lab", "--label", "实验", "--color", "green", "--max-mode", "admin", "--default-policy", "standard")
+	if code != 0 {
+		t.Fatalf("env add lab: %d %s", code, errb)
+	}
+	code, _, errb = run("group", "add", "hunan-prod", "--env", "prod")
+	if code != 0 {
+		t.Fatalf("group add: %d %s", code, errb)
+	}
+	code, _, errb = run("env", "remove", "lab")
+	if code != 0 {
+		t.Fatalf("env remove lab: %d %s", code, errb)
+	}
+	code, out, _ = run("env", "list")
+	if strings.Contains(out, "lab") || !strings.Contains(out, "prod") {
+		t.Fatalf("env list after remove: %s", out)
 	}
 }
 

@@ -33,6 +33,9 @@ func AddEnv(dir string, in EnvDraft) error {
 
 func addEnv(cfg *config.Config, in EnvDraft) error {
 	name := strings.TrimSpace(in.Name)
+	if config.IsBuiltinEnv(name) {
+		return fmt.Errorf("env %q is built-in and cannot be changed", name)
+	}
 	if !config.ValidName(name) {
 		return fmt.Errorf("invalid env name %q", name)
 	}
@@ -73,6 +76,9 @@ func EditEnv(dir string, in EnvDraft) error {
 
 func editEnv(cfg *config.Config, in EnvDraft) error {
 	name := strings.TrimSpace(in.Name)
+	if config.IsBuiltinEnv(name) {
+		return fmt.Errorf("env %q is built-in and cannot be changed", name)
+	}
 	env, ok := cfg.Envs[name]
 	if !ok || env == nil {
 		return fmt.Errorf("env %q not found", name)
@@ -124,6 +130,9 @@ func RemoveEnv(dir, name string) error {
 
 func removeEnv(cfg *config.Config, name string) error {
 	name = strings.TrimSpace(name)
+	if config.IsBuiltinEnv(name) {
+		return fmt.Errorf("env %q is built-in and cannot be changed", name)
+	}
 	if _, ok := cfg.Envs[name]; !ok {
 		return fmt.Errorf("env %q not found", name)
 	}
