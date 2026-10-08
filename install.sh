@@ -11,7 +11,7 @@ case "$(uname -s)" in
   Linux) goos=linux ;;
   Darwin) goos=darwin ;;
   *)
-    echo "unsupported OS $(uname -s); on Windows run install.ps1" >&2
+    echo "unsupported OS $(uname -s); on Windows, from cmd.exe run install.cmd" >&2
     exit 1
     ;;
 esac

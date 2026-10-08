@@ -19,7 +19,34 @@ curl -fsSL https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/insta
 
 ## Windows
 
-装到 `%LOCALAPPDATA%\ssh-cli\bin`（可用 `SSH_CLI_BIN` 改目录），不需要管理员。目录还不在用户 PATH（也不在系统 PATH）里时，脚本会把它追加到**用户** Path：当前 PowerShell 会话立即生效，新打开的终端也会带上。已经在 PATH 里则不会重复追加。
+装到 `%LOCALAPPDATA%\ssh-cli\bin`（可用 `SSH_CLI_BIN` 改目录），不需要管理员。目录还不在用户 PATH，也不在系统 PATH 里时，安装脚本会把它追加到**用户** Path，并更新当前窗口的 PATH。已经在其中则不会重复追加。
+
+### 只开 cmd.exe
+
+不启动 PowerShell。Windows 10 及以上自带 `curl.exe` 和 `tar.exe`。下面这一行要在 **cmd.exe** 里执行（PowerShell 不会展开 `%TEMP%`）：
+
+```bat
+curl.exe -fsSL -o %TEMP%\ssh-cli-install.cmd https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.cmd && %TEMP%\ssh-cli-install.cmd
+```
+
+版本来自 `https://github.com/<仓库>/releases/latest` 的重定向：响应头 `Location` 指向 `/releases/tag/<tag>`。脚本不访问 `api.github.com`，因此不受匿名 API 速率限制影响。下载地址是 `https://github.com/<仓库>/releases/download/<tag>/ssh-cli_<version>_windows_<arch>.zip`（`<version>` 是 tag 去掉一个前导 `v`）。
+
+固定版本（前导 `v` 可有可无，会按仓库的 `v` 标签去下载）：
+
+```bat
+set SSH_CLI_VERSION=0.1.0
+curl.exe -fsSL -o %TEMP%\ssh-cli-install.cmd https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.cmd && %TEMP%\ssh-cli-install.cmd
+```
+
+读不到重定向时，脚本改用 `0.1.0` 并打印警告。`SSH_CLI_REPO` 可设为 `owner/name`。`PROCESSOR_ARCHITECTURE`（以及 32 位 cmd 里的 `PROCESSOR_ARCHITEW6432`）用来区分 `amd64` 和 `arm64`。
+
+发布里如果有 `checksums.txt`，用 `certutil -hashfile` 做 SHA256 校验；没有则警告后继续。校验和不匹配，或清单里没有这个 zip，会停止安装。
+
+用户 Path 写在 `HKCU\Environment`（保留原来的 `REG_EXPAND_SZ`，不用 `setx`，避免 PATH 超过 1024 字符被截断）。当前这个 cmd 窗口会立刻生效。开始菜单里新开的窗口要注销再登录后才会继承这次写入。
+
+### PowerShell
+
+`install.ps1` 仍可用。它通过 .NET 写入用户 Path，当前会话和新打开的终端都会带上：
 
 ```powershell
 irm https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.ps1 | iex

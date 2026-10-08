@@ -36,7 +36,13 @@ ssh-cli -version
 ssh-cli update --check
 ```
 
-Windows 用 `install.ps1`，默认装到 `%LOCALAPPDATA%\ssh-cli\bin`。目录不在 PATH 里时，脚本会写入用户 Path（当前会话已更新，新终端也会带上）。详见 [INSTALL.md](INSTALL.md)。
+Windows 可以只在 cmd.exe 里安装，不必打开 PowerShell：
+
+```bat
+curl.exe -fsSL -o %TEMP%\ssh-cli-install.cmd https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.cmd && %TEMP%\ssh-cli-install.cmd
+```
+
+`install.ps1` 仍然可用。两者都默认装到 `%LOCALAPPDATA%\ssh-cli\bin`，目录不在 PATH 里时写入用户 Path。详见 [INSTALL.md](INSTALL.md)。
 
 `version`、`--version`、`-V`、`-version` 打印同一行。`update` 从 GitHub Release 下载当前平台的资产并替换正在运行的二进制，只在执行该命令时发生。没有 `checksums.txt` 时会警告并继续；校验和不匹配则拒绝安装。非交互终端不能确认安装（退出码 253）。仓库和资产名见 [INSTALL.md](INSTALL.md)。
 
