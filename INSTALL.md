@@ -19,7 +19,7 @@ curl -fsSL https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/insta
 
 ## Windows
 
-装到 `%LOCALAPPDATA%\ssh-cli\bin`：
+装到 `%LOCALAPPDATA%\ssh-cli\bin`（可用 `SSH_CLI_BIN` 改目录），不需要管理员。目录还不在用户 PATH（也不在系统 PATH）里时，脚本会把它追加到**用户** Path：当前 PowerShell 会话立即生效，新打开的终端也会带上。已经在 PATH 里则不会重复追加。
 
 ```powershell
 irm https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.ps1 | iex
