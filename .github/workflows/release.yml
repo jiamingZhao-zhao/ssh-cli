@@ -1,0 +1,35 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: package and upload
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: pack archives
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          bash scripts/package.sh "$ver" "${GITHUB_SHA}" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" dist
+      - name: publish GitHub release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          tag="${GITHUB_REF_NAME}"
+          if gh release view "$tag" >/dev/null 2>&1; then
+            gh release upload "$tag" dist/* --clobber
+          else
+            gh release create "$tag" dist/* \
+              --title "$tag" \
+              --notes "Assets built by scripts/package.sh from ${tag}."
+          fi
