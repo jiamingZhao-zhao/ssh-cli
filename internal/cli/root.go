@@ -172,6 +172,8 @@ Install a newer GitHub release with "ssh-cli update" (opt-in; nothing updates in
 		a.uploadCmd(),
 		a.downloadCmd(),
 		a.policyCmd(),
+		a.auditCmd(),
+		a.uiCmd(),
 		a.updateCmd(),
 		a.versionCmd(),
 	)

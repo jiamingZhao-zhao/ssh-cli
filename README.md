@@ -2,7 +2,7 @@
 
 零依赖的单文件 SSH 运维 CLI（Go）。远程命令、文件上传下载；凭据加密存储，危险命令拦截，对 agent 友好的输出。
 
-当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）和第 2 次迭代（版本号、`update`、安装脚本）。中继、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
+当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本），以及强制审计日志和可选的本机 UI。中继、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
 
 ## 构建
 
@@ -48,6 +48,7 @@ ssh-cli update --check
 | `secrets.json` | ChaCha20-Poly1305 密文 |
 | `known_hosts` | 首次信任（TOFU）的主机密钥 |
 | `master.key` | 系统钥匙串不可用时的兜底主密钥（权限 0600，会打印警告） |
+| `audit/YYYY-MM-DD.jsonl` | 追加写的审计日志（权限 0600）。不启动 UI 也会写 |
 
 主密钥顺序：系统钥匙串（`zalando/go-keyring`）→ `SSH_CLI_MASTER_KEY`（32 字节的 base64 或 hex）→ `master.key`。
 
@@ -94,6 +95,33 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 
 主机必须属于且只属于一个分组，环境从分组继承，主机上不能写 `env`。`tags` 只用于 `-t` 选择。
 
+## 审计
+
+每次 `exec`、`upload`、`download` 都会在配置目录追加一条 JSONL，包括策略预检拒绝（内置危险命令、确认类命令、能力开关）、超时、认证失败、连接失败，以及远程非零退出。不记录密码、私钥或明文密钥；命令里的 `password=...` 一类片段会打成 `[redacted]`。
+
+记录字段：`time`（本地时区的 RFC3339）、`op`（`exec` / `upload` / `download` / `policy_check`）、主机别名、分组、环境、命令或 `src`/`dst`、`duration_ms`、`exit_code`、截断到 8KiB 的 `result_summary`、`status`（`ok` / `denied` / `timeout` / `auth` / `connect` / `error`）、`high_risk`、`denied_by_policy`、`reason`、`actor`。`actor` 取环境变量 `SSH_CLI_ACTOR`，否则是 `cli`。
+
+```bash
+ssh-cli audit list --host main --since 24h --status denied
+ssh-cli audit list --json
+ssh-cli audit show <id>
+ssh-cli audit tail -n 20
+ssh-cli audit tail --follow
+```
+
+`--host`、`--group`、`--env`、`--json` 是全局参数。`--since` / `--until` 接受 RFC3339、`YYYY-MM-DD`（直到某天包含那一整天）或 `24h` 这种时长。读取是按天顺序扫描，超出时间窗口的文件会直接跳过。
+
+## 本地界面（可选）
+
+只给人类配置主机和查看同一份审计日志。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。
+
+```bash
+ssh-cli ui
+ssh-cli ui --addr 127.0.0.1:7788
+```
+
+默认只监听 `127.0.0.1:7788`。`0.0.0.0` 和其他非回环地址会拒绝，除非显式加上 `--allow-non-loopback`。该参数会打印警告：界面没有认证，不要暴露到网络上。用 Ctrl-C 停止。密码通过表单 POST 交给原来的加密存储，不会回显，也不会写入审计。
+
 ## 退出码
 
 远程命令的退出码原样返回。工具自身的错误：
@@ -119,4 +147,4 @@ SSH_CLI_INTEGRATION=1 go test ./internal/integration -count=1
 
 ## 这次没做
 
-`relay`、`status`、`service`、`keys`、`run`、`elevate`、策略 HMAC、`policy edit`、审计日志落盘、从 ssh-ops 导入、GoReleaser 发版、SKILL.md。`internal/audit` 和 `config.VerifyPolicy` 是留给后续接上的空实现。CI 会把六个平台的压缩包和 `checksums.txt` 作为构建产物上传，但不会自动创建 GitHub Release。
+`relay`、`status`、`service`、`keys`、`run`、`elevate`、策略 HMAC、`policy edit`、从 ssh-ops 导入、GoReleaser 发版、SKILL.md。`config.VerifyPolicy` 仍是留给 HMAC 的空实现。审计日志已经落盘。CI 会把六个平台的压缩包和 `checksums.txt` 作为构建产物上传，但不会自动创建 GitHub Release。

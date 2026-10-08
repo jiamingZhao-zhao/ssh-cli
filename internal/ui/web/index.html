@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>ssh-cli</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <header>
+    <h1>ssh-cli</h1>
+    <p>本地配置与审计。不启动这个页面时，命令行和审计日志照常工作。密码只通过表单提交，不会出现在审计记录里。</p>
+  </header>
+  <main>
+    <section>
+      <h2>主机</h2>
+      <div id="catalog-error" class="error" hidden></div>
+      <table>
+        <thead>
+          <tr><th>别名</th><th>分组</th><th>环境</th><th>地址</th><th>端口</th><th>用户</th><th>认证</th><th>标签</th><th></th></tr>
+        </thead>
+        <tbody id="hosts"></tbody>
+      </table>
+      <h3 id="form-title">添加主机</h3>
+      <form id="host-form">
+        <label>别名 <input name="alias" required autocomplete="off"></label>
+        <label>分组
+          <select name="group" id="group" required></select>
+        </label>
+        <label>地址 <input name="host" required placeholder="192.0.2.10" autocomplete="off"></label>
+        <label>端口 <input name="port" type="number" min="0" max="65535" placeholder="22"></label>
+        <label>用户 <input name="user" required autocomplete="off"></label>
+        <label>密码 <input name="password" type="password" autocomplete="new-password"></label>
+        <label>私钥路径 <input name="identity" placeholder="~/.ssh/id_ed25519" autocomplete="off"></label>
+        <p class="muted">密码和私钥路径二选一。密码只用于加密存储，列表和审计都不会显示。</p>
+        <label>策略名 <input name="policy" placeholder="留空，或 readonly" autocomplete="off"></label>
+        <label>标签 <input name="tags" placeholder="app,web" autocomplete="off"></label>
+        <label class="check"><input name="setDefault" type="checkbox"> 设为默认主机</label>
+        <div class="row">
+          <button type="submit" id="save">保存</button>
+          <button type="button" id="clear-form" class="secondary">清空</button>
+        </div>
+        <p id="form-error" class="error" hidden></p>
+      </form>
+    </section>
+    <section>
+      <h2>审计</h2>
+      <form id="audit-filter" class="filters">
+        <label>主机 <input name="host" autocomplete="off"></label>
+        <label>分组 <input name="group" autocomplete="off"></label>
+        <label>环境 <input name="env" autocomplete="off"></label>
+        <label>状态
+          <select name="status">
+            <option value="">全部</option>
+            <option>ok</option>
+            <option>denied</option>
+            <option>timeout</option>
+            <option>auth</option>
+            <option>connect</option>
+            <option>error</option>
+          </select>
+        </label>
+        <label>自从 <input name="since" placeholder="24h 或 2026-01-02" autocomplete="off"></label>
+        <label>直到 <input name="until" placeholder="YYYY-MM-DD" autocomplete="off"></label>
+        <button type="submit">筛选</button>
+      </form>
+      <p id="audit-error" class="error" hidden></p>
+      <table>
+        <thead>
+          <tr><th>时间</th><th>状态</th><th>操作</th><th>主机</th><th>环境</th><th>退出</th><th>高风险</th><th>命令 / 路径</th><th>原因</th></tr>
+        </thead>
+        <tbody id="audit"></tbody>
+      </table>
+    </section>
+  </main>
+  <script src="/app.js"></script>
+</body>
+</html>

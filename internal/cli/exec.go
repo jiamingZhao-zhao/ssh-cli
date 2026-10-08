@@ -11,6 +11,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
@@ -70,17 +71,19 @@ func (a *App) execCmd() *cobra.Command {
 			if err != nil {
 				return exitcode.New(exitcode.Usage, "%s", err.Error())
 			}
+			meta := a.auditMeta(audit.OpExec, command, "", "")
 			cfg, hosts, err := a.loadSelection()
 			if err != nil {
+				a.auditSelectionError(meta, hosts, err)
 				return err
 			}
-			plan, err := a.plan(cfg, hosts, func(eff guard.Effective) guard.Decision {
+			plan, err := a.plan(cfg, hosts, meta, func(eff guard.Effective) guard.Decision {
 				return guard.Decide(eff, command)
 			})
 			if err != nil {
 				return err
 			}
-			return a.runAll(plan, remote, scriptBody, command, dur)
+			return a.runAll(meta, plan, remote, scriptBody, dur)
 		},
 	}
 	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds)")
@@ -99,27 +102,33 @@ type execResult struct {
 	Error    string `json:"error,omitempty"`
 }
 
-func (a *App) runAll(plan []planned, remote, scriptBody, audited string, timeout time.Duration) error {
+func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration) error {
 	var results []execResult
 	final := 0
 	for _, p := range plan {
 		if p.dec.NeedsConfirm {
 			if err := confirmAlias(p.host.Alias, a.Yes); err != nil {
+				a.logDenial(meta, p.host, &p.dec, err.Error())
 				return err
 			}
 		}
 		a.header(p.host)
 		res := execResult{Host: p.host.Alias, Group: p.host.Group, Env: p.host.EnvName}
+		outCap := &capWriter{max: 4 << 10}
+		errCap := &capWriter{max: 4 << 10}
 		var stdout, stderr io.Writer
 		var outBuf, errBuf bytes.Buffer
 		if a.JSON {
-			stdout = &outBuf
-			stderr = &errBuf
+			stdout = io.MultiWriter(&outBuf, outCap)
+			stderr = io.MultiWriter(&errBuf, errCap)
 		} else {
-			stdout = a.Out
-			stderr = a.Err
+			stdout = io.MultiWriter(a.Out, outCap)
+			stderr = io.MultiWriter(a.Err, errCap)
 		}
+		start := time.Now()
 		code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, timeout)
+		hostMeta := meta
+		hostMeta.started = start
 		if runErr != nil {
 			res.Error = runErr.Error()
 			res.ExitCode = exitcode.From(runErr)
@@ -131,8 +140,16 @@ func (a *App) runAll(plan []planned, remote, scriptBody, audited string, timeout
 			res.Stdout = outBuf.String()
 			res.Stderr = errBuf.String()
 		}
+		st, exitCode := statusOf(res.ExitCode, runErr)
+		extra := ""
+		if runErr != nil {
+			extra = runErr.Error()
+		}
+		summary := summarizeOutputs(outCap.buf.String(), errCap.buf.String(), outCap.cut || errCap.cut, extra)
+		if err := a.logRemote(hostMeta, p.host, p.dec, st, exitCode, summary, ""); err != nil {
+			return err
+		}
 		results = append(results, res)
-		record(p.host, audited, ruleOf(p.dec), res.ExitCode)
 		final = preferCode(final, res.ExitCode)
 	}
 	if a.JSON {

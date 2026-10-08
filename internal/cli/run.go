@@ -12,7 +12,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
@@ -42,12 +41,12 @@ func (a *App) loadSelection() (*config.Config, []config.ResolvedHost, error) {
 		envs[i] = h.EnvName
 	}
 	if guard.CrossEnv(envs) && !a.AllowCrossEnv {
-		return nil, nil, exitcode.New(exitcode.Denied, "selection spans multiple environments; pass --allow-cross-env")
+		return cfg, hosts, exitcode.New(exitcode.Denied, "selection spans multiple environments; pass --allow-cross-env")
 	}
 	return cfg, hosts, nil
 }
 
-func (a *App) plan(cfg *config.Config, hosts []config.ResolvedHost, decide func(guard.Effective) guard.Decision) ([]planned, error) {
+func (a *App) plan(cfg *config.Config, hosts []config.ResolvedHost, meta auditMeta, decide func(guard.Effective) guard.Decision) ([]planned, error) {
 	envs := make([]string, len(hosts))
 	for i, h := range hosts {
 		envs[i] = h.EnvName
@@ -71,6 +70,11 @@ func (a *App) plan(cfg *config.Config, hosts []config.ResolvedHost, decide func(
 	}
 	kept, err := guard.Filter(hd, a.SkipDenied)
 	if err != nil {
+		for _, p := range all {
+			if !p.dec.Allowed {
+				a.logDenial(meta, p.host, &p.dec, "")
+			}
+		}
 		return nil, exitcode.New(exitcode.Denied, "%s", err.Error())
 	}
 	keep := map[string]bool{}
@@ -79,13 +83,26 @@ func (a *App) plan(cfg *config.Config, hosts []config.ResolvedHost, decide func(
 	}
 	var out []planned
 	for _, p := range all {
-		if keep[p.host.Alias] {
-			out = append(out, p)
+		if !keep[p.host.Alias] {
+			a.logDenial(meta, p.host, &p.dec, "")
+			continue
 		}
+		out = append(out, p)
 	}
-	for _, p := range out {
-		if p.dec.NeedsConfirm && !ttyCheck() {
-			return nil, exitcode.New(exitcode.Denied, "host %s requires confirmation on an interactive TTY", p.host.Alias)
+	if !ttyCheck() {
+		var confirmErr error
+		for _, p := range out {
+			if !p.dec.NeedsConfirm {
+				continue
+			}
+			msg := fmt.Sprintf("host %s requires confirmation on an interactive TTY", p.host.Alias)
+			a.logDenial(meta, p.host, &p.dec, msg)
+			if confirmErr == nil {
+				confirmErr = exitcode.New(exitcode.Denied, "%s", msg)
+			}
+		}
+		if confirmErr != nil {
+			return nil, confirmErr
 		}
 	}
 	return out, nil
@@ -185,21 +202,6 @@ func readScriptFile(path string) (string, error) {
 		return "", fmt.Errorf("script exceeds 8MiB")
 	}
 	return string(b), nil
-}
-
-func ruleOf(dec guard.Decision) string {
-	if len(dec.Findings) == 0 {
-		return ""
-	}
-	f := dec.Findings[0]
-	return f.Layer + ":" + f.Kind + ":" + f.Detail
-}
-
-func record(h config.ResolvedHost, command, rule string, code int) {
-	audit.Log.Record(audit.Event{
-		Time: time.Now().UTC(), Env: h.EnvName, Group: h.Group, Host: h.Alias,
-		Command: command, Rule: rule, ExitCode: code,
-	})
 }
 
 func preferCode(current, next int) int {

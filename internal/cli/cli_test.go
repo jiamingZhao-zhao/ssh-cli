@@ -160,6 +160,8 @@ func TestRootHelpListsCommands(t *testing.T) {
 			"Upload a file or directory over SFTP",
 			"Download a file or directory over SFTP",
 			"Show the effective policy for a host",
+			"Read the local audit log",
+			"Start the optional localhost UI",
 			"Install the latest GitHub release",
 			"Print the version",
 			"ssh-cli version",
