@@ -138,7 +138,9 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			if a.Yes && !ttyCheck() {
+			// update installs when there is no TTY, so --yes is redundant there
+			// and must not fail. Other commands still reject --yes without a TTY.
+			if a.Yes && !ttyCheck() && cmd.Name() != "update" {
 				return exitcode.New(exitcode.Denied, "--yes is only valid on an interactive TTY")
 			}
 			dir, err := config.ResolveDir(a.ConfigFlag)
