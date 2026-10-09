@@ -228,6 +228,46 @@ func TestUIConfigParity(t *testing.T) {
 	}
 }
 
+func TestUILayout(t *testing.T) {
+	h := Handler(t.TempDir(), false)
+	get := func(path string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.Host = "127.0.0.1"
+		req.RemoteAddr = "127.0.0.1:9"
+		useLoopback(req)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != 200 {
+			t.Fatalf("%s %d %s", path, rr.Code, rr.Body.String())
+		}
+		return rr.Body.String()
+	}
+	body := get("/")
+	if strings.Contains(body, "tabbar") {
+		t.Fatal("top tab bar still present")
+	}
+	if strings.Count(body, `data-view="known"`) != 2 {
+		t.Fatalf("known nav count %d", strings.Count(body, `data-view="known"`))
+	}
+	for _, id := range []string{"#hosts", "#group-rows", "#tag-rows", "#env-rows", "#policy-rows", "#known", "#session-rows"} {
+		if !strings.Contains(body, `data-pager="`+id+`"`) {
+			t.Fatalf("missing pager for %s", id)
+		}
+	}
+	if !strings.Contains(body, `id="audit-pager"`) {
+		t.Fatal("missing audit pager")
+	}
+	script := get("/app.js")
+	if !strings.Contains(script, "DEFAULT_PAGE_SIZE = 10") || strings.Contains(script, `params.set("pageSize", "50")`) || strings.Contains(script, "const size = 25") {
+		t.Fatal("page size default is not 10")
+	}
+	style := get("/app.css")
+	if strings.Contains(style, ".tabbar") || !strings.Contains(style, "margin: auto") || !strings.Contains(style, "justify-content: flex-end") {
+		t.Fatal("css missing centered dialog or bottom-right pager")
+	}
+}
+
 func seedEnvGroup(t *testing.T, dir string) {
 	t.Helper()
 	err := os.WriteFile(filepath.Join(dir, "hosts.yaml"), []byte(`

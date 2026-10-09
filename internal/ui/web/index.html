@@ -28,32 +28,17 @@
       </nav>
     </aside>
     <div class="workspace">
-      <div class="tabbar">
-        <button type="button" data-view="hosts">主机</button>
-        <button type="button" data-view="groups">分组</button>
-        <button type="button" data-view="tags">标签</button>
-        <button type="button" data-view="envs">环境</button>
-        <button type="button" data-view="policy">危险命令</button>
-        <button type="button" data-view="known">已知主机密钥</button>
-        <button type="button" data-view="audit">审计</button>
-        <button type="button" data-view="sessions">会话</button>
-        <button type="button" data-view="operate">执行</button>
-        <button type="button" data-view="relay">中继</button>
-        <button type="button" data-view="bundle">导入导出</button>
-      </div>
       <h1 id="page-title">主机</h1>
 
       <section id="hosts-panel" class="view" data-view="hosts" data-title="主机">
-        <p class="muted">密码只通过主机表单提交，不会出现在审计记录里。从清单导入仍用命令行 <code>ssh-cli import ssh-ops</code>。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#hosts" placeholder="别名、分组、地址、标签" autocomplete="off"></label>
-        </div>
-        <div class="toolbar">
-          <button type="button" id="host-new">添加主机</button>
-        </div>
-        <p class="summary" id="summary-hosts"></p>
-        <div id="catalog-error" class="error" hidden></div>
-        <div class="panel">
+        <div class="sheet">
+          <p class="lead">密码只通过主机表单提交，不会出现在审计记录里。从清单导入仍用命令行 <code>ssh-cli import ssh-ops</code>。</p>
+          <div class="sheet-tools">
+            <label>搜索 <input data-filter="#hosts" placeholder="别名、分组、地址、标签" autocomplete="off"></label>
+            <div class="actions"><button type="button" id="host-new">添加主机</button></div>
+          </div>
+          <p class="summary" id="summary-hosts"></p>
+          <p id="catalog-error" class="error" hidden></p>
           <div class="table-wrap">
             <table>
               <thead>
@@ -62,8 +47,8 @@
               <tbody id="hosts"></tbody>
             </table>
           </div>
+          <div class="pager" data-pager="#hosts"></div>
         </div>
-        <div class="pager" data-pager="#hosts"></div>
         <dialog id="host-dialog">
           <h2 id="form-title">添加主机</h2>
           <form id="host-form">
@@ -99,16 +84,14 @@
       </section>
 
       <section id="groups" class="view" data-view="groups" data-title="分组" hidden>
-        <p class="muted">一台主机只能属于一个分组，环境从分组继承。分组上的命名策略和允许 / 拒绝 / 确认会参与该组主机的规则合并。有主机时不能删除，和 <code>group remove</code> 一样。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#group-rows" placeholder="名称、显示名、环境" autocomplete="off"></label>
-        </div>
-        <div class="toolbar">
-          <button type="button" id="group-new">添加分组</button>
-        </div>
-        <p class="summary" id="summary-groups"></p>
-        <p id="group-error" class="error" hidden></p>
-        <div class="panel">
+        <div class="sheet">
+          <p class="lead">一台主机只能属于一个分组，环境从分组继承。分组上的命名策略和允许 / 拒绝 / 确认会参与该组主机的规则合并。有主机时不能删除，和 <code>group remove</code> 一样。</p>
+          <div class="sheet-tools">
+            <label>搜索 <input data-filter="#group-rows" placeholder="名称、显示名、环境" autocomplete="off"></label>
+            <div class="actions"><button type="button" id="group-new">添加分组</button></div>
+          </div>
+          <p class="summary" id="summary-groups"></p>
+          <p id="group-error" class="error" hidden></p>
           <div class="table-wrap">
             <table>
               <thead>
@@ -117,8 +100,8 @@
               <tbody id="group-rows"></tbody>
             </table>
           </div>
+          <div class="pager" data-pager="#group-rows"></div>
         </div>
-        <div class="pager" data-pager="#group-rows"></div>
         <dialog id="group-dialog">
           <h2 id="group-form-title">添加分组</h2>
           <form id="group-form">
@@ -154,13 +137,13 @@
       </section>
 
       <section id="tags" class="view" data-view="tags" data-title="标签" hidden>
-        <p class="muted">标签只写在主机上，用来配合 <code>ssh-cli -t</code> 选择主机，不表示权限。分组没有 tags 字段。把标签加到某个分组，实际是写到该分组里的每一台主机上。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#tag-rows" placeholder="分组、主机、标签" autocomplete="off"></label>
-        </div>
-        <p class="summary" id="summary-tags"></p>
-        <p id="tag-error" class="error" hidden></p>
-        <div class="panel">
+        <div class="sheet">
+          <p class="lead">标签只写在主机上，用来配合 <code>ssh-cli -t</code> 选择主机，不表示权限。分组没有 tags 字段。把标签加到某个分组，实际是写到该分组里的每一台主机上。</p>
+          <div class="sheet-tools">
+            <label>搜索 <input data-filter="#tag-rows" placeholder="分组、主机、标签" autocomplete="off"></label>
+          </div>
+          <p class="summary" id="summary-tags"></p>
+          <p id="tag-error" class="error" hidden></p>
           <div class="table-wrap">
             <table>
               <thead>
@@ -169,21 +152,19 @@
               <tbody id="tag-rows"></tbody>
             </table>
           </div>
+          <div class="pager" data-pager="#tag-rows"></div>
         </div>
-        <div class="pager" data-pager="#tag-rows"></div>
       </section>
 
       <section id="envs" class="view" data-view="envs" data-title="环境" hidden>
-        <p class="muted">maxMode 是天花板。defaultPolicy 是环境这一层引用的命名策略。环境本身没有行内 allow / deny。dev、test、preprod、prod 是内置环境，不能改也不能删。可以另加自定义环境。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#env-rows" placeholder="名称、显示名" autocomplete="off"></label>
-        </div>
-        <div class="toolbar">
-          <button type="button" id="env-new">添加环境</button>
-        </div>
-        <p class="summary" id="summary-envs"></p>
-        <p id="env-error" class="error" hidden></p>
-        <div class="panel">
+        <div class="sheet">
+          <p class="lead">maxMode 是天花板。defaultPolicy 是环境这一层引用的命名策略。环境本身没有行内 allow / deny。dev、test、preprod、prod 是内置环境，不能改也不能删。可以另加自定义环境。</p>
+          <div class="sheet-tools">
+            <label>搜索 <input data-filter="#env-rows" placeholder="名称、显示名" autocomplete="off"></label>
+            <div class="actions"><button type="button" id="env-new">添加环境</button></div>
+          </div>
+          <p class="summary" id="summary-envs"></p>
+          <p id="env-error" class="error" hidden></p>
           <div class="table-wrap">
             <table>
               <thead>
@@ -192,8 +173,8 @@
               <tbody id="env-rows"></tbody>
             </table>
           </div>
+          <div class="pager" data-pager="#env-rows"></div>
         </div>
-        <div class="pager" data-pager="#env-rows"></div>
         <dialog id="env-dialog">
           <h2>添加环境</h2>
           <form id="env-form">
@@ -217,16 +198,14 @@
       </section>
 
       <section id="policy" class="view" data-view="policy" data-title="危险命令" hidden>
-        <p class="muted">规则写在命名策略上，或挂到环境、分组、主机。某一层不写允许列表，这一层就是全集；写成空列表则会把这一层交空。拒绝和确认在各层取并集。内置硬拒绝（删除根目录、mkfs、把 dd 或重定向写到磁盘、修改根目录属主、fork bomb）不能在这里关掉。策略 HMAC 不代替人工确认。elevate 不在这个版本里。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#policy-rows" placeholder="策略名" autocomplete="off"></label>
-        </div>
-        <div class="toolbar">
-          <button type="button" id="policy-new">添加命名策略</button>
-        </div>
-        <p class="summary" id="summary-policy"></p>
-        <p id="policy-error" class="error" hidden></p>
-        <div class="panel">
+        <div class="sheet">
+          <p class="lead">规则写在命名策略上，或挂到环境、分组、主机。某一层不写允许列表，这一层就是全集；写成空列表则会把这一层交空。拒绝和确认在各层取并集。内置硬拒绝（删除根目录、mkfs、把 dd 或重定向写到磁盘、修改根目录属主、fork bomb）不能在这里关掉。策略 HMAC 不代替人工确认。elevate 不在这个版本里。</p>
+          <div class="sheet-tools">
+            <label>搜索 <input data-filter="#policy-rows" placeholder="策略名" autocomplete="off"></label>
+            <div class="actions"><button type="button" id="policy-new">添加命名策略</button></div>
+          </div>
+          <p class="summary" id="summary-policy"></p>
+          <p id="policy-error" class="error" hidden></p>
           <div class="table-wrap">
             <table>
               <thead>
@@ -235,8 +214,8 @@
               <tbody id="policy-rows"></tbody>
             </table>
           </div>
+          <div class="pager" data-pager="#policy-rows"></div>
         </div>
-        <div class="pager" data-pager="#policy-rows"></div>
         <dialog id="policy-dialog">
           <h2 id="policy-form-title">添加命名策略</h2>
           <form id="policy-form">
@@ -268,64 +247,65 @@
       </section>
 
       <section id="known-panel" class="view" data-view="known" data-title="已知主机密钥" hidden>
-        <p class="muted">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙；已经记下的钥匙如果变了，仍然会拒绝。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#known" placeholder="标记、指纹" autocomplete="off"></label>
-        </div>
-        <p class="summary" id="summary-known"></p>
-        <p id="known-error" class="error" hidden></p>
-        <div class="panel">
+        <div class="sheet">
+          <p class="lead">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙；已经记下的钥匙如果变了，仍然会拒绝。</p>
+          <div class="sheet-tools">
+            <label>搜索 <input data-filter="#known" placeholder="标记、指纹" autocomplete="off"></label>
+          </div>
+          <p class="summary" id="summary-known"></p>
+          <p id="known-error" class="error" hidden></p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>标记</th><th>类型</th><th>指纹</th><th></th></tr></thead>
               <tbody id="known"></tbody>
             </table>
           </div>
+          <div class="pager" data-pager="#known"></div>
         </div>
-        <div class="pager" data-pager="#known"></div>
       </section>
 
       <section id="audit-panel" class="view" data-view="audit" data-title="审计" hidden>
-        <p class="muted">读取和命令行 <code>ssh-cli audit list</code> 同一份日志。筛选条件发给本机接口，不会改配置。</p>
-        <form id="audit-filter" class="strip filters">
-          <label>操作
-            <select name="op" id="audit-op">
-              <option value="">全部</option>
-              <option>exec</option>
-              <option>upload</option>
-              <option>download</option>
-              <option>relay</option>
-              <option>policy_check</option>
-              <option>session</option>
-              <option>config_change</option>
-              <option>status</option>
-              <option>service</option>
-              <option>keys</option>
-            </select>
-          </label>
-          <label>主机 <select name="host" id="audit-host"><option value="">全部</option></select></label>
-          <label>分组 <select name="group" id="audit-group"><option value="">全部</option></select></label>
-          <label>环境 <select name="env" id="audit-env"><option value="">全部</option></select></label>
-          <label>状态
-            <select name="status">
-              <option value="">全部</option>
-              <option>ok</option>
-              <option>denied</option>
-              <option>timeout</option>
-              <option>auth</option>
-              <option>connect</option>
-              <option>error</option>
-            </select>
-          </label>
-          <label>自从 <input name="since" placeholder="24h 或 2026-01-02" autocomplete="off"></label>
-          <label>直到 <input name="until" placeholder="YYYY-MM-DD" autocomplete="off"></label>
-          <button type="submit">筛选</button>
-          <button type="button" id="audit-cleanup" class="secondary">清理 30 天前</button>
-        </form>
-        <div class="pager" id="audit-pager"></div>
-        <p class="summary" id="summary-audit"></p>
-        <p id="audit-error" class="error" hidden></p>
-        <div class="panel">
+        <div class="sheet">
+          <p class="lead">读取和命令行 <code>ssh-cli audit list</code> 同一份日志。筛选条件发给本机接口，不会改配置。</p>
+          <form id="audit-filter" class="sheet-tools">
+            <label>操作
+              <select name="op" id="audit-op">
+                <option value="">全部</option>
+                <option>exec</option>
+                <option>upload</option>
+                <option>download</option>
+                <option>relay</option>
+                <option>policy_check</option>
+                <option>session</option>
+                <option>config_change</option>
+                <option>status</option>
+                <option>service</option>
+                <option>keys</option>
+              </select>
+            </label>
+            <label>主机 <select name="host" id="audit-host"><option value="">全部</option></select></label>
+            <label>分组 <select name="group" id="audit-group"><option value="">全部</option></select></label>
+            <label>环境 <select name="env" id="audit-env"><option value="">全部</option></select></label>
+            <label>状态
+              <select name="status">
+                <option value="">全部</option>
+                <option>ok</option>
+                <option>denied</option>
+                <option>timeout</option>
+                <option>auth</option>
+                <option>connect</option>
+                <option>error</option>
+              </select>
+            </label>
+            <label>自从 <input name="since" placeholder="24h 或 2026-01-02" autocomplete="off"></label>
+            <label>直到 <input name="until" placeholder="YYYY-MM-DD" autocomplete="off"></label>
+            <div class="actions">
+              <button type="submit">筛选</button>
+              <button type="button" id="audit-cleanup" class="secondary">清理 30 天前</button>
+            </div>
+          </form>
+          <p class="summary" id="summary-audit"></p>
+          <p id="audit-error" class="error" hidden></p>
           <div class="table-wrap">
             <table>
               <thead>
@@ -334,75 +314,86 @@
               <tbody id="audit"></tbody>
             </table>
           </div>
+          <div class="pager" id="audit-pager"></div>
         </div>
       </section>
 
       <section id="sessions-panel" class="view" data-view="sessions" data-title="会话" hidden>
-        <p class="muted">会话只活在这个 UI 进程里。空闲默认 5 分钟，最长 60 分钟，进程退出会关掉。没有后台守护进程。</p>
-        <div class="toolbar">
-          <button type="button" id="session-refresh">刷新</button>
-        </div>
-        <p class="summary" id="summary-sessions"></p>
-        <p id="session-error" class="error" hidden></p>
-        <div class="panel">
+        <div class="sheet">
+          <p class="lead">会话只活在这个 UI 进程里。空闲默认 5 分钟，最长 60 分钟，进程退出会关掉。没有后台守护进程。</p>
+          <div class="sheet-tools">
+            <div class="actions"><button type="button" id="session-refresh">刷新</button></div>
+          </div>
+          <p class="summary" id="summary-sessions"></p>
+          <p id="session-error" class="error" hidden></p>
           <div class="table-wrap">
             <table>
               <thead><tr><th>主机</th><th>打开</th><th>最近使用</th><th>忙</th><th></th></tr></thead>
               <tbody id="session-rows"></tbody>
             </table>
           </div>
+          <div class="pager" data-pager="#session-rows"></div>
         </div>
       </section>
 
       <section id="operate-panel" class="view" data-view="operate" data-title="执行" hidden>
-        <p class="muted">执行、上传、下载走和命令行同一套策略与审计。需要确认时输入主机别名。</p>
-        <p id="operate-error" class="error" hidden></p>
-        <form id="exec-form" class="panel">
-          <label>主机 <select name="alias" id="op-host" required></select></label>
-          <label>超时 <input name="timeout" placeholder="30s" autocomplete="off"></label>
-          <label class="wide">命令 <input name="command" required autocomplete="off"></label>
-          <label>确认短语 <input name="confirm" autocomplete="off" placeholder="需要时填写主机别名"></label>
-          <div class="row"><button type="submit">执行</button></div>
-        </form>
-        <form id="upload-form" class="panel">
-          <label>主机 <select name="alias" class="op-host" required></select></label>
-          <label>远端路径 <input name="remote" required autocomplete="off"></label>
-          <label>文件 <input name="file" type="file" required></label>
-          <label>确认短语 <input name="confirm" autocomplete="off"></label>
-          <div class="row"><button type="submit">上传</button></div>
-        </form>
-        <form id="download-form" class="panel">
-          <label>主机 <select name="alias" class="op-host" required></select></label>
-          <label>远端路径 <input name="path" required autocomplete="off"></label>
-          <div class="row"><button type="submit">下载</button></div>
-        </form>
-        <pre id="operate-out" class="out" hidden></pre>
+        <div class="sheet">
+          <p class="lead">执行、上传、下载走和命令行同一套策略与审计。需要确认时输入主机别名。</p>
+          <p id="operate-error" class="error" hidden></p>
+          <form id="exec-form" class="block">
+            <h2>执行命令</h2>
+            <label>主机 <select name="alias" id="op-host" required></select></label>
+            <label>超时 <input name="timeout" placeholder="30s" autocomplete="off"></label>
+            <label class="wide">命令 <input name="command" required autocomplete="off"></label>
+            <label>确认短语 <input name="confirm" autocomplete="off" placeholder="需要时填写主机别名"></label>
+            <div class="row"><button type="submit">执行</button></div>
+          </form>
+          <form id="upload-form" class="block">
+            <h2>上传</h2>
+            <label>主机 <select name="alias" class="op-host" required></select></label>
+            <label>远端路径 <input name="remote" required autocomplete="off"></label>
+            <label>文件 <input name="file" type="file" required></label>
+            <label>确认短语 <input name="confirm" autocomplete="off"></label>
+            <div class="row"><button type="submit">上传</button></div>
+          </form>
+          <form id="download-form" class="block">
+            <h2>下载</h2>
+            <label>主机 <select name="alias" class="op-host" required></select></label>
+            <label>远端路径 <input name="path" required autocomplete="off"></label>
+            <div class="row"><button type="submit">下载</button></div>
+          </form>
+          <pre id="operate-out" class="out" hidden></pre>
+        </div>
       </section>
 
       <section id="relay-panel" class="view" data-view="relay" data-title="中继" hidden>
-        <p class="muted">把一个远端文件经本机流转到另一台主机，并核对 sha256，没有 sha256sum 时改对 md5。不保存明文副本。</p>
-        <p id="relay-error" class="error" hidden></p>
-        <form id="relay-form" class="panel">
-          <label>来源主机 <select name="from" class="op-host" required></select></label>
-          <label>来源路径 <input name="fromPath" required autocomplete="off"></label>
-          <label>目标主机 <select name="to" class="op-host" required></select></label>
-          <label>目标路径 <input name="toPath" required autocomplete="off"></label>
-          <label>确认短语 <input name="confirm" autocomplete="off"></label>
-          <label class="check"><input name="allowCrossEnv" type="checkbox"> 允许跨环境</label>
-          <div class="row"><button type="submit">中继</button></div>
-        </form>
+        <div class="sheet">
+          <p class="lead">把一个远端文件经本机流转到另一台主机，并核对 sha256，没有 sha256sum 时改对 md5。不保存明文副本。</p>
+          <p id="relay-error" class="error" hidden></p>
+          <form id="relay-form" class="block">
+            <label>来源主机 <select name="from" class="op-host" required></select></label>
+            <label>来源路径 <input name="fromPath" required autocomplete="off"></label>
+            <label>目标主机 <select name="to" class="op-host" required></select></label>
+            <label>目标路径 <input name="toPath" required autocomplete="off"></label>
+            <label>确认短语 <input name="confirm" autocomplete="off"></label>
+            <label class="check"><input name="allowCrossEnv" type="checkbox"> 允许跨环境</label>
+            <div class="row"><button type="submit">中继</button></div>
+          </form>
+        </div>
       </section>
 
       <section id="bundle-panel" class="view" data-view="bundle" data-title="导入导出" hidden>
-        <p class="muted">导出主机、策略和密钥引用。不包含明文密码。导入不改 secrets.json。</p>
-        <p id="bundle-error" class="error" hidden></p>
-        <div class="toolbar">
-          <button type="button" id="bundle-export">导出</button>
+        <div class="sheet">
+          <p class="lead">导出主机、策略和密钥引用。不包含明文密码。导入不改 secrets.json。</p>
+          <p id="bundle-error" class="error" hidden></p>
+          <div class="sheet-tools">
+            <div class="actions"><button type="button" id="bundle-export">导出</button></div>
+          </div>
+          <form id="bundle-form" class="block">
+            <label class="wide">配置 YAML <textarea name="yaml" id="bundle-yaml"></textarea></label>
+            <div class="row"><button type="submit">导入</button></div>
+          </form>
         </div>
-        <form id="bundle-form" class="panel">
-          <label class="wide">配置 YAML <textarea name="yaml" id="bundle-yaml"></textarea></label>
-          <div class="row"><button type="submit">导入</button></div>
-        </form>
       </section>
     </div>
   </div>
