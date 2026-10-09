@@ -20,6 +20,7 @@ func (a *App) groupCmd() *cobra.Command {
 func (a *App) groupAdd() *cobra.Command {
 	var policy string
 	var envName string
+	var label string
 	var paths []string
 	cmd := &cobra.Command{
 		Use:   "add <name>",
@@ -32,12 +33,14 @@ func (a *App) groupAdd() *cobra.Command {
 			return catalogErr(catalog.AddGroup(a.Dir, catalog.GroupDraft{
 				Name:           args[0],
 				Env:            envName,
+				Label:          label,
 				Policy:         policy,
 				ProtectedPaths: splitList(paths),
 			}))
 		},
 	}
 	cmd.Flags().StringVar(&envName, "env", "", "env label (required, exactly one)")
+	cmd.Flags().StringVar(&label, "label", "", "display label (for example a Chinese name)")
 	cmd.Flags().StringVar(&policy, "policy", "", "named policy")
 	cmd.Flags().StringArrayVar(&paths, "protected-path", nil, "protected remote path (repeatable)")
 	return cmd
@@ -45,15 +48,20 @@ func (a *App) groupAdd() *cobra.Command {
 
 func (a *App) groupEdit() *cobra.Command {
 	var policy string
+	var label string
 	var paths []string
 	var clearPolicy bool
 	var clearPaths bool
 	cmd := &cobra.Command{
 		Use:   "edit <name>",
-		Short: "Edit a group's named policy or protected paths",
+		Short: "Edit a group's display label, named policy, or protected paths",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			draft := catalog.GroupDraft{Name: args[0], ClearPolicy: clearPolicy}
+			if cmd.Flags().Changed("label") {
+				draft.HasLabel = true
+				draft.Label = label
+			}
 			if cmd.Flags().Changed("policy") {
 				draft.HasPolicy = true
 				draft.Policy = policy
@@ -67,6 +75,7 @@ func (a *App) groupEdit() *cobra.Command {
 			return catalogErr(catalog.EditGroup(a.Dir, draft))
 		},
 	}
+	cmd.Flags().StringVar(&label, "label", "", "display label (empty clears it)")
 	cmd.Flags().StringVar(&policy, "policy", "", "named policy (empty clears it)")
 	cmd.Flags().StringArrayVar(&paths, "protected-path", nil, "protected remote path (repeatable; replaces the list)")
 	cmd.Flags().BoolVar(&clearPolicy, "clear-policy", false, "remove the named policy")
@@ -93,6 +102,7 @@ func (a *App) groupList() *cobra.Command {
 			sort.Strings(names)
 			type view struct {
 				Name   string   `json:"name"`
+				Label  string   `json:"label,omitempty"`
 				Env    string   `json:"env"`
 				Policy string   `json:"policy,omitempty"`
 				Hosts  int      `json:"hosts"`
@@ -101,16 +111,16 @@ func (a *App) groupList() *cobra.Command {
 			views := make([]view, 0, len(names))
 			for _, name := range names {
 				g := cfg.Groups[name]
-				views = append(views, view{Name: name, Env: g.Env, Policy: g.Policy, Hosts: len(g.Hosts), Paths: g.ProtectedPaths})
+				views = append(views, view{Name: name, Label: g.Label, Env: g.Env, Policy: g.Policy, Hosts: len(g.Hosts), Paths: g.ProtectedPaths})
 			}
 			if a.JSON {
 				return a.emit(map[string]any{"groups": views})
 			}
 			rows := make([][]string, len(views))
 			for i, v := range views {
-				rows[i] = []string{v.Name, v.Env, v.Policy, fmt.Sprintf("%d", v.Hosts)}
+				rows[i] = []string{v.Name, v.Label, v.Env, v.Policy, fmt.Sprintf("%d", v.Hosts)}
 			}
-			a.table([]string{"NAME", "ENV", "POLICY", "HOSTS"}, rows)
+			a.table([]string{"NAME", "LABEL", "ENV", "POLICY", "HOSTS"}, rows)
 			return nil
 		},
 	}

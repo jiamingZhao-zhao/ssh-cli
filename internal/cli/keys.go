@@ -36,7 +36,7 @@ it sees. A later different key is still rejected.`,
 		},
 	}
 	cmd.Flags().StringVar(&path, "path", ".ssh/authorized_keys", "remote authorized_keys path (literal, no ~ expansion)")
-	cmd.Flags().StringVar(&timeout, "timeout", "", "per-command timeout (duration or seconds; default 15s)")
+	cmd.Flags().StringVar(&timeout, "timeout", "", "per-command timeout (duration or seconds; default 15s); also bounds SSH connect")
 	cmd.AddCommand(a.keysKnown())
 	return cmd
 }

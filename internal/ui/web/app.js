@@ -150,6 +150,7 @@ function renderGroups() {
     const tr = document.createElement("tr");
     tr.append(
       cell(g.name),
+      cell(g.label || ""),
       cell(g.env),
       cell(g.policy || ""),
       cell(allowLabel(g)),
@@ -185,6 +186,7 @@ function fillGroup(g) {
   document.querySelector("#group-form-title").textContent = "编辑 " + g.name;
   groupForm.elements.namedItem("name").value = g.name;
   groupForm.elements.namedItem("name").readOnly = true;
+  groupForm.elements.namedItem("label").value = g.label || "";
   fillEnvSelect(document.querySelector("#group-env"), g.env);
   fillPolicySelect(document.querySelector("#group-policy"), g.policy || "");
   fillRules(groupForm, g);
@@ -221,7 +223,7 @@ function renderTags() {
   for (const g of groups) {
     const mine = hosts.filter((h) => h.group === g.name).sort(byName);
     const tr = document.createElement("tr");
-    tr.append(cell(g.name), cell(g.env));
+    tr.append(cell(groupCaption(g)), cell(g.env));
     const hostsCell = document.createElement("td");
     if (mine.length === 0) {
       hostsCell.textContent = "还没有主机。标签不能写在分组上。";
@@ -456,6 +458,15 @@ async function removeEnv(name) {
   }
 }
 
+function groupCaption(g) {
+  if (!g) return "";
+  return g.label ? g.name + " / " + g.label : g.name;
+}
+
+function groupByName(name) {
+  return (catalog.groups || []).find((g) => g.name === name);
+}
+
 function renderHosts() {
   const groups = (catalog.groups || []).slice().sort(byName);
   const hosts = (catalog.hosts || []).slice().sort(byName);
@@ -464,7 +475,7 @@ function renderHosts() {
   for (const g of groups) {
     const opt = document.createElement("option");
     opt.value = g.name;
-    opt.textContent = g.name + " (" + g.env + ")";
+    opt.textContent = groupCaption(g) + " (" + g.env + ")";
     groupSelect.appendChild(opt);
   }
   if (prevGroup) groupSelect.value = prevGroup;
@@ -474,7 +485,7 @@ function renderHosts() {
     const tr = document.createElement("tr");
     tr.append(
       cell(h.alias + (h.default ? " *" : "")),
-      cell(h.group),
+      cell(groupCaption(groupByName(h.group)) || h.group),
       cell(h.env),
       cell(h.host),
       cell(h.port),
@@ -549,6 +560,7 @@ groupForm.addEventListener("submit", async (ev) => {
   }
   const body = Object.assign({
     name,
+    label: groupForm.elements.namedItem("label").value.trim(),
     env: envName,
     policy: groupForm.elements.namedItem("policy").value,
     protectedPaths: lines(groupForm.elements.namedItem("protectedPaths").value)

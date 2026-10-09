@@ -144,6 +144,6 @@ The attempt is appended to the audit log.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&timeout, "timeout", "", "per-command timeout (duration or seconds; default 15s)")
+	cmd.Flags().StringVar(&timeout, "timeout", "", "per-command timeout (duration or seconds; default 15s); also bounds SSH connect")
 	return cmd
 }

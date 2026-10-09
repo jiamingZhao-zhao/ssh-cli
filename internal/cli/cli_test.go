@@ -145,6 +145,30 @@ func TestCustomEnvAndBuiltinGroup(t *testing.T) {
 	if strings.Contains(out, "lab") || !strings.Contains(out, "prod") {
 		t.Fatalf("env list after remove: %s", out)
 	}
+	code, _, errb = run("group", "add", "hunan-test", "--env", "test", "--label", "湖南组测试主机组")
+	if code != 0 {
+		t.Fatalf("group label: %d %s", code, errb)
+	}
+	code, out, errb = run("group", "list")
+	if code != 0 || !strings.Contains(out, "LABEL") || !strings.Contains(out, "hunan-test") || !strings.Contains(out, "湖南组测试主机组") {
+		t.Fatalf("group list %d %s %s", code, out, errb)
+	}
+	code, _, errb = run("group", "edit", "hunan-test", "--policy", "standard")
+	if code != 0 {
+		t.Fatalf("group edit policy: %d %s", code, errb)
+	}
+	code, out, _ = run("group", "list", "--json")
+	if !strings.Contains(out, `"label": "湖南组测试主机组"`) {
+		t.Fatalf("label dropped: %s", out)
+	}
+	code, _, errb = run("group", "edit", "hunan-test", "--label", "")
+	if code != 0 {
+		t.Fatalf("clear label: %d %s", code, errb)
+	}
+	code, out, _ = run("group", "list", "--json")
+	if strings.Contains(out, "湖南组测试主机组") {
+		t.Fatalf("label still present: %s", out)
+	}
 }
 
 func TestVersionSwitchesMatch(t *testing.T) {

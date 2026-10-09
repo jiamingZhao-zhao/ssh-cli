@@ -108,16 +108,33 @@ func (a *App) plan(cfg *config.Config, hosts []config.ResolvedHost, meta auditMe
 	return out, nil
 }
 
-func (a *App) dial(h config.ResolvedHost) (*sshclient.Client, error) {
+// defaultDialTimeout is the connect budget when the command does not ask for
+// a shorter one. It is not extended by a longer --timeout; that budget applies
+// only after the session is up.
+const defaultDialTimeout = 20 * time.Second
+
+// dialBudget bounds the TCP dial and SSH handshake. A positive command timeout
+// shortens it, so --timeout 3s fails an unreachable host in about 3s instead of
+// the historical 20s. The command context created after a successful dial is a
+// separate budget and is not reduced here.
+func dialBudget(commandTimeout time.Duration) time.Duration {
+	if commandTimeout > 0 && commandTimeout < defaultDialTimeout {
+		return commandTimeout
+	}
+	return defaultDialTimeout
+}
+
+func (a *App) dial(h config.ResolvedHost, commandTimeout time.Duration) (*sshclient.Client, error) {
 	auth, err := a.auth(h)
 	if err != nil {
 		return nil, err
 	}
 	addr := net.JoinHostPort(h.Host.Host, strconv.Itoa(h.Host.PortOrDefault()))
 	kh := sshclient.HostKeyCallback(filepath.Join(a.Dir, config.KnownHostsName), a.Insecure)
-	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	limit := dialBudget(commandTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
-	c, err := sshclient.Dial(ctx, addr, h.Host.User, auth, kh, 20*time.Second)
+	c, err := sshclient.Dial(ctx, addr, h.Host.User, auth, kh, limit)
 	if err != nil {
 		return nil, sshclient.Wrap(err)
 	}
@@ -170,7 +187,13 @@ func (a *App) header(h config.ResolvedHost) {
 		color = h.Env.Color
 	}
 	painted := output.Paint(output.IsTerminal(a.Err), color, label)
-	fmt.Fprintf(a.Err, "[%s] %s group=%s\n", painted, h.Alias, h.Group)
+	line := fmt.Sprintf("[%s] %s group=%s", painted, h.Alias, h.Group)
+	if h.GroupDef != nil {
+		if gl := strings.TrimSpace(h.GroupDef.Label); gl != "" {
+			line += " [" + gl + "]"
+		}
+	}
+	fmt.Fprintln(a.Err, line)
 }
 
 func shellForScript(script string) string {

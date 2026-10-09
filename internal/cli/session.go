@@ -17,7 +17,7 @@ type commandOutput struct {
 // runCommands dials once and runs each command. A remote non-zero status is
 // returned in the slice. Transport failures abort the rest.
 func (a *App) runCommands(p planned, commands []string, timeout time.Duration) ([]commandOutput, error) {
-	client, err := a.dial(p.host)
+	client, err := a.dial(p.host, timeout)
 	if err != nil {
 		return nil, err
 	}

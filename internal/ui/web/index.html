@@ -27,7 +27,7 @@
       <div class="table-wrap">
         <table>
           <thead>
-            <tr><th>名称</th><th>环境</th><th>策略</th><th>允许</th><th>拒绝</th><th>确认</th><th>主机</th><th></th></tr>
+            <tr><th>名称</th><th>显示名</th><th>环境</th><th>策略</th><th>允许</th><th>拒绝</th><th>确认</th><th>主机</th><th></th></tr>
           </thead>
           <tbody id="group-rows"></tbody>
         </table>
@@ -35,6 +35,7 @@
       <h3 id="group-form-title">添加分组</h3>
       <form id="group-form">
         <label>名称 <input name="name" required autocomplete="off"></label>
+        <label>显示名 <input name="label" autocomplete="off" placeholder="湖南组测试主机组"></label>
         <label>环境 <select name="env" id="group-env" required></select></label>
         <label>命名策略 <select name="policy" id="group-policy"></select></label>
         <label>允许

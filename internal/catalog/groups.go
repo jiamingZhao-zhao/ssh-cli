@@ -12,8 +12,10 @@ import (
 type GroupDraft struct {
 	Name           string
 	Env            string
+	Label          string
 	Policy         string
 	ProtectedPaths []string
+	HasLabel       bool
 	HasPolicy      bool
 	ClearPolicy    bool
 	HasPaths       bool
@@ -45,11 +47,16 @@ func addGroup(cfg *config.Config, in GroupDraft) error {
 	if policy != "" && !guard.KnownPolicy(cfg, policy) {
 		return fmt.Errorf("unknown policy %q", policy)
 	}
+	label, err := config.CleanLabel(in.Label)
+	if err != nil {
+		return err
+	}
 	if cfg.Groups == nil {
 		cfg.Groups = map[string]*config.Group{}
 	}
 	cfg.Groups[name] = &config.Group{
 		Env:            envName,
+		Label:          label,
 		Policy:         policy,
 		ProtectedPaths: cleanList(in.ProtectedPaths),
 		Hosts:          map[string]*config.Host{},
@@ -70,8 +77,15 @@ func editGroup(cfg *config.Config, in GroupDraft) error {
 	if !ok || g == nil {
 		return fmt.Errorf("group %q not found", name)
 	}
-	if !in.HasPolicy && !in.ClearPolicy && !in.HasPaths {
+	if !in.HasLabel && !in.HasPolicy && !in.ClearPolicy && !in.HasPaths {
 		return fmt.Errorf("no changes given")
+	}
+	if in.HasLabel {
+		label, err := config.CleanLabel(in.Label)
+		if err != nil {
+			return err
+		}
+		g.Label = label
 	}
 	if in.ClearPolicy && in.HasPolicy && strings.TrimSpace(in.Policy) != "" {
 		return fmt.Errorf("use only one of policy and clear-policy")

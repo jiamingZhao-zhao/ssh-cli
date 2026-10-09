@@ -127,6 +127,7 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 	}
 	type groupView struct {
 		Name           string   `json:"name"`
+		Label          string   `json:"label,omitempty"`
 		Env            string   `json:"env"`
 		Hosts          int      `json:"hosts"`
 		Policy         string   `json:"policy,omitempty"`
@@ -168,7 +169,7 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		if g == nil {
 			continue
 		}
-		view := groupView{Name: name, Env: g.Env, Hosts: len(g.Hosts), Policy: g.Policy}
+		view := groupView{Name: name, Label: g.Label, Env: g.Env, Hosts: len(g.Hosts), Policy: g.Policy}
 		fillRules(&view.Allow, &view.AllowSet, &view.Deny, &view.Confirm, g.Allow, g.Deny, g.Confirm)
 		view.ProtectedPaths = append([]string(nil), g.ProtectedPaths...)
 		groups = append(groups, view)

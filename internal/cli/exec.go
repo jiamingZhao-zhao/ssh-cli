@@ -86,7 +86,7 @@ func (a *App) execCmd() *cobra.Command {
 			return a.runAll(meta, plan, remote, scriptBody, dur)
 		},
 	}
-	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds)")
+	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds); also bounds SSH connect")
 	cmd.Flags().StringVar(&script, "script", "", "read the remote script from a file")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read the remote script from stdin")
 	return cmd
@@ -164,7 +164,7 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 }
 
 func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Writer, timeout time.Duration) (int, error) {
-	client, err := a.dial(p.host)
+	client, err := a.dial(p.host, timeout)
 	if err != nil {
 		return 0, err
 	}
