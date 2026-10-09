@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -408,6 +409,106 @@ func TestNoDataOutflowDeniesDownload(t *testing.T) {
 	eff = resolve(t, pcfg, ph, false)
 	if !DecideCapability(eff, "download", "/tmp/x").Allowed {
 		t.Fatal("builtin prod download stays allowed")
+	}
+}
+
+func TestWrapperAndOptionBypass(t *testing.T) {
+	cfg, host := prodReadonlyHost("", nil)
+	ro := resolve(t, cfg, host, false)
+	stdEnv := &config.Env{MaxMode: config.ModeStandard, DefaultPolicy: "standard"}
+	g := &config.Group{Env: "dev", Policy: "standard"}
+	h := &config.Host{Host: "192.0.2.30", User: "root"}
+	std := resolve(t, &config.Config{Version: 1, Envs: map[string]*config.Env{"dev": stdEnv}, Groups: map[string]*config.Group{"g": g}},
+		config.ResolvedHost{Alias: "box", Group: "g", EnvName: "dev", Env: stdEnv, GroupDef: g, Host: h}, false)
+	adminEnv := &config.Env{MaxMode: config.ModeAdmin, DefaultPolicy: "admin"}
+	ag := &config.Group{Env: "dev"}
+	ah := &config.Host{Host: "192.0.2.30", User: "root"}
+	admin := resolve(t, &config.Config{Version: 1, Envs: map[string]*config.Env{"dev": adminEnv}, Groups: map[string]*config.Group{"g": ag}},
+		config.ResolvedHost{Alias: "d", Group: "g", EnvName: "dev", Env: adminEnv, GroupDef: ag, Host: ah}, false)
+
+	mkfs := []string{
+		"env -S 'mkfs.ext4 /dev/review-placeholder'",
+		"env --split-string='mkfs.ext4 /dev/review-placeholder'",
+		"/usr/bin/env mkfs.ext4 /dev/review-placeholder",
+		"/bin/sh -c 'mkfs.ext4 /dev/review-placeholder'",
+		"/usr/bin/env -S 'mkfs.ext4 /dev/review-placeholder'",
+		`sh -c "sh -c \"mkfs.ext4 /dev/review-placeholder\""`,
+	}
+	for _, cmd := range mkfs {
+		for _, eff := range []Effective{ro, std, admin} {
+			d := Decide(eff, cmd)
+			if d.Allowed {
+				t.Errorf("%s mode %s allowed %q: %+v", eff.Mode, d.Mode, cmd, d.Findings)
+			}
+		}
+	}
+	if d := Decide(ro, "systemctl --no-pager restart nginx"); d.Allowed {
+		t.Fatalf("readonly systemctl restart: %+v", d)
+	}
+	restart := Decide(std, "systemctl --no-pager restart nginx")
+	if !restart.Allowed || !restart.NeedsConfirm {
+		t.Fatalf("standard systemctl --no-pager restart: %+v", restart)
+	}
+	if d := Decide(std, "systemctl --no-pager --lines=20 restart nginx"); !d.NeedsConfirm {
+		t.Fatalf("systemctl lines restart: %+v", d)
+	}
+	if d := Decide(ro, "systemctl --no-pager status nginx"); !d.Allowed || d.NeedsConfirm {
+		t.Fatalf("readonly status with global option: %+v", d)
+	}
+	if d := Decide(ro, "/bin/ls /tmp"); d.Allowed {
+		t.Fatalf("absolute ls must stay outside the allow-list: %+v", d)
+	}
+	if d := Decide(ro, "/usr/bin/env /bin/ls /tmp"); d.Allowed {
+		t.Fatalf("env absolute ls must stay outside the allow-list: %+v", d)
+	}
+	if d := Decide(ro, "env -S '$HOME/mkfs.ext4 /dev/sda'"); d.Allowed {
+		t.Fatalf("unparsed env -S readonly: %+v", d)
+	}
+	dyn := Decide(std, "env -S '$HOME/mkfs.ext4 /dev/sda'")
+	if !dyn.NeedsConfirm {
+		t.Fatalf("unparsed env -S standard: %+v", dyn)
+	}
+	if d := Decide(admin, "env --split-string='${CMD}'"); !d.NeedsConfirm {
+		t.Fatalf("unparsed env -S admin: %+v", d)
+	}
+	if d := Decide(admin, `sh -c $'\155kfs.ext4 /dev/review-placeholder'`); d.Allowed && !d.NeedsConfirm {
+		t.Fatalf("ANSI-C quote admin: %+v", d)
+	}
+	if d := Decide(ro, `sh -c $'\155kfs.ext4 /dev/review-placeholder'`); d.Allowed {
+		t.Fatalf("ANSI-C quote readonly: %+v", d)
+	}
+	if d := Decide(std, "/tmp/env mkfs.ext4 /dev/review-placeholder"); d.Allowed && !d.NeedsConfirm {
+		t.Fatalf("untrusted env path: %+v", d)
+	}
+	if d := Decide(std, "/tmp/sh -c 'mkfs.ext4 /dev/review-placeholder'"); d.Allowed && !d.NeedsConfirm {
+		t.Fatalf("untrusted sh path: %+v", d)
+	}
+	nested := "mkfs.ext4 /dev/review-placeholder"
+	for i := 0; i < 8; i++ {
+		nested = "env " + nested
+	}
+	if d := Decide(admin, nested); d.Allowed && !d.NeedsConfirm {
+		t.Fatalf("wrapper depth admin: %+v", d)
+	}
+	if d := Decide(ro, nested); d.Allowed {
+		t.Fatalf("wrapper depth readonly: %+v", d)
+	}
+	inner, err := parseScriptAt("echo hi", maxShellDepth+1)
+	if err != nil || inner.unresolved == "" {
+		t.Fatalf("shell depth parse: %v %+v", err, inner)
+	}
+	deep := "echo hi"
+	for i := 0; i <= maxShellDepth; i++ {
+		deep = "sh -c " + strconv.Quote(deep)
+	}
+	if d := Decide(ro, deep); d.Allowed {
+		t.Fatalf("shell depth readonly: %+v", d)
+	}
+	if d := Decide(admin, deep); d.Allowed && !d.NeedsConfirm {
+		t.Fatalf("shell depth admin: %+v", d)
+	}
+	if d := Decide(ro, "docker --host tcp://192.0.2.1:2375 ps -a"); !d.Allowed {
+		t.Fatalf("docker global option before ps: %+v", d)
 	}
 }
 

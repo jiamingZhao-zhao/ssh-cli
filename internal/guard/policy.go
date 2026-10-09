@@ -421,6 +421,17 @@ func Decide(eff Effective, command string) Decision {
 		dec.Findings = append(dec.Findings, Finding{Layer: "parser", Kind: "obfuscated", Detail: pr.obfuscated})
 		return dec
 	}
+	if pr.unresolved != "" {
+		finding := Finding{Layer: "parser", Kind: "unparseable", Detail: pr.unresolved}
+		if eff.Mode == config.ModeReadonly {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, finding)
+			return dec
+		}
+		dec.NeedsConfirm = true
+		finding.Kind = "confirm"
+		dec.Findings = append(dec.Findings, finding)
+	}
 	if pr.dynamic != "" {
 		switch eff.Mode {
 		case config.ModeReadonly:

@@ -118,7 +118,11 @@ func (a *App) sessionRunCommands(commands []string, idleRaw, maxRaw string) erro
 	if err != nil {
 		return exitcode.New(exitcode.Usage, "%s", err.Error())
 	}
-	pool, err := session.New(idleD, maxD, func(ctx context.Context, alias string) (*sshclient.Client, error) {
+	fp := host.Host.ConnFingerprint()
+	pool, err := session.New(idleD, maxD, func(ctx context.Context, alias, got string) (*sshclient.Client, error) {
+		if got != fp {
+			return nil, fmt.Errorf("session %s connection identity changed", alias)
+		}
 		return a.dial(host, 0)
 	}, func(alias, reason string) {
 		a.auditSession(host, reason, audit.StatusOK)
@@ -129,7 +133,7 @@ func (a *App) sessionRunCommands(commands []string, idleRaw, maxRaw string) erro
 	defer pool.Shutdown()
 	ctx, cancel := context.WithTimeout(context.Background(), maxD)
 	defer cancel()
-	if err := pool.Open(ctx, host.Alias, false); err != nil {
+	if err := pool.Open(ctx, host.Alias, fp, false); err != nil {
 		return exitcode.New(exitcode.Connect, "%s", err.Error())
 	}
 	a.auditSession(host, "open", audit.StatusOK)
@@ -148,7 +152,7 @@ func (a *App) sessionRunCommands(commands []string, idleRaw, maxRaw string) erro
 		}
 		start := time.Now()
 		var stdout, stderr strings.Builder
-		code, err := pool.Exec(ctx, host.Alias, command, &stdout, &stderr)
+		code, err := pool.Exec(ctx, host.Alias, fp, command, &stdout, &stderr)
 		if stdout.Len() > 0 {
 			fmt.Fprint(a.Out, stdout.String())
 		}

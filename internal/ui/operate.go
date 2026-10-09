@@ -10,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -17,6 +18,7 @@ import (
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/bundle"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/transfer"
 )
@@ -81,7 +83,8 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	var stdout, stderr limitBuf
 	stdout.n, stderr.n = execCaptureLimit, execCaptureLimit
-	code, err := s.pool.Exec(ctx, h.Alias, body.Command, &stdout, &stderr)
+	s.reconcile()
+	code, err := s.pool.Exec(ctx, h.Alias, h.Host.ConnFingerprint(), body.Command, &stdout, &stderr)
 	summary := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
 	if stdout.cut || stderr.cut {
 		summary += "\n[truncated]"
@@ -134,31 +137,47 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	tmp, err := os.CreateTemp("", "ssh-cli-upload-*")
+	name, err := cleanUploadName(hdr.Filename)
 	if err != nil {
 		writeFail(w, err)
 		return
 	}
-	tmpName := tmp.Name()
-	defer os.Remove(tmpName)
+	dir, err := os.MkdirTemp("", "ssh-cli-upload-*")
+	if err != nil {
+		writeFail(w, err)
+		return
+	}
+	defer os.RemoveAll(dir)
+	tmpName := filepath.Join(dir, name)
+	tmp, err := os.Create(tmpName)
+	if err != nil {
+		writeFail(w, err)
+		return
+	}
 	if _, err := io.Copy(tmp, file); err != nil {
 		_ = tmp.Close()
 		writeFail(w, err)
 		return
 	}
 	_ = tmp.Close()
-	if err := s.pool.Open(r.Context(), h.Alias, false); err != nil {
-		s.writeAudit(h, audit.OpUpload, "", hdr.Filename, remote, audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
+	s.reconcile()
+	fp := h.Host.ConnFingerprint()
+	if err := s.pool.Open(r.Context(), h.Alias, fp, false); err != nil {
+		s.writeAudit(h, audit.OpUpload, "", name, remote, audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
-	err = s.pool.Use(h.Alias, func() error {
-		client, ok := s.pool.Client(h.Alias)
+	final := remote
+	err = s.pool.Use(h.Alias, fp, func() error {
+		client, ok := s.pool.Client(h.Alias, fp)
 		if !ok {
 			return fmt.Errorf("session %s is not open", h.Alias)
 		}
-		return transfer.UploadChecked(client, tmpName, remote, nil, func(path string) error {
-			d := guard.DecideCapability(eff, "upload", path)
+		return transfer.UploadChecked(client, tmpName, remote, nil, func(dest string) error {
+			if path.Base(dest) == name {
+				final = dest
+			}
+			d := guard.DecideCapability(eff, "upload", dest)
 			if !d.Allowed {
 				return fmt.Errorf("%s", decisionText(d))
 			}
@@ -169,11 +188,11 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		s.writeAudit(h, audit.OpUpload, "", hdr.Filename, remote, audit.StatusError, 0, err.Error(), err.Error(), false, started)
+		s.writeAudit(h, audit.OpUpload, "", name, final, audit.StatusError, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
-	s.writeAudit(h, audit.OpUpload, "", hdr.Filename, remote, audit.StatusOK, 0, "upload ok", "", false, started)
+	s.writeAudit(h, audit.OpUpload, "", name, final, audit.StatusOK, 0, "upload ok", "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -199,7 +218,9 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec)})
 		return
 	}
-	if err := s.pool.Open(r.Context(), h.Alias, false); err != nil {
+	s.reconcile()
+	fp := h.Host.ConnFingerprint()
+	if err := s.pool.Open(r.Context(), h.Alias, fp, false); err != nil {
 		s.writeAudit(h, audit.OpDownload, "", body.Path, "", audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
@@ -211,8 +232,8 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(tmp)
 	dest := filepath.Join(tmp, "payload")
-	err = s.pool.Use(h.Alias, func() error {
-		client, ok := s.pool.Client(h.Alias)
+	err = s.pool.Use(h.Alias, fp, func() error {
+		client, ok := s.pool.Client(h.Alias, fp)
 		if !ok {
 			return fmt.Errorf("session %s is not open", h.Alias)
 		}
@@ -312,6 +333,7 @@ func (s *service) relayAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *service) sessionsAPI(w http.ResponseWriter, r *http.Request) {
+	s.reconcile()
 	writeJSON(w, http.StatusOK, map[string]any{"sessions": s.pool.List()})
 }
 
@@ -329,7 +351,8 @@ func (s *service) sessionOpenAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	started := time.Now()
-	if err := s.pool.Open(r.Context(), h.Alias, false); err != nil {
+	s.reconcile()
+	if err := s.pool.Open(r.Context(), h.Alias, h.Host.ConnFingerprint(), false); err != nil {
 		s.writeAudit(h, audit.OpSession, "", "", "", audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
@@ -366,21 +389,38 @@ func (s *service) configExportAPI(w http.ResponseWriter, r *http.Request) {
 
 func (s *service) configImportAPI(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		YAML string `json:"yaml"`
+		YAML         string `json:"yaml"`
+		HumanConfirm string `json:"humanConfirm"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 4<<20)).Decode(&body); err != nil {
 		writeFail(w, err)
 		return
 	}
+	var needs []confirmgate.Need
 	err := config.Update(s.dir, func(cfg *config.Config) error {
-		return bundle.Apply(cfg, []byte(body.YAML))
+		n, err := bundle.ApplyConfirmed(s.dir, "ui", body.HumanConfirm, cfg, []byte(body.YAML))
+		if err != nil {
+			return err
+		}
+		needs = n
+		return nil
 	})
 	if err != nil {
 		writeFail(w, err)
 		return
 	}
-	_, _ = audit.Append(s.dir, audit.Record{Op: audit.OpConfigChange, Status: audit.StatusOK, Reason: "config import", Actor: "ui"})
+	confirmgate.RecordImport(s.dir, "ui", needs)
+	s.reconcile()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func cleanUploadName(raw string) (string, error) {
+	raw = strings.ReplaceAll(strings.TrimSpace(raw), "\\", "/")
+	name := path.Base(raw)
+	if name == "." || name == ".." || name == "" || name == "/" || strings.ContainsRune(name, 0) {
+		return "", fmt.Errorf("invalid upload filename")
+	}
+	return name, nil
 }
 
 func (s *service) auditStatsAPI(w http.ResponseWriter, r *http.Request) {

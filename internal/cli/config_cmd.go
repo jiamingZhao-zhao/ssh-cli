@@ -6,8 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/bundle"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 )
 
@@ -19,7 +21,10 @@ func (a *App) configCmd() *cobra.Command {
 
 The bundle is YAML with kind ssh-cli-config. It stores passwordRef and identity
 paths. It never contains plaintext passwords, secret bytes, or the master key.
-Import does not change secrets.json. Built-in envs are restored on load.`,
+Import does not change secrets.json. Built-in envs keep their locked fields and
+carry noDataOutflow and breakGlass. Import uses the same confirmation phrase as
+group set-env and policy widen when a change leaves prod, widens permissions,
+or points a host at a different target.`,
 	}
 	cmd.AddCommand(a.configExport(), a.configImport())
 	return cmd
@@ -64,14 +69,23 @@ func (a *App) configImport() *cobra.Command {
 			if err != nil {
 				return exitcode.New(exitcode.Usage, "%s", err.Error())
 			}
-			err = config.Update(a.Dir, func(cfg *config.Config) error {
-				return bundle.Apply(cfg, data)
+			return a.withConfirm(func(phrase string) error {
+				var needs []confirmgate.Need
+				err := config.Update(a.Dir, func(cfg *config.Config) error {
+					n, err := bundle.ApplyConfirmed(a.Dir, audit.Actor(), phrase, cfg, data)
+					if err != nil {
+						return err
+					}
+					needs = n
+					return nil
+				})
+				if err != nil {
+					return err
+				}
+				confirmgate.RecordImport(a.Dir, audit.Actor(), needs)
+				fmt.Fprintln(a.Out, "imported config bundle")
+				return nil
 			})
-			if err != nil {
-				return exitcode.New(exitcode.Usage, "%s", err.Error())
-			}
-			fmt.Fprintln(a.Out, "imported config bundle")
-			return nil
 		},
 	}
 }

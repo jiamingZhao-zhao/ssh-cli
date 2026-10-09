@@ -37,11 +37,20 @@ func Export(cfg *config.Config) ([]byte, error) {
 		Policies: cfg.Policies, Groups: cfg.Groups, Tasks: cfg.Tasks,
 	}
 	for name, env := range cfg.Envs {
-		if env == nil || config.IsBuiltinEnv(name) {
+		if env == nil {
 			continue
 		}
 		if doc.Envs == nil {
 			doc.Envs = map[string]*config.Env{}
+		}
+		if config.IsBuiltinEnv(name) {
+			// Locked fields (label, color, maxMode, defaultPolicy) are restored
+			// on load. Keep the fields an operator can actually change.
+			doc.Envs[name] = &config.Env{
+				NoDataOutflow: env.NoDataOutflow,
+				BreakGlass:    env.BreakGlass,
+			}
+			continue
 		}
 		doc.Envs[name] = env
 	}
@@ -89,7 +98,28 @@ func Apply(cfg *config.Config, data []byte) error {
 		}
 	}
 	for name, env := range doc.Envs {
-		if config.IsBuiltinEnv(name) || env == nil {
+		if env == nil {
+			continue
+		}
+		if config.IsBuiltinEnv(name) {
+			base := next[name]
+			if base == nil {
+				canon, ok := config.BuiltinEnv(name)
+				if !ok {
+					continue
+				}
+				base = &canon
+				next[name] = base
+			}
+			// The key is present, so false is an explicit value and must not
+			// be dropped on the floor during a cross-directory migrate.
+			base.NoDataOutflow = env.NoDataOutflow
+			if env.BreakGlass != nil {
+				bg := *env.BreakGlass
+				base.BreakGlass = &bg
+			} else {
+				base.BreakGlass = nil
+			}
 			continue
 		}
 		next[name] = env

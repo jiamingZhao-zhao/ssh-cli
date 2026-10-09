@@ -71,6 +71,66 @@ func TestConfigExportRoundTripAndCleanup(t *testing.T) {
 	}
 }
 
+func TestConfigImportRefusesProdLeaveWithoutConfirm(t *testing.T) {
+	ttyCheck = func() bool { return false }
+	t.Cleanup(func() { ttyCheck = defaultTTY })
+	dir := t.TempDir()
+	run := func(args ...string) (int, string, string) {
+		t.Helper()
+		var out, errb strings.Builder
+		code := Execute(append([]string{"--config", dir}, args...), strings.NewReader(""), &out, &errb)
+		return code, out.String(), errb.String()
+	}
+	if code, _, errb := run("group", "add", "app", "--env", "prod"); code != 0 {
+		t.Fatal(errb)
+	}
+	if code, _, errb := run("host", "add", "box", "--group", "app", "--host", "192.0.2.10", "--user", "ops", "--identity", "~/.ssh/id_ed25519"); code != 0 {
+		t.Fatal(errb)
+	}
+	code, out, errb := run("config", "export")
+	if code != 0 {
+		t.Fatal(errb)
+	}
+	bundle := filepath.Join(dir, "bundle.yaml")
+	weaker := strings.Replace(out, "env: prod", "env: dev", 1)
+	if weaker == out {
+		t.Fatalf("bundle had no prod group\n%s", out)
+	}
+	if err := os.WriteFile(bundle, []byte(weaker), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	code, _, errb = run("config", "import", bundle)
+	if code != 253 {
+		t.Fatalf("import without confirm: %d %s", code, errb)
+	}
+	text, err := os.ReadFile(filepath.Join(dir, "hosts.yaml"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(text), "env: prod") || strings.Contains(string(text), "env: dev") {
+		t.Fatalf("prod group changed\n%s", text)
+	}
+	recs := auditText(t, dir)
+	if !strings.Contains(recs, "prod") || !strings.Contains(recs, "denied") {
+		t.Fatalf("audit\n%s", recs)
+	}
+}
+
+func auditText(t *testing.T, dir string) string {
+	t.Helper()
+	var b strings.Builder
+	if err := audit.List(dir, audit.Filter{}, func(rec audit.Record) error {
+		b.WriteString(rec.Status)
+		b.WriteByte(' ')
+		b.WriteString(rec.Reason)
+		b.WriteByte('\n')
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return b.String()
+}
+
 func TestRelayCLI(t *testing.T) {
 	ttyCheck = func() bool { return false }
 	t.Cleanup(func() { ttyCheck = defaultTTY })

@@ -367,6 +367,7 @@ func (s *service) addHost(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
+	s.reconcile()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -380,6 +381,7 @@ func (s *service) updateHost(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
+	s.reconcile()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -393,6 +395,7 @@ func (s *service) removeHost(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
+	s.reconcile()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
