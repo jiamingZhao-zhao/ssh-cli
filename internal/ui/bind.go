@@ -22,7 +22,7 @@ func CheckBind(addr string, allowNonLoopback bool) error {
 	if allowNonLoopback {
 		return nil
 	}
-	return fmt.Errorf("refusing to bind %s: the UI listens on 127.0.0.1 only; pass --allow-non-loopback to override (no authentication, not for public networks)", addr)
+	return fmt.Errorf("refusing to bind %s: the UI listens on 127.0.0.1 only; pass --allow-non-loopback to override (prints a one-time bearer token, not for public networks)", addr)
 }
 
 // WarnNonLoopback reports whether addr is not a loopback bind.

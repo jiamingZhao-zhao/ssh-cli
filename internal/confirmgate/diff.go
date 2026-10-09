@@ -13,7 +13,13 @@ import (
 // ConfigNeeds diffs the candidate config against the current one.
 // Leaving prod, a wider policy, or a different host target each produce a
 // confirmation need. Callers confirm with Require, then save and sign.
+// Import uses ImportNeeds so a delete in one bundle and a recreate in the next
+// still see the credential binding.
 func ConfigNeeds(prev, next *config.Config) ([]Need, error) {
+	return configNeeds(prev, next, nil)
+}
+
+func configNeeds(prev, next *config.Config, extra []credBind) ([]Need, error) {
 	if prev == nil || next == nil {
 		return nil, fmt.Errorf("config diff requires both documents")
 	}
@@ -26,7 +32,53 @@ func ConfigNeeds(prev, next *config.Config) ([]Need, error) {
 		return nil, err
 	}
 	needs = append(needs, hostNeeds...)
+	needs = append(needs, hostReuseNeeds(prev, next, extra)...)
 	return dedupeNeeds(needs), nil
+}
+
+// DiffSummary is a stable one-line description of host add, remove, and address changes.
+func DiffSummary(prev, next *config.Config) string {
+	if prev == nil || next == nil {
+		return "config import"
+	}
+	old := prev.Index()
+	neu := next.Index()
+	var removed, added, moved []string
+	for alias, h := range old {
+		n, ok := neu[alias]
+		if !ok {
+			removed = append(removed, alias)
+			continue
+		}
+		if h.Host == nil || n.Host == nil {
+			continue
+		}
+		if h.Host.Host != n.Host.Host || h.Host.PortOrDefault() != n.Host.PortOrDefault() {
+			moved = append(moved, alias)
+		}
+	}
+	for alias := range neu {
+		if _, ok := old[alias]; !ok {
+			added = append(added, alias)
+		}
+	}
+	sort.Strings(removed)
+	sort.Strings(added)
+	sort.Strings(moved)
+	var parts []string
+	if len(removed) > 0 {
+		parts = append(parts, "removed "+strings.Join(removed, ","))
+	}
+	if len(added) > 0 {
+		parts = append(parts, "added "+strings.Join(added, ","))
+	}
+	if len(moved) > 0 {
+		parts = append(parts, "moved "+strings.Join(moved, ","))
+	}
+	if len(parts) == 0 {
+		return "no host changes"
+	}
+	return strings.Join(parts, "; ")
 }
 
 func envNeeds(prev, next *config.Config) []Need {
@@ -146,6 +198,113 @@ func hostDiffNeeds(prev, next *config.Config) ([]Need, error) {
 		}
 	}
 	return needs, nil
+}
+
+// hostReuseNeeds catches a new alias, or a host that was removed and added
+// again, when it reuses a passwordRef or identity file at a different address.
+// Hosts that keep their alias are already covered by hostDiffNeeds.
+func hostReuseNeeds(prev, next *config.Config, extra []credBind) []Need {
+	type sight struct {
+		host  string
+		port  int
+		env   string
+		alias string
+	}
+	known := map[string][]sight{}
+	add := func(kind, value, env, alias string, h *config.Host) {
+		value = strings.TrimSpace(value)
+		if value == "" || h == nil || strings.TrimSpace(h.Host) == "" {
+			return
+		}
+		key := kind + "\x00" + value
+		s := sight{host: strings.TrimSpace(h.Host), port: h.PortOrDefault(), env: env, alias: alias}
+		for _, e := range known[key] {
+			if e.host == s.host && e.port == s.port && e.env == s.env && e.alias == s.alias {
+				return
+			}
+		}
+		known[key] = append(known[key], s)
+	}
+	if prev != nil {
+		for alias, h := range prev.Index() {
+			if h.Host == nil {
+				continue
+			}
+			add("passwordRef", h.Host.PasswordRef, h.EnvName, alias, h.Host)
+			add("identity", h.Host.Identity, h.EnvName, alias, h.Host)
+		}
+	}
+	for _, b := range extra {
+		add(b.Kind, b.Value, b.Env, b.Alias, &config.Host{Host: b.Host, Port: b.Port, User: b.User})
+	}
+	if next == nil {
+		return nil
+	}
+	prevIndex := map[string]config.ResolvedHost{}
+	if prev != nil {
+		prevIndex = prev.Index()
+	}
+	aliases := make([]string, 0)
+	nextIndex := next.Index()
+	for alias := range nextIndex {
+		aliases = append(aliases, alias)
+	}
+	sort.Strings(aliases)
+	var needs []Need
+	for _, alias := range aliases {
+		if _, ok := prevIndex[alias]; ok {
+			continue
+		}
+		h := nextIndex[alias]
+		if h.Host == nil {
+			continue
+		}
+		for _, cred := range []struct{ kind, val string }{
+			{"passwordRef", h.Host.PasswordRef},
+			{"identity", h.Host.Identity},
+		} {
+			val := strings.TrimSpace(cred.val)
+			if val == "" {
+				continue
+			}
+			sights := known[cred.kind+"\x00"+val]
+			if len(sights) == 0 {
+				continue
+			}
+			matched := false
+			fromProd := false
+			olds := make([]string, 0, len(sights))
+			for _, s := range sights {
+				if s.host == strings.TrimSpace(h.Host.Host) && s.port == h.Host.PortOrDefault() {
+					matched = true
+				}
+				if s.env == "prod" {
+					fromProd = true
+				}
+				label := s.alias
+				if label == "" {
+					label = cred.kind
+				}
+				olds = append(olds, fmt.Sprintf("%s@%s:%d", label, s.host, s.port))
+			}
+			if matched {
+				continue
+			}
+			sort.Strings(olds)
+			reason := fmt.Sprintf("host %s reuses %s %q at %s:%d (known %s)", alias, cred.kind, val, strings.TrimSpace(h.Host.Host), h.Host.PortOrDefault(), strings.Join(olds, ", "))
+			if fromProd && h.EnvName != "prod" {
+				needs = append(needs, Need{
+					Kind: "prod_leave", Phrase: "prod", Object: alias, Reason: reason,
+				})
+			} else if !hasHostGate(needs, alias) {
+				needs = append(needs, Need{
+					Kind: "host_move", Phrase: alias, Object: alias, Reason: reason,
+				})
+			}
+			break
+		}
+	}
+	return needs
 }
 
 func hasHostGate(needs []Need, alias string) bool {
@@ -276,9 +435,20 @@ func kindRank(kind string) int {
 }
 
 // RecordImport writes one config-change audit line after a committed import.
-func RecordImport(dir, actor string, needs []Need) {
+// summary is the host diff (added, removed, moved), including imports that
+// did not need a confirmation phrase.
+func RecordImport(dir, actor string, needs []Need, summary string) {
+	if strings.TrimSpace(summary) == "" {
+		summary = "config import"
+	} else {
+		summary = "config import: " + summary
+	}
 	if len(needs) > 0 {
-		RecordOK(dir, actor, needs)
+		reason := Reasons(needs)
+		if summary != "" {
+			reason = reason + "; " + summary
+		}
+		write(dir, actor, audit.StatusOK, false, reason, Object(needs))
 		return
 	}
 	if strings.TrimSpace(actor) == "" {
@@ -286,6 +456,6 @@ func RecordImport(dir, actor string, needs []Need) {
 	}
 	_, _ = audit.Append(dir, audit.Record{
 		Op: audit.OpConfigChange, Status: audit.StatusOK, Actor: actor,
-		Reason: "config import", Command: "config import",
+		Reason: summary, Command: "config import",
 	})
 }

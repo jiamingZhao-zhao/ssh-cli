@@ -31,8 +31,15 @@ var webFS embed.FS
 // Handler serves the embedded page and the local JSON API.
 // When allowRemote is false, requests whose RemoteAddr is not loopback are rejected.
 func Handler(dir string, allowRemote bool) http.Handler {
+	return HandlerBearer(dir, allowRemote, "")
+}
+
+// HandlerBearer is Handler with a fixed API token. An empty token is minted
+// when allowRemote is set, so a non-loopback listener is never unauthenticated.
+func HandlerBearer(dir string, allowRemote bool, bearer string) http.Handler {
 	policyhmac.Install()
-	s := newService(dir, allowRemote)
+	confirmgate.Install()
+	s := newService(dir, allowRemote, bearer)
 	return s.guard(s.routes())
 }
 
@@ -77,8 +84,13 @@ func (s *service) routes() *http.ServeMux {
 	return mux
 }
 
-func newService(dir string, allowRemote bool) *service {
-	s := &service{dir: dir, allowRemote: allowRemote, sessions: map[string]string{}}
+func newService(dir string, allowRemote bool, bearer string) *service {
+	if !allowRemote {
+		bearer = ""
+	} else if bearer == "" {
+		bearer = newToken()
+	}
+	s := &service{dir: dir, allowRemote: allowRemote, bearer: bearer, sessions: map[string]string{}}
 	idle, maxLife := session.DefaultIdle, session.DefaultMaxLife
 	if cfg, err := config.Load(dir); err == nil && cfg.Session != nil {
 		if d, err := session.ParseWindow(cfg.Session.Idle, session.DefaultIdle); err == nil {
@@ -98,12 +110,13 @@ func newService(dir string, allowRemote bool) *service {
 
 // Serve listens until ctx is cancelled, then shuts the server down.
 // The UI process owns the session pool. Cancel closes every session it still holds.
-func Serve(ctx context.Context, addr, dir string, allowRemote bool) error {
+func Serve(ctx context.Context, addr, dir string, allowRemote bool, bearer string) error {
 	if ctx == nil {
 		ctx = context.Background()
 	}
 	policyhmac.Install()
-	s := newService(dir, allowRemote)
+	confirmgate.Install()
+	s := newService(dir, allowRemote, bearer)
 	loopCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go s.pool.Loop(loopCtx)
@@ -132,6 +145,7 @@ func Serve(ctx context.Context, addr, dir string, allowRemote bool) error {
 type service struct {
 	dir         string
 	allowRemote bool
+	bearer      string
 	mu          sync.Mutex
 	sessions    map[string]string
 	pool        *session.Pool

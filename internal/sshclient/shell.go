@@ -179,9 +179,11 @@ func (s *Shell) kill() {
 		if s.stdin != nil {
 			_ = s.stdin.Close()
 		}
+		// Exec reads s.sess under s.mu. kill also runs from the timeout watcher
+		// without that lock, so the session pointer stays put and callers use
+		// the dead flag.
 		if s.sess != nil {
 			_ = s.sess.Close()
-			s.sess = nil
 		}
 	})
 }

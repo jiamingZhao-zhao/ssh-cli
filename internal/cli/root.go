@@ -13,6 +13,7 @@ import (
 	"golang.org/x/term"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/policyhmac"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/version"
@@ -62,6 +63,7 @@ func Execute(args []string, in io.Reader, out, errw io.Writer) int {
 		errw = os.Stderr
 	}
 	policyhmac.Install()
+	confirmgate.Install()
 	if err := rejectPasswordFlag(args); err != nil {
 		fmt.Fprintf(errw, "error: %s\n", err)
 		return exitcode.Usage

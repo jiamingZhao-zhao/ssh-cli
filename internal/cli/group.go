@@ -193,7 +193,7 @@ func (a *App) envAdd() *cobra.Command {
 	cmd.Flags().StringVar(&color, "color", "", "color name (red, orange, yellow, green)")
 	cmd.Flags().StringVar(&maxMode, "max-mode", "", "mode ceiling: readonly, standard, or admin")
 	cmd.Flags().StringVar(&defPol, "default-policy", "", "named policy applied to every group in this env")
-	cmd.Flags().BoolVar(&noOut, "no-data-outflow", false, "mark the env as forbidding data outflow")
+	cmd.Flags().BoolVar(&noOut, "no-data-outflow", false, "forbid download, cross-env relay, and exec stdout/stderr unless --allow-outflow")
 	_ = cmd.MarkFlagRequired("max-mode")
 	return cmd
 }
@@ -241,7 +241,7 @@ func (a *App) envEdit() *cobra.Command {
 	cmd.Flags().StringVar(&maxMode, "max-mode", "", "mode ceiling: readonly, standard, or admin")
 	cmd.Flags().StringVar(&defPol, "default-policy", "", "named default policy (empty clears it)")
 	cmd.Flags().BoolVar(&clearPol, "clear-default-policy", false, "remove the default policy")
-	cmd.Flags().BoolVar(&noOut, "no-data-outflow", false, "forbid data outflow")
+	cmd.Flags().BoolVar(&noOut, "no-data-outflow", false, "forbid download, cross-env relay, and exec stdout/stderr unless --allow-outflow")
 	cmd.Flags().BoolVar(&allowOut, "allow-data-outflow", false, "allow data outflow")
 	return cmd
 }

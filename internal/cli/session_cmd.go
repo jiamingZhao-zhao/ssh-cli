@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -35,6 +36,7 @@ Separate session list/open/close processes do not see that shell.`,
 func (a *App) sessionRun() *cobra.Command {
 	var commands []string
 	var idle, maxLife string
+	var allowOutflow bool
 	cmd := &cobra.Command{
 		Use:   "run",
 		Short: "Run commands in one persistent shell, then close it",
@@ -45,12 +47,13 @@ func (a *App) sessionRun() *cobra.Command {
 			if len(commands) == 0 {
 				return exitcode.New(exitcode.Usage, "pass at least one --command")
 			}
-			return a.sessionRunCommands(commands, idle, maxLife)
+			return a.sessionRunCommands(commands, idle, maxLife, allowOutflow)
 		},
 	}
 	cmd.Flags().StringArrayVar(&commands, "command", nil, "remote command (repeatable; shares one shell)")
 	cmd.Flags().StringVar(&idle, "idle", "", "idle auto-close (default 5m)")
 	cmd.Flags().StringVar(&maxLife, "max-life", "", "hard session cap (default 60m)")
+	cmd.Flags().BoolVar(&allowOutflow, "allow-outflow", false, "return stdout and stderr from a noDataOutflow env; requires typing outflow")
 	return cmd
 }
 
@@ -87,7 +90,7 @@ func (a *App) sessionClose() *cobra.Command {
 	}
 }
 
-func (a *App) sessionRunCommands(commands []string, idleRaw, maxRaw string) error {
+func (a *App) sessionRunCommands(commands []string, idleRaw, maxRaw string, allowOutflow bool) error {
 	cfg, hosts, err := a.loadSelection()
 	if err != nil {
 		return err
@@ -137,6 +140,12 @@ func (a *App) sessionRunCommands(commands []string, idleRaw, maxRaw string) erro
 		return exitcode.New(exitcode.Connect, "%s", err.Error())
 	}
 	a.auditSession(host, "open", audit.StatusOK)
+	suppress, needsOut := guard.ExecOutflow(eff.NoDataOut, allowOutflow)
+	if needsOut {
+		if err := confirmOutflow(a.Yes); err != nil {
+			return err
+		}
+	}
 	for _, command := range commands {
 		dec := guard.Decide(eff, command)
 		meta := a.auditMeta(audit.OpExec, command, "", "")
@@ -151,13 +160,23 @@ func (a *App) sessionRunCommands(commands []string, idleRaw, maxRaw string) erro
 			}
 		}
 		start := time.Now()
-		var stdout, stderr strings.Builder
-		code, err := pool.Exec(ctx, host.Alias, fp, command, &stdout, &stderr)
-		if stdout.Len() > 0 {
-			fmt.Fprint(a.Out, stdout.String())
+		var stdout, stderr io.Writer
+		var outBuf, errBuf strings.Builder
+		if suppress {
+			stdout, stderr = io.Discard, io.Discard
+		} else {
+			stdout, stderr = &outBuf, &errBuf
 		}
-		if stderr.Len() > 0 {
-			fmt.Fprint(a.Err, stderr.String())
+		code, err := pool.Exec(ctx, host.Alias, fp, command, stdout, stderr)
+		if suppress {
+			fmt.Fprintln(a.Err, guard.OutflowDiscarded)
+		} else {
+			if outBuf.Len() > 0 {
+				fmt.Fprint(a.Out, outBuf.String())
+			}
+			if errBuf.Len() > 0 {
+				fmt.Fprint(a.Err, errBuf.String())
+			}
 		}
 		meta.started = start
 		if err != nil {

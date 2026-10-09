@@ -11,6 +11,19 @@ import (
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/sshtest"
 )
 
+func TestParseRemoteSum(t *testing.T) {
+	sum := "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+	got, err := parseSumOutput("\\" + sum + "  D:\\tmp\\file")
+	if err != nil || got != sum {
+		t.Fatalf("msys %q %v", got, err)
+	}
+	md := "d41d8cd98f00b204e9800998ecf8427e"
+	got, err = parseSumOutput("MD5 (file) = " + md)
+	if err != nil || got != md {
+		t.Fatalf("bsd %q %v", got, err)
+	}
+}
+
 func TestRelayHashesFile(t *testing.T) {
 	src, err := sshtest.Start("tester", "test-pass", nil)
 	if err != nil {

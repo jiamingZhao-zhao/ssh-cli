@@ -97,7 +97,7 @@ func TestImportRequiresConfirmBeforeCommit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_, err = ApplyConfirmed(dir, "test", "", loaded, []byte(weaker))
+	_, _, err = ApplyConfirmed(dir, "test", "", loaded, []byte(weaker))
 	var ce *confirmgate.Error
 	if !errors.As(err, &ce) || ce.Phrase != "prod" {
 		t.Fatalf("prod leave: %v", err)
@@ -122,12 +122,12 @@ func TestImportRequiresConfirmBeforeCommit(t *testing.T) {
 		t.Fatal("missing concrete denial audit")
 	}
 	if err := config.Update(dir, func(cur *config.Config) error {
-		_, err := ApplyConfirmed(dir, "test", "prod", cur, []byte(weaker))
+		_, _, err := ApplyConfirmed(dir, "test", "prod", cur, []byte(weaker))
 		return err
 	}); err != nil {
 		t.Fatal(err)
 	}
-	confirmgate.RecordImport(dir, "test", []confirmgate.Need{confirmgate.ProdLeaveNeed("app", "dev")})
+	confirmgate.RecordImport(dir, "test", []confirmgate.Need{confirmgate.ProdLeaveNeed("app", "dev")}, "moved app")
 	after, err := config.Load(dir)
 	if err != nil {
 		t.Fatal(err)
@@ -148,7 +148,7 @@ func TestImportRequiresConfirmBeforeCommit(t *testing.T) {
 		t.Fatalf("expected explicit port\n%s", current)
 	}
 	withPort := strings.Replace(string(current), "port: 22", "port: 2222", 1)
-	_, err = ApplyConfirmed(dir, "test", "", base, []byte(withPort))
+	_, _, err = ApplyConfirmed(dir, "test", "", base, []byte(withPort))
 	if !errors.As(err, &ce) || ce.Phrase != "box" {
 		t.Fatalf("port change confirm: %v", err)
 	}

@@ -272,7 +272,7 @@ func (p *parsed) call(call *syntax.CallExpr) {
 	rest, kind, why := unwrapWrappers(args)
 	switch kind {
 	case unwrapDynamic:
-		p.noteDynamic("could not unwrap sudo/command/exec/env because an argument is dynamic")
+		p.noteDynamic("could not unwrap a command wrapper because an argument is dynamic")
 		return
 	case unwrapUnresolved:
 		p.noteUnresolved(why)
@@ -490,6 +490,14 @@ func (p *parsed) noteUnresolved(why string) {
 
 var wrapperNames = map[string]bool{
 	"sudo": true, "command": true, "exec": true, "env": true,
+	"nohup": true, "nice": true, "timeout": true, "stdbuf": true, "xargs": true,
+	"ionice": true, "chrt": true, "taskset": true, "setsid": true, "flock": true, "watch": true,
+}
+
+// opaqueWrappers hide the real command behind an option grammar that is not
+// expanded here. standard confirms them and readonly denies them.
+var opaqueWrappers = map[string]bool{
+	"ionice": true, "chrt": true, "taskset": true, "setsid": true, "flock": true, "watch": true,
 }
 
 // commandIdentity splits argv0 into a basename and whether that path is a
@@ -524,11 +532,20 @@ func unwrapWrappers(args []Arg) ([]Arg, unwrapKind, string) {
 		if shellNames[base] && !trusted {
 			return nil, unwrapUnresolved, "untrusted shell path " + rest[0].Value
 		}
+		if base == "find" {
+			if findMayExec(rest) {
+				return nil, unwrapUnresolved, "find -exec cannot be expanded safely"
+			}
+			return rest, unwrapOK, ""
+		}
 		if !wrapperNames[base] {
 			return rest, unwrapOK, ""
 		}
 		if !trusted {
 			return nil, unwrapUnresolved, "untrusted wrapper path " + rest[0].Value
+		}
+		if opaqueWrappers[base] {
+			return nil, unwrapUnresolved, base + " wrapper is not expanded"
 		}
 		var next []Arg
 		var kind unwrapKind
@@ -554,6 +571,16 @@ func unwrapWrappers(args []Arg) ([]Arg, unwrapKind, string) {
 			}
 		case "env":
 			next, kind, why = stripEnv(rest)
+		case "nohup":
+			next, kind, why = stripNohup(rest)
+		case "nice":
+			next, kind, why = stripNice(rest)
+		case "timeout":
+			next, kind, why = stripTimeout(rest)
+		case "stdbuf":
+			next, kind, why = stripStdbuf(rest)
+		case "xargs":
+			next, kind, why = stripXargs(rest)
 		default:
 			return rest, unwrapOK, ""
 		}
@@ -846,6 +873,224 @@ func splitEnvCommand(s string) ([]Arg, bool) {
 	}
 	flush()
 	return args, true
+}
+
+func findMayExec(args []Arg) bool {
+	for _, a := range args[1:] {
+		if !a.Static {
+			return true
+		}
+		switch a.Value {
+		case "-exec", "-execdir", "-ok", "-okdir":
+			return true
+		}
+	}
+	return false
+}
+
+func stripNohup(args []Arg) ([]Arg, unwrapKind, string) {
+	i := 1
+	for i < len(args) {
+		if !args[i].Static {
+			return nil, unwrapUnresolved, "nohup arguments are not static"
+		}
+		switch args[i].Value {
+		case "--":
+			return args[i+1:], unwrapOK, ""
+		case "--help", "--version":
+			i++
+		default:
+			if strings.HasPrefix(args[i].Value, "-") {
+				return nil, unwrapUnresolved, "nohup arguments could not be expanded"
+			}
+			return args[i:], unwrapOK, ""
+		}
+	}
+	return args[i:], unwrapOK, ""
+}
+
+func stripNice(args []Arg) ([]Arg, unwrapKind, string) {
+	i := 1
+	for i < len(args) {
+		if !args[i].Static {
+			return nil, unwrapUnresolved, "nice arguments are not static"
+		}
+		v := args[i].Value
+		switch {
+		case v == "--":
+			return args[i+1:], unwrapOK, ""
+		case v == "--help" || v == "--version":
+			i++
+		case v == "-n" || v == "--adjustment":
+			if i+1 >= len(args) || !args[i+1].Static {
+				return nil, unwrapUnresolved, "nice arguments could not be expanded"
+			}
+			i += 2
+		case strings.HasPrefix(v, "--adjustment="):
+			i++
+		case strings.HasPrefix(v, "-") && niceAdjust(v):
+			i++
+		case strings.HasPrefix(v, "-"):
+			return nil, unwrapUnresolved, "nice arguments could not be expanded"
+		default:
+			return args[i:], unwrapOK, ""
+		}
+	}
+	return args[i:], unwrapOK, ""
+}
+
+func niceAdjust(v string) bool {
+	body := v[1:]
+	body = strings.TrimPrefix(body, "n")
+	body = strings.TrimPrefix(body, "+")
+	if body == "" {
+		return false
+	}
+	for _, c := range body {
+		if c < '0' || c > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func stripTimeout(args []Arg) ([]Arg, unwrapKind, string) {
+	i := 1
+	for i < len(args) {
+		if !args[i].Static {
+			return nil, unwrapUnresolved, "timeout arguments are not static"
+		}
+		v := args[i].Value
+		switch {
+		case v == "--":
+			if i+2 > len(args) {
+				return nil, unwrapUnresolved, "timeout command could not be expanded"
+			}
+			return args[i+2:], unwrapOK, ""
+		case v == "--preserve-status" || v == "--foreground" || v == "--verbose" || v == "-v" || v == "--help" || v == "--version":
+			i++
+		case v == "-k" || v == "--kill-after" || v == "-s" || v == "--signal":
+			if i+1 >= len(args) || !args[i+1].Static {
+				return nil, unwrapUnresolved, "timeout arguments could not be expanded"
+			}
+			i += 2
+		case strings.HasPrefix(v, "--kill-after=") || strings.HasPrefix(v, "--signal="):
+			i++
+		case strings.HasPrefix(v, "-"):
+			return nil, unwrapUnresolved, "timeout arguments could not be expanded"
+		default:
+			return args[i+1:], unwrapOK, ""
+		}
+	}
+	return nil, unwrapUnresolved, "timeout command could not be expanded"
+}
+
+func stripStdbuf(args []Arg) ([]Arg, unwrapKind, string) {
+	i := 1
+	saw := false
+	for i < len(args) {
+		if !args[i].Static {
+			return nil, unwrapUnresolved, "stdbuf arguments are not static"
+		}
+		v := args[i].Value
+		switch {
+		case v == "--":
+			if !saw {
+				return nil, unwrapUnresolved, "stdbuf command could not be expanded"
+			}
+			return args[i+1:], unwrapOK, ""
+		case v == "-i" || v == "-o" || v == "-e":
+			if i+1 >= len(args) || !args[i+1].Static {
+				return nil, unwrapUnresolved, "stdbuf arguments could not be expanded"
+			}
+			saw = true
+			i += 2
+		case strings.HasPrefix(v, "--input=") || strings.HasPrefix(v, "--output=") || strings.HasPrefix(v, "--error="):
+			saw = true
+			i++
+		case strings.HasPrefix(v, "--"):
+			return nil, unwrapUnresolved, "stdbuf arguments could not be expanded"
+		case strings.HasPrefix(v, "-") && len(v) > 2 && (v[1] == 'i' || v[1] == 'o' || v[1] == 'e'):
+			saw = true
+			i++
+		case strings.HasPrefix(v, "-"):
+			return nil, unwrapUnresolved, "stdbuf arguments could not be expanded"
+		default:
+			if !saw {
+				return nil, unwrapUnresolved, "stdbuf command could not be expanded"
+			}
+			return args[i:], unwrapOK, ""
+		}
+	}
+	return nil, unwrapUnresolved, "stdbuf command could not be expanded"
+}
+
+func stripXargs(args []Arg) ([]Arg, unwrapKind, string) {
+	i := 1
+	for i < len(args) {
+		if !args[i].Static {
+			return nil, unwrapUnresolved, "xargs arguments are not static"
+		}
+		v := args[i].Value
+		if v == "--" {
+			return args[i+1:], unwrapOK, ""
+		}
+		if !strings.HasPrefix(v, "-") {
+			return args[i:], unwrapOK, ""
+		}
+		if strings.HasPrefix(v, "--") {
+			name, _, hasEq := strings.Cut(v, "=")
+			switch name {
+			case "--null", "--interactive", "--no-run-if-empty", "--verbose", "--exit", "--show-limits", "--help", "--version":
+				i++
+			case "--arg-file", "--delimiter", "--eof", "--replace", "--max-lines", "--max-args", "--max-procs", "--max-chars", "--process-slot-var":
+				if hasEq {
+					i++
+					continue
+				}
+				if i+1 >= len(args) || !args[i+1].Static {
+					return nil, unwrapUnresolved, "xargs arguments could not be expanded"
+				}
+				i += 2
+			default:
+				return nil, unwrapUnresolved, "xargs arguments could not be expanded"
+			}
+			continue
+		}
+		chars := v[1:]
+		k := 0
+		advanced := false
+		for k < len(chars) {
+			switch chars[k] {
+			case '0', 't', 'r', 'x', 'p':
+				k++
+			case 'a', 'd', 'E', 'I', 'L', 'n', 'P', 's':
+				if k+1 < len(chars) {
+					i++
+					advanced = true
+					k = len(chars)
+					continue
+				}
+				if i+1 >= len(args) || !args[i+1].Static {
+					return nil, unwrapUnresolved, "xargs arguments could not be expanded"
+				}
+				i += 2
+				advanced = true
+				k = len(chars)
+			case 'e', 'i', 'l':
+				i++
+				advanced = true
+				k = len(chars)
+			default:
+				return nil, unwrapUnresolved, "xargs arguments could not be expanded"
+			}
+		}
+		if !advanced {
+			i++
+		}
+	}
+	// GNU xargs runs echo when no command is given.
+	return []Arg{{Static: true, Value: "echo"}}, unwrapOK, ""
 }
 
 func stripExec(args []Arg) ([]Arg, bool) {

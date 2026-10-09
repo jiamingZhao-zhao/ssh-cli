@@ -87,7 +87,7 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 
 `--timeout` 同时约束两段时间，彼此分开计时：SSH 建连，以及连上之后的命令。没写 `--timeout` 时建连仍是 20 秒。写了更短的时间（例如 `3s`、`8s`）时，连不上的主机会在这段时间内失败，而不会固定等到大约 20 秒。比 20 秒更长的 `--timeout` 只加长命令本身，建连仍在 20 秒内结束。`status`、`service`、`keys` 的 `--timeout` 同样限制建连。
 
-内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。`policy add` / `policy edit` / `policy remove` 和本机 UI 写同一份 `hosts.yaml`。`policy sign` 用主密钥写 `policy.mac`；没有这个文件时仍按旧配置加载，有文件但不符则拒绝加载。HMAC 不代替人工确认。
+内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。`policy add` / `policy edit` / `policy remove` 和本机 UI 写同一份 `hosts.yaml`。`policy sign` 用主密钥写 `policy.mac`。签名覆盖策略，也覆盖每台主机的地址、端口、用户和认证方式。还没签过名、也没有 `policy.mac` 时，仍按旧配置加载。签过名之后 `hosts.yaml` 里会有 `policySigned: true`，这时删掉 `policy.mac` 会拒绝加载，要用 `policy unsign` 才回到未签名。旧的 v1 `policy.mac` 不含连接信息，需要重新 `policy sign`。有文件但不符则拒绝加载。HMAC 不代替人工确认。
 
 ## 权限怎么算
 
@@ -97,7 +97,7 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 - 模式 `readonly ⊂ standard ⊂ admin`。环境的 `maxMode` 是天花板，分组写成 `admin` 也不会超过它。
 - `confirm` 取并集。确认必须在交互终端里输入主机别名。没有 TTY（包括 agent）直接拒绝，退出码 253。`--yes` 只在有 TTY 时有效。
 - 只读 / 标准模式下，解析不了的命令：只读拒绝，标准视为需确认。`curl|bash`、`base64 -d|sh`、`eval`、`source <(...)` 在这两种模式下拒绝。
-- 命令用 `mvdan.cc/sh` 解析，`;`、`&&`、管道、`$( )`、`sudo`、`bash -c` 都会检查到。
+- 命令用 `mvdan.cc/sh` 解析，`;`、`&&`、管道、`$( )`、`sudo`、`bash -c`、`xargs`、`nohup`、`timeout`、`nice`、`stdbuf` 都会展开后再检查。`flock`、`ionice`、`chrt`、`taskset`、`setsid`、`watch` 以及带 `-exec` 的 `find` 展不开：只读拒绝，标准和 admin 需要确认。
 - 多台主机先整体预检，有一台被拒绝就整批取消；`--skip-denied` 改为跳过被拒绝的主机。
 - 一次选择跨了多个环境，必须加 `--allow-cross-env`。选择里包含 `prod` 且多于一台时，整批强制只读。
 
@@ -106,6 +106,8 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 ## 环境标签
 
 每次读取配置都会带上四个内置环境。它们的显示名、颜色、`maxMode` 和 `defaultPolicy` 不能改，也不能删除。文件里如果缺了，或者这四项被改过，加载时会改回下表。环境上另外保存的 `breakGlass`、`noDataOutflow` 会留下。
+
+`noDataOutflow: true` 表示这个环境的数据不能回到本机。下载和跨环境中继直接拒绝。`exec` 和 `session run` 仍然执行命令并返回退出码，但丢弃 stdout 和 stderr，终端和 JSON 里只有一行 `noDataOutflow: command output discarded`。要看输出，加上 `--allow-outflow`，并在交互终端输入 `outflow`（`--yes` 只在有 TTY 时有效）。本机 UI 勾选「允许带回命令输出」后，确认短语同样是 `outflow`。这条开关不放行下载。
 
 | 名称 | 显示名 | 颜色 | maxMode | 默认策略 |
 |------|--------|------|---------|----------|
@@ -198,7 +200,7 @@ ssh-cli ui --addr 127.0.0.1:7788
 
 执行、上传、下载、中继、会话、审计清理和配置导入导出都在本机页面里，策略和审计与命令行相同。elevate 仍不做。
 
-默认只监听 `127.0.0.1:7788`。`0.0.0.0` 和其他非回环地址会拒绝，除非显式加上 `--allow-non-loopback`。该参数会打印警告：界面没有认证，不要暴露到网络上。用 Ctrl-C 停止。
+默认只监听 `127.0.0.1:7788`。`0.0.0.0` 和其他非回环地址会拒绝，除非显式加上 `--allow-non-loopback`。该模式启动时打印一次随机 Bearer token。之后每个 `/api` 请求都要带 `Authorization: Bearer <token>`。页面会提示粘贴这个 token。`Host: localhost` 不能代替它。更稳妥的做法是 SSH 隧道到 `127.0.0.1`，不要把端口暴露到公网。用 Ctrl-C 停止。
 
 ## 退出码
 
