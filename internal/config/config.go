@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strings"
 
 	"gopkg.in/yaml.v3"
 
@@ -150,9 +151,20 @@ type Env struct {
 	NoDataOutflow bool        `yaml:"noDataOutflow,omitempty"`
 }
 
+// CleanLabel trims a display label. Empty is allowed. Newlines are rejected
+// so list rows and connection banners stay on one line.
+func CleanLabel(s string) (string, error) {
+	s = strings.TrimSpace(s)
+	if strings.ContainsAny(s, "\r\n") {
+		return "", fmt.Errorf("label must be a single line")
+	}
+	return s, nil
+}
+
 // Group is the structural owner of hosts and of exactly one env label.
 type Group struct {
 	Env            string           `yaml:"env"`
+	Label          string           `yaml:"label,omitempty"`
 	Policy         string           `yaml:"policy,omitempty"`
 	Allow          *[]string        `yaml:"allow,omitempty"`
 	Deny           []string         `yaml:"deny,omitempty"`

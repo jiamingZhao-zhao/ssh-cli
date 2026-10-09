@@ -2,7 +2,7 @@
 
 零依赖的单文件 SSH 运维 CLI（Go）。远程命令、文件上传下载；凭据加密存储，危险命令拦截，对 agent 友好的输出。
 
-当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。中继、连接复用、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
+当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。0.3.1 让 `--timeout` 限制 SSH 建连，并为分组增加可选显示名。中继、连接复用、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
 
 ## 构建
 
@@ -18,7 +18,7 @@ CGO_ENABLED=0 go build -o ssh-cli ./cmd/ssh-cli
 CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o ssh-cli ./cmd/ssh-cli
 ```
 
-本地构建的版本号是 `dev`。发布包用 ldflags 写入版本、提交和日期（见 `scripts/package.sh`）：
+本地构建的版本号是 `dev`。`0.3.1` 这类补丁号不写进源码，打 tag `v0.3.1` 时由 `scripts/package.sh` 用 ldflags 写入。发布包同样写入提交和日期：
 
 ```bash
 CGO_ENABLED=0 go build -ldflags "-X github.com/jiamingZhao-zhao/ssh-cli/internal/version.Version=0.1.0 -X github.com/jiamingZhao-zhao/ssh-cli/internal/version.Commit=abc -X github.com/jiamingZhao-zhao/ssh-cli/internal/version.Date=2026-10-08T00:00:00Z" -o ssh-cli ./cmd/ssh-cli
@@ -74,7 +74,7 @@ ssh-cli group add app-test --env test
 ssh-cli host add main --group app-prod --host 192.0.2.10 --user viewer --password-stdin --tag app --set-default
 ssh-cli host list
 
-ssh-cli exec -H main -- "df -h /"
+ssh-cli exec -H main --timeout 30s -- "df -h /"
 ssh-cli exec -H main --script ./status.sh
 ssh-cli upload -H main ./dist //root/app/dist
 ssh-cli download -H main /var/log/app.log ./app.log
@@ -84,6 +84,8 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 ```
 
 `//root/...` 会还原成 `/root/...`，用来避开 Git Bash 对绝对路径的改写。
+
+`--timeout` 同时约束两段时间，彼此分开计时：SSH 建连，以及连上之后的命令。没写 `--timeout` 时建连仍是 20 秒。写了更短的时间（例如 `3s`、`8s`）时，连不上的主机会在这段时间内失败，而不会固定等到大约 20 秒。比 20 秒更长的 `--timeout` 只加长命令本身，建连仍在 20 秒内结束。`status`、`service`、`keys` 的 `--timeout` 同样限制建连。
 
 内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。`policy add` / `policy edit` / `policy remove` 和本机 UI 写同一份 `hosts.yaml`。策略 HMAC 仍未做。
 
@@ -113,6 +115,15 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 | `prod` | 生产 | red | readonly | readonly |
 
 分组可以挂到任何一个环境，包括内置的，例如 `ssh-cli group add hunan-prod --env prod`。
+
+分组可以另有显示名，和环境下的显示名一样，用来在 `group list` 和连接横幅里显示中文。标识仍是分组 id。本机 UI 的分组表单写同一个 `label` 字段。
+
+```bash
+ssh-cli group add hunan-test --env test --label 湖南组测试主机组
+ssh-cli group edit hunan-test --label 湖南组测试主机组
+```
+
+连接横幅形如 `[测试] box group=hunan-test [湖南组测试主机组]`。`--label ""` 去掉显示名。
 
 自定义环境可以加、改、删。名字不能是上面四个。还被分组使用的自定义环境不能删。
 
@@ -168,7 +179,7 @@ ssh-cli audit tail --follow
 
 ## 本地界面（可选）
 
-只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，并查看审计日志。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。执行命令仍走 `exec` / `upload` / `download`。
+只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，并查看审计日志。页面按侧栏分成主机、分组、标签、环境、危险命令、已知主机密钥和审计。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。执行命令仍走 `exec` / `upload` / `download`。导入清单仍用 `import ssh-ops`。
 
 ```bash
 ssh-cli ui

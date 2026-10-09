@@ -7,229 +7,291 @@
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <header>
-    <h1>ssh-cli</h1>
-    <p>本地配置与审计。不启动这个页面时，命令行和审计日志照常工作。分组、主机标签、危险命令规则和已知主机密钥写进同一份配置。密码只通过主机表单提交，不会出现在审计记录里。</p>
-    <nav>
-      <a href="#groups">分组</a>
-      <a href="#tags">标签</a>
-      <a href="#policy">危险命令</a>
-      <a href="#hosts-panel">主机</a>
-      <a href="#known-panel">已知主机密钥</a>
-      <a href="#audit-panel">审计</a>
-    </nav>
-  </header>
-  <main>
-    <section id="groups">
-      <h2>分组</h2>
-      <p class="muted">一台主机只能属于一个分组，环境从分组继承。分组上的命名策略和允许 / 拒绝 / 确认会参与该组主机的规则合并。有主机时不能删除，和 <code>group remove</code> 一样。</p>
-      <p id="group-error" class="error" hidden></p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>名称</th><th>环境</th><th>策略</th><th>允许</th><th>拒绝</th><th>确认</th><th>主机</th><th></th></tr>
-          </thead>
-          <tbody id="group-rows"></tbody>
-        </table>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <strong>ssh-cli</strong>
+        <p>本地配置与审计。不启动这个页面时，命令行照常工作。</p>
       </div>
-      <h3 id="group-form-title">添加分组</h3>
-      <form id="group-form">
-        <label>名称 <input name="name" required autocomplete="off"></label>
-        <label>环境 <select name="env" id="group-env" required></select></label>
-        <label>命名策略 <select name="policy" id="group-policy"></select></label>
-        <label>允许
-          <select name="allowMode">
-            <option value="all">不限制（全集）</option>
-            <option value="list">只允许下面这些</option>
-          </select>
-        </label>
-        <label class="wide">允许的命令，一行一条
-          <textarea name="allow" placeholder="ls&#10;docker ps"></textarea>
-        </label>
-        <label class="wide">拒绝，一行一条
-          <textarea name="deny" placeholder="wget"></textarea>
-        </label>
-        <label class="wide">需确认，一行一条
-          <textarea name="confirm" placeholder="systemctl restart"></textarea>
-        </label>
-        <label class="wide">受保护路径，一行一条
-          <textarea name="protectedPaths" placeholder="/root/app"></textarea>
-        </label>
-        <p class="muted">空的允许列表会让这一层把命令都交空。名称创建后不能改。分组没有标签。</p>
-        <div class="row">
-          <button type="submit">保存分组</button>
-          <button type="button" id="group-clear" class="secondary">清空</button>
+      <nav>
+        <button type="button" data-view="hosts" class="active">主机 <span class="badge" id="badge-hosts">0</span></button>
+        <button type="button" data-view="groups">分组 <span class="badge" id="badge-groups">0</span></button>
+        <button type="button" data-view="tags">标签 <span class="badge" id="badge-tags">0</span></button>
+        <button type="button" data-view="envs">环境 <span class="badge" id="badge-envs">0</span></button>
+        <button type="button" data-view="policy">危险命令 <span class="badge" id="badge-policy">0</span></button>
+        <button type="button" data-view="known">已知主机密钥 <span class="badge" id="badge-known">0</span></button>
+        <button type="button" data-view="audit">审计 <span class="badge" id="badge-audit">0</span></button>
+      </nav>
+    </aside>
+    <div class="workspace">
+      <h1 id="page-title">主机</h1>
+
+      <section id="hosts-panel" class="view" data-view="hosts" data-title="主机">
+        <p class="muted">密码只通过主机表单提交，不会出现在审计记录里。从清单导入仍用命令行 <code>ssh-cli import ssh-ops</code>。</p>
+        <div class="strip">
+          <label>搜索 <input data-filter="#hosts" placeholder="别名、分组、地址、标签" autocomplete="off"></label>
         </div>
-      </form>
-    </section>
-
-    <section id="tags">
-      <h2>标签</h2>
-      <p class="muted">标签只写在主机上，用来配合 <code>ssh-cli -t</code> 选择主机，不表示权限。分组没有 tags 字段。把标签加到某个分组，实际是写到该分组里的每一台主机上。</p>
-      <p id="tag-error" class="error" hidden></p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>分组</th><th>环境</th><th>主机</th><th>全组标签</th><th></th></tr>
-          </thead>
-          <tbody id="tag-rows"></tbody>
-        </table>
-      </div>
-    </section>
-
-    <section id="policy">
-      <h2>危险命令</h2>
-      <p class="muted">规则写在命名策略上，或挂到环境、分组、主机。某一层不写允许列表，这一层就是全集；写成空列表则会把这一层交空。拒绝和确认在各层取并集。内置硬拒绝（删除根目录、mkfs、把 dd 或重定向写到磁盘、修改根目录属主、fork bomb）不能在这里关掉。这个页面不配置 relay、elevate 或策略 HMAC。</p>
-      <h3>环境层</h3>
-      <p class="muted">maxMode 是天花板。defaultPolicy 是环境这一层引用的命名策略。环境本身没有行内 allow / deny。dev、test、preprod、prod 是内置环境，不能改也不能删。可以另加自定义环境。</p>
-      <p id="env-error" class="error" hidden></p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>环境</th><th>显示名</th><th>颜色</th><th>天花板</th><th>默认策略</th><th></th></tr>
-          </thead>
-          <tbody id="env-rows"></tbody>
-        </table>
-      </div>
-      <h3>添加环境</h3>
-      <form id="env-form">
-        <label>名称 <input name="name" required autocomplete="off" placeholder="lab"></label>
-        <label>显示名 <input name="label" autocomplete="off"></label>
-        <label>颜色 <input name="color" autocomplete="off" placeholder="green"></label>
-        <label>天花板
-          <select name="maxMode" required>
-            <option value="readonly">readonly</option>
-            <option value="standard">standard</option>
-            <option value="admin">admin</option>
-          </select>
-        </label>
-        <label>默认策略 <select name="defaultPolicy" id="env-policy"></select></label>
-        <div class="row"><button type="submit">添加环境</button></div>
-      </form>
-
-      <h3>命名策略</h3>
-      <p id="policy-error" class="error" hidden></p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>名称</th><th>来源</th><th>模式</th><th>允许</th><th>拒绝</th><th>确认</th><th></th></tr>
-          </thead>
-          <tbody id="policy-rows"></tbody>
-        </table>
-      </div>
-      <h3 id="policy-form-title">添加命名策略</h3>
-      <form id="policy-form">
-        <label>名称 <input name="name" required autocomplete="off"></label>
-        <label>模式
-          <select name="mode">
-            <option value="">不设置</option>
-            <option value="readonly">readonly</option>
-            <option value="standard">standard</option>
-            <option value="admin">admin</option>
-          </select>
-        </label>
-        <label>允许
-          <select name="allowMode">
-            <option value="all">不限制（全集）</option>
-            <option value="list">只允许下面这些</option>
-          </select>
-        </label>
-        <label class="wide">允许的命令，一行一条 <textarea name="allow" placeholder="ls&#10;df"></textarea></label>
-        <label class="wide">拒绝，一行一条 <textarea name="deny" placeholder="docker system prune -a"></textarea></label>
-        <label class="wide">需确认，一行一条 <textarea name="confirm" placeholder="systemctl restart"></textarea></label>
-        <p class="muted">覆盖内置 readonly / standard / admin 时，会先复制内置定义再写入 hosts.yaml，能力开关会留下来。删掉这条覆盖会恢复内置。仍被引用的自定义策略不能删除。</p>
-        <div class="row">
-          <button type="submit">保存策略</button>
-          <button type="button" id="policy-clear" class="secondary">清空</button>
+        <div class="toolbar">
+          <button type="button" id="host-new">添加主机</button>
         </div>
-      </form>
-    </section>
-
-    <section id="hosts-panel">
-      <h2>主机</h2>
-      <div id="catalog-error" class="error" hidden></div>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>别名</th><th>分组</th><th>环境</th><th>地址</th><th>端口</th><th>用户</th><th>认证</th><th>标签</th><th></th></tr>
-          </thead>
-          <tbody id="hosts"></tbody>
-        </table>
-      </div>
-      <h3 id="form-title">添加主机</h3>
-      <form id="host-form">
-        <label>别名 <input name="alias" required autocomplete="off"></label>
-        <label>分组
-          <select name="group" id="group" required></select>
-        </label>
-        <label>地址 <input name="host" required placeholder="192.0.2.10" autocomplete="off"></label>
-        <label>端口 <input name="port" type="number" min="0" max="65535" placeholder="22"></label>
-        <label>用户 <input name="user" required autocomplete="off"></label>
-        <label>密码 <input name="password" type="password" autocomplete="new-password"></label>
-        <label>私钥路径 <input name="identity" placeholder="~/.ssh/id_ed25519" autocomplete="off"></label>
-        <p class="muted">密码和私钥路径二选一。密码只用于加密存储，列表和审计都不会显示。标签只用于 <code>-t</code> 选择。</p>
-        <label>命名策略 <select name="policy" id="host-policy"></select></label>
-        <label>标签 <input name="tags" placeholder="app,web" autocomplete="off"></label>
-        <label>本机允许
-          <select name="allowMode">
-            <option value="all">不限制（全集）</option>
-            <option value="list">只允许下面这些</option>
-          </select>
-        </label>
-        <label class="wide">本机允许的命令，一行一条 <textarea name="allow"></textarea></label>
-        <label class="wide">本机拒绝，一行一条 <textarea name="deny"></textarea></label>
-        <label class="wide">本机需确认，一行一条 <textarea name="confirm"></textarea></label>
-        <label class="check"><input name="setDefault" type="checkbox"> 设为默认主机</label>
-        <div class="row">
-          <button type="submit" id="save">保存</button>
-          <button type="button" id="clear-form" class="secondary">清空</button>
+        <p class="summary" id="summary-hosts"></p>
+        <div id="catalog-error" class="error" hidden></div>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>别名</th><th>分组</th><th>环境</th><th>地址</th><th>端口</th><th>用户</th><th>认证</th><th>标签</th><th></th></tr>
+              </thead>
+              <tbody id="hosts"></tbody>
+            </table>
+          </div>
         </div>
-        <p id="form-error" class="error" hidden></p>
-      </form>
-    </section>
-    <section id="known-panel">
-      <h2>已知主机密钥</h2>
-      <p class="muted">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙；已经记下的钥匙如果变了，仍然会拒绝。</p>
-      <p id="known-error" class="error" hidden></p>
-      <div class="table-wrap">
-        <table>
-          <thead><tr><th>标记</th><th>类型</th><th>指纹</th><th></th></tr></thead>
-          <tbody id="known"></tbody>
-        </table>
-      </div>
-    </section>
-    <section id="audit-panel">
-      <h2>审计</h2>
-      <form id="audit-filter" class="filters">
-        <label>主机 <input name="host" autocomplete="off"></label>
-        <label>分组 <input name="group" autocomplete="off"></label>
-        <label>环境 <input name="env" autocomplete="off"></label>
-        <label>状态
-          <select name="status">
-            <option value="">全部</option>
-            <option>ok</option>
-            <option>denied</option>
-            <option>timeout</option>
-            <option>auth</option>
-            <option>connect</option>
-            <option>error</option>
-          </select>
-        </label>
-        <label>自从 <input name="since" placeholder="24h 或 2026-01-02" autocomplete="off"></label>
-        <label>直到 <input name="until" placeholder="YYYY-MM-DD" autocomplete="off"></label>
-        <button type="submit">筛选</button>
-      </form>
-      <p id="audit-error" class="error" hidden></p>
-      <div class="table-wrap">
-        <table>
-          <thead>
-            <tr><th>时间</th><th>状态</th><th>操作</th><th>主机</th><th>环境</th><th>退出</th><th>高风险</th><th>命令 / 路径</th><th>原因</th></tr>
-          </thead>
-          <tbody id="audit"></tbody>
-        </table>
-      </div>
-    </section>
-  </main>
+        <div class="panel">
+          <h2 id="form-title">添加主机</h2>
+          <form id="host-form">
+            <label>别名 <input name="alias" required autocomplete="off"></label>
+            <label>分组
+              <select name="group" id="group" required></select>
+            </label>
+            <label>地址 <input name="host" required placeholder="192.0.2.10" autocomplete="off"></label>
+            <label>端口 <input name="port" type="number" min="0" max="65535" placeholder="22"></label>
+            <label>用户 <input name="user" required autocomplete="off"></label>
+            <label>密码 <input name="password" type="password" autocomplete="new-password"></label>
+            <label>私钥路径 <input name="identity" placeholder="~/.ssh/id_ed25519" autocomplete="off"></label>
+            <p class="muted">密码和私钥路径二选一。密码只用于加密存储，列表和审计都不会显示。标签只用于 <code>-t</code> 选择。</p>
+            <label>命名策略 <select name="policy" id="host-policy"></select></label>
+            <label>标签 <input name="tags" placeholder="app,web" autocomplete="off"></label>
+            <label>本机允许
+              <select name="allowMode">
+                <option value="all">不限制（全集）</option>
+                <option value="list">只允许下面这些</option>
+              </select>
+            </label>
+            <label class="wide">本机允许的命令，一行一条 <textarea name="allow"></textarea></label>
+            <label class="wide">本机拒绝，一行一条 <textarea name="deny"></textarea></label>
+            <label class="wide">本机需确认，一行一条 <textarea name="confirm"></textarea></label>
+            <label class="check"><input name="setDefault" type="checkbox"> 设为默认主机</label>
+            <div class="row">
+              <button type="submit" id="save">保存</button>
+              <button type="button" id="clear-form" class="secondary">清空</button>
+            </div>
+            <p id="form-error" class="error" hidden></p>
+          </form>
+        </div>
+      </section>
+
+      <section id="groups" class="view" data-view="groups" data-title="分组" hidden>
+        <p class="muted">一台主机只能属于一个分组，环境从分组继承。分组上的命名策略和允许 / 拒绝 / 确认会参与该组主机的规则合并。有主机时不能删除，和 <code>group remove</code> 一样。</p>
+        <div class="strip">
+          <label>搜索 <input data-filter="#group-rows" placeholder="名称、显示名、环境" autocomplete="off"></label>
+        </div>
+        <div class="toolbar">
+          <button type="button" id="group-new">添加分组</button>
+        </div>
+        <p class="summary" id="summary-groups"></p>
+        <p id="group-error" class="error" hidden></p>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>名称</th><th>显示名</th><th>环境</th><th>策略</th><th>允许</th><th>拒绝</th><th>确认</th><th>主机</th><th></th></tr>
+              </thead>
+              <tbody id="group-rows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <h2 id="group-form-title">添加分组</h2>
+          <form id="group-form">
+            <label>名称 <input name="name" required autocomplete="off"></label>
+            <label>显示名 <input name="label" autocomplete="off" placeholder="湖南组测试主机组"></label>
+            <label>环境 <select name="env" id="group-env" required></select></label>
+            <label>命名策略 <select name="policy" id="group-policy"></select></label>
+            <label>允许
+              <select name="allowMode">
+                <option value="all">不限制（全集）</option>
+                <option value="list">只允许下面这些</option>
+              </select>
+            </label>
+            <label class="wide">允许的命令，一行一条
+              <textarea name="allow" placeholder="ls&#10;docker ps"></textarea>
+            </label>
+            <label class="wide">拒绝，一行一条
+              <textarea name="deny" placeholder="wget"></textarea>
+            </label>
+            <label class="wide">需确认，一行一条
+              <textarea name="confirm" placeholder="systemctl restart"></textarea>
+            </label>
+            <label class="wide">受保护路径，一行一条
+              <textarea name="protectedPaths" placeholder="/root/app"></textarea>
+            </label>
+            <p class="muted">空的允许列表会让这一层把命令都交空。名称创建后不能改。分组没有标签。</p>
+            <div class="row">
+              <button type="submit">保存分组</button>
+              <button type="button" id="group-clear" class="secondary">清空</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="tags" class="view" data-view="tags" data-title="标签" hidden>
+        <p class="muted">标签只写在主机上，用来配合 <code>ssh-cli -t</code> 选择主机，不表示权限。分组没有 tags 字段。把标签加到某个分组，实际是写到该分组里的每一台主机上。</p>
+        <div class="strip">
+          <label>搜索 <input data-filter="#tag-rows" placeholder="分组、主机、标签" autocomplete="off"></label>
+        </div>
+        <p class="summary" id="summary-tags"></p>
+        <p id="tag-error" class="error" hidden></p>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>分组</th><th>环境</th><th>主机</th><th>全组标签</th><th></th></tr>
+              </thead>
+              <tbody id="tag-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="envs" class="view" data-view="envs" data-title="环境" hidden>
+        <p class="muted">maxMode 是天花板。defaultPolicy 是环境这一层引用的命名策略。环境本身没有行内 allow / deny。dev、test、preprod、prod 是内置环境，不能改也不能删。可以另加自定义环境。</p>
+        <div class="strip">
+          <label>搜索 <input data-filter="#env-rows" placeholder="名称、显示名" autocomplete="off"></label>
+        </div>
+        <p class="summary" id="summary-envs"></p>
+        <p id="env-error" class="error" hidden></p>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>环境</th><th>显示名</th><th>颜色</th><th>天花板</th><th>默认策略</th><th></th></tr>
+              </thead>
+              <tbody id="env-rows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <h2>添加环境</h2>
+          <form id="env-form">
+            <label>名称 <input name="name" required autocomplete="off" placeholder="lab"></label>
+            <label>显示名 <input name="label" autocomplete="off"></label>
+            <label>颜色 <input name="color" autocomplete="off" placeholder="green"></label>
+            <label>天花板
+              <select name="maxMode" required>
+                <option value="readonly">readonly</option>
+                <option value="standard">standard</option>
+                <option value="admin">admin</option>
+              </select>
+            </label>
+            <label>默认策略 <select name="defaultPolicy" id="env-policy"></select></label>
+            <div class="row"><button type="submit">添加环境</button></div>
+          </form>
+        </div>
+      </section>
+
+      <section id="policy" class="view" data-view="policy" data-title="危险命令" hidden>
+        <p class="muted">规则写在命名策略上，或挂到环境、分组、主机。某一层不写允许列表，这一层就是全集；写成空列表则会把这一层交空。拒绝和确认在各层取并集。内置硬拒绝（删除根目录、mkfs、把 dd 或重定向写到磁盘、修改根目录属主、fork bomb）不能在这里关掉。这个页面不配置 relay、elevate 或策略 HMAC。</p>
+        <div class="strip">
+          <label>搜索 <input data-filter="#policy-rows" placeholder="策略名" autocomplete="off"></label>
+        </div>
+        <div class="toolbar">
+          <button type="button" id="policy-new">添加命名策略</button>
+        </div>
+        <p class="summary" id="summary-policy"></p>
+        <p id="policy-error" class="error" hidden></p>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>名称</th><th>来源</th><th>模式</th><th>允许</th><th>拒绝</th><th>确认</th><th></th></tr>
+              </thead>
+              <tbody id="policy-rows"></tbody>
+            </table>
+          </div>
+        </div>
+        <div class="panel">
+          <h2 id="policy-form-title">添加命名策略</h2>
+          <form id="policy-form">
+            <label>名称 <input name="name" required autocomplete="off"></label>
+            <label>模式
+              <select name="mode">
+                <option value="">不设置</option>
+                <option value="readonly">readonly</option>
+                <option value="standard">standard</option>
+                <option value="admin">admin</option>
+              </select>
+            </label>
+            <label>允许
+              <select name="allowMode">
+                <option value="all">不限制（全集）</option>
+                <option value="list">只允许下面这些</option>
+              </select>
+            </label>
+            <label class="wide">允许的命令，一行一条 <textarea name="allow" placeholder="ls&#10;df"></textarea></label>
+            <label class="wide">拒绝，一行一条 <textarea name="deny" placeholder="docker system prune -a"></textarea></label>
+            <label class="wide">需确认，一行一条 <textarea name="confirm" placeholder="systemctl restart"></textarea></label>
+            <p class="muted">覆盖内置 readonly / standard / admin 时，会先复制内置定义再写入 hosts.yaml，能力开关会留下来。删掉这条覆盖会恢复内置。仍被引用的自定义策略不能删除。</p>
+            <div class="row">
+              <button type="submit">保存策略</button>
+              <button type="button" id="policy-clear" class="secondary">清空</button>
+            </div>
+          </form>
+        </div>
+      </section>
+
+      <section id="known-panel" class="view" data-view="known" data-title="已知主机密钥" hidden>
+        <p class="muted">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙；已经记下的钥匙如果变了，仍然会拒绝。</p>
+        <div class="strip">
+          <label>搜索 <input data-filter="#known" placeholder="标记、指纹" autocomplete="off"></label>
+        </div>
+        <p class="summary" id="summary-known"></p>
+        <p id="known-error" class="error" hidden></p>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>标记</th><th>类型</th><th>指纹</th><th></th></tr></thead>
+              <tbody id="known"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="audit-panel" class="view" data-view="audit" data-title="审计" hidden>
+        <p class="muted">读取和命令行 <code>ssh-cli audit list</code> 同一份日志。筛选条件发给本机接口，不会改配置。</p>
+        <form id="audit-filter" class="strip filters">
+          <label>主机 <input name="host" autocomplete="off"></label>
+          <label>分组 <input name="group" autocomplete="off"></label>
+          <label>环境 <input name="env" autocomplete="off"></label>
+          <label>状态
+            <select name="status">
+              <option value="">全部</option>
+              <option>ok</option>
+              <option>denied</option>
+              <option>timeout</option>
+              <option>auth</option>
+              <option>connect</option>
+              <option>error</option>
+            </select>
+          </label>
+          <label>自从 <input name="since" placeholder="24h 或 2026-01-02" autocomplete="off"></label>
+          <label>直到 <input name="until" placeholder="YYYY-MM-DD" autocomplete="off"></label>
+          <button type="submit">筛选</button>
+        </form>
+        <p class="summary" id="summary-audit"></p>
+        <p id="audit-error" class="error" hidden></p>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr><th>时间</th><th>状态</th><th>操作</th><th>主机</th><th>环境</th><th>退出</th><th>高风险</th><th>命令 / 路径</th><th>原因</th></tr>
+              </thead>
+              <tbody id="audit"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+  </div>
   <script src="/app.js"></script>
 </body>
 </html>

@@ -116,6 +116,6 @@ The attempt is appended to the audit log.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds; default 30s)")
+	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds; default 30s); also bounds SSH connect")
 	return cmd
 }

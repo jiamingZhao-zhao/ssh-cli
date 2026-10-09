@@ -140,6 +140,8 @@ async function loadCatalog() {
   renderPolicies();
   renderEnvs();
   renderHosts();
+  refreshChrome();
+  applyFilters();
 }
 
 function renderGroups() {
@@ -150,6 +152,7 @@ function renderGroups() {
     const tr = document.createElement("tr");
     tr.append(
       cell(g.name),
+      cell(g.label || ""),
       cell(g.env),
       cell(g.policy || ""),
       cell(allowLabel(g)),
@@ -185,11 +188,13 @@ function fillGroup(g) {
   document.querySelector("#group-form-title").textContent = "编辑 " + g.name;
   groupForm.elements.namedItem("name").value = g.name;
   groupForm.elements.namedItem("name").readOnly = true;
+  groupForm.elements.namedItem("label").value = g.label || "";
   fillEnvSelect(document.querySelector("#group-env"), g.env);
   fillPolicySelect(document.querySelector("#group-policy"), g.policy || "");
   fillRules(groupForm, g);
   groupForm.elements.namedItem("protectedPaths").value = (g.protectedPaths || []).join("\n");
   showError(groupError, "");
+  reveal(groupForm);
 }
 
 function resetGroupForm() {
@@ -221,7 +226,7 @@ function renderTags() {
   for (const g of groups) {
     const mine = hosts.filter((h) => h.group === g.name).sort(byName);
     const tr = document.createElement("tr");
-    tr.append(cell(g.name), cell(g.env));
+    tr.append(cell(groupCaption(g)), cell(g.env));
     const hostsCell = document.createElement("td");
     if (mine.length === 0) {
       hostsCell.textContent = "还没有主机。标签不能写在分组上。";
@@ -344,6 +349,7 @@ function fillPolicy(p, mode) {
   policyForm.elements.namedItem("mode").value = p.mode || "";
   fillRules(policyForm, p);
   showError(policyError, "");
+  reveal(policyForm);
 }
 
 function resetPolicyForm() {
@@ -456,6 +462,15 @@ async function removeEnv(name) {
   }
 }
 
+function groupCaption(g) {
+  if (!g) return "";
+  return g.label ? g.name + " / " + g.label : g.name;
+}
+
+function groupByName(name) {
+  return (catalog.groups || []).find((g) => g.name === name);
+}
+
 function renderHosts() {
   const groups = (catalog.groups || []).slice().sort(byName);
   const hosts = (catalog.hosts || []).slice().sort(byName);
@@ -464,7 +479,7 @@ function renderHosts() {
   for (const g of groups) {
     const opt = document.createElement("option");
     opt.value = g.name;
-    opt.textContent = g.name + " (" + g.env + ")";
+    opt.textContent = groupCaption(g) + " (" + g.env + ")";
     groupSelect.appendChild(opt);
   }
   if (prevGroup) groupSelect.value = prevGroup;
@@ -474,7 +489,7 @@ function renderHosts() {
     const tr = document.createElement("tr");
     tr.append(
       cell(h.alias + (h.default ? " *" : "")),
-      cell(h.group),
+      cell(groupCaption(groupByName(h.group)) || h.group),
       cell(h.env),
       cell(h.host),
       cell(h.port),
@@ -515,6 +530,7 @@ function fillForm(h) {
   fillRules(form, h);
   form.setDefault.checked = !!h.default;
   showError(formError, "");
+  reveal(form);
 }
 
 function resetForm() {
@@ -549,6 +565,7 @@ groupForm.addEventListener("submit", async (ev) => {
   }
   const body = Object.assign({
     name,
+    label: groupForm.elements.namedItem("label").value.trim(),
     env: envName,
     policy: groupForm.elements.namedItem("policy").value,
     protectedPaths: lines(groupForm.elements.namedItem("protectedPaths").value)
@@ -651,6 +668,9 @@ async function loadAudit(query) {
     );
     auditBody.appendChild(tr);
   }
+  const n = (data.records || []).length;
+  setText("#summary-audit", n + " 条");
+  setBadge("audit", n);
 }
 
 document.querySelector("#audit-filter").addEventListener("submit", async (ev) => {
@@ -693,7 +713,106 @@ async function loadKnown() {
     tr.append(actions);
     knownBody.appendChild(tr);
   }
+  const n = (data.knownHosts || []).length;
+  setText("#summary-known", n + " 条");
+  setBadge("known", n);
+  applyFilters();
 }
+
+function setText(sel, text) {
+  const el = document.querySelector(sel);
+  if (el) el.textContent = text;
+}
+
+function setBadge(name, n) {
+  setText("#badge-" + name, String(n));
+}
+
+function refreshChrome() {
+  const hosts = catalog.hosts || [];
+  const groups = catalog.groups || [];
+  const envs = catalog.envs || [];
+  const policies = catalog.policies || [];
+  const tagged = hosts.filter((h) => h.tags && h.tags.length).length;
+  setBadge("hosts", hosts.length);
+  setBadge("groups", groups.length);
+  setBadge("tags", tagged);
+  setBadge("envs", envs.length);
+  setBadge("policy", policies.length);
+  const def = hosts.find((h) => h.default);
+  setText("#summary-hosts", hosts.length + " 台主机" + (def ? " · 默认 " + def.alias : ""));
+  setText("#summary-groups", groups.length + " 个分组");
+  setText("#summary-tags", tagged + " 台主机带了标签");
+  const builtin = envs.filter((e) => e.builtin).length;
+  setText("#summary-envs", envs.length + " 个环境 · 内置 " + builtin);
+  setText("#summary-policy", policies.length + " 条命名策略");
+}
+
+function applyFilters() {
+  document.querySelectorAll("[data-filter]").forEach((input) => {
+    const body = document.querySelector(input.dataset.filter);
+    if (!body) return;
+    const q = input.value.trim().toLowerCase();
+    for (const tr of body.rows) {
+      tr.hidden = q !== "" && !tr.textContent.toLowerCase().includes(q);
+    }
+  });
+}
+
+function reveal(el) {
+  if (el) el.scrollIntoView({ block: "nearest" });
+}
+
+const viewAlias = {
+  "": "hosts",
+  hosts: "hosts",
+  "hosts-panel": "hosts",
+  groups: "groups",
+  tags: "tags",
+  envs: "envs",
+  policy: "policy",
+  known: "known",
+  "known-panel": "known",
+  audit: "audit",
+  "audit-panel": "audit"
+};
+
+function showView(name) {
+  const view = viewAlias[name] || "hosts";
+  document.querySelectorAll(".view").forEach((el) => {
+    el.hidden = el.dataset.view !== view;
+  });
+  document.querySelectorAll(".sidebar button").forEach((btn) => {
+    const on = btn.dataset.view === view;
+    btn.classList.toggle("active", on);
+    if (on) btn.setAttribute("aria-current", "page");
+    else btn.removeAttribute("aria-current");
+  });
+  const current = document.querySelector('.view[data-view="' + view + '"]');
+  setText("#page-title", current ? current.dataset.title : "ssh-cli");
+  if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
+}
+
+document.querySelectorAll(".sidebar button").forEach((btn) => {
+  btn.addEventListener("click", () => showView(btn.dataset.view));
+});
+document.querySelectorAll("[data-filter]").forEach((input) => {
+  input.addEventListener("input", applyFilters);
+});
+document.querySelector("#host-new").addEventListener("click", () => {
+  resetForm();
+  reveal(form);
+});
+document.querySelector("#group-new").addEventListener("click", () => {
+  resetGroupForm();
+  reveal(groupForm);
+});
+document.querySelector("#policy-new").addEventListener("click", () => {
+  resetPolicyForm();
+  reveal(policyForm);
+});
+window.addEventListener("hashchange", () => showView(location.hash.replace("#", "")));
+showView(location.hash.replace("#", ""));
 
 loadCatalog().catch((err) => showError(catalogError, err.message));
 loadKnown().catch((err) => showError(knownError, err.message));

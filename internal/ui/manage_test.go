@@ -46,7 +46,7 @@ groups:
 	page.RemoteAddr = "127.0.0.1:9"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, page)
-	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "标签只写在主机上") || !strings.Contains(rr.Body.String(), "危险命令") {
+	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "标签只写在主机上") || !strings.Contains(rr.Body.String(), "危险命令") || !strings.Contains(rr.Body.String(), "湖南组测试主机组") {
 		t.Fatalf("index %d %s", rr.Code, rr.Body.String())
 	}
 
@@ -85,7 +85,7 @@ groups:
 		t.Fatalf("custom env edit %d %s", customEdit.Code, customEdit.Body.String())
 	}
 	grp := postJSON(t, h, "/api/groups", `{
-		"name":"app-test","env":"test","policy":"standard",
+		"name":"app-test","env":"test","label":"湖南组测试主机组","policy":"standard",
 		"allow":[],"deny":["wget"],"confirm":["systemctl restart"],
 		"protectedPaths":["/root/app"]
 	}`)
@@ -147,6 +147,7 @@ groups:
 		} `json:"hosts"`
 		Groups []struct {
 			Name     string   `json:"name"`
+			Label    string   `json:"label"`
 			Policy   string   `json:"policy"`
 			AllowSet bool     `json:"allowSet"`
 			Deny     []string `json:"deny"`
@@ -179,7 +180,7 @@ groups:
 			continue
 		}
 		sawGroup = true
-		if g.Policy != "no-prune" || !g.AllowSet || !containsAll(g.Deny, "wget") {
+		if g.Policy != "no-prune" || g.Label != "湖南组测试主机组" || !g.AllowSet || !containsAll(g.Deny, "wget") {
 			t.Fatalf("group view %+v", g)
 		}
 	}
@@ -242,6 +243,9 @@ groups:
 	stored := groups["app-test"].(map[string]any)
 	if _, ok := stored["tags"]; ok {
 		t.Fatal("group stored a tags field")
+	}
+	if stored["label"] != "湖南组测试主机组" {
+		t.Fatalf("stored label %#v", stored["label"])
 	}
 
 	over := postJSON(t, h, "/api/policies", `{"name":"readonly","mode":"readonly","allow":["ls"],"deny":["wget"]}`)
