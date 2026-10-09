@@ -2,7 +2,7 @@
 
 零依赖的单文件 SSH 运维 CLI（Go）。远程命令、文件上传下载；凭据加密存储，危险命令拦截，对 agent 友好的输出。
 
-当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。0.3.1 让 `--timeout` 限制 SSH 建连，并为分组增加可选显示名。中继、连接复用、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
+当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。0.3.1 让 `--timeout` 限制 SSH 建连，并为分组增加可选显示名。0.3.2 让 `update --yes` 在没有交互终端时也能安装。中继、连接复用、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
 
 ## 构建
 
@@ -44,7 +44,7 @@ curl.exe -fsSL -o %TEMP%\ssh-cli-install.cmd https://raw.githubusercontent.com/j
 
 `install.ps1` 仍然可用。两者都默认装到 `%LOCALAPPDATA%\ssh-cli\bin`，目录不在 PATH 里时写入用户 Path。详见 [INSTALL.md](INSTALL.md)。
 
-`version`、`--version`、`-V`、`-version` 打印同一行。`update` 从 GitHub Release 下载当前平台的资产并替换正在运行的二进制，只在执行该命令时发生。最新版本来自 `https://github.com/<仓库>/releases/latest` 的重定向，资产和 `checksums.txt` 从 `releases/download/<tag>/` 直接下载，不访问 `api.github.com`，因此不受匿名 API 速率限制影响。只有在这次直接解析失败、并且环境里设置了 `GITHUB_TOKEN` 时，才会回退到 Releases API。没有 `checksums.txt` 时会警告并继续；校验和不匹配则拒绝安装。非交互终端不能确认安装（退出码 253）。仓库和资产名见 [INSTALL.md](INSTALL.md)。
+`version`、`--version`、`-V`、`-version` 打印同一行。`update` 从 GitHub Release 下载当前平台的资产并替换正在运行的二进制，只在执行该命令时发生。最新版本来自 `https://github.com/<仓库>/releases/latest` 的重定向，资产和 `checksums.txt` 从 `releases/download/<tag>/` 直接下载，不访问 `api.github.com`，因此不受匿名 API 速率限制影响。只有在这次直接解析失败、并且环境里设置了 `GITHUB_TOKEN` 时，才会回退到 Releases API。没有 `checksums.txt` 时会警告并继续；校验和不匹配则拒绝安装。没有交互终端时，不带 `--yes` 会拒绝安装（退出码 253）；`--yes` 跳过确认，可以在没有 TTY 时安装。`--check` 只查询。仓库和资产名见 [INSTALL.md](INSTALL.md)。
 
 ## 配置目录
 
