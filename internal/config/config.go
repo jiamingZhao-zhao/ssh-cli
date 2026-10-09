@@ -218,9 +218,13 @@ type Config struct {
 	Session  *SessionDefaults   `yaml:"session,omitempty"`
 }
 
-// VerifyPolicy is the extension point for HMAC verification of the policy
-// section (PLAN 5.6). The default accepts the file.
-var VerifyPolicy = func(data []byte) error { return nil }
+// VerifyPolicy checks policy integrity after parse and prepare. The default
+// accepts every config. cli and ui install an HMAC verifier. It must not call Load.
+var VerifyPolicy = func(dir string, cfg *Config) error { return nil }
+
+// SignOnSave writes a policy integrity sidecar after a successful prepare.
+// The default does nothing. A missing master key should skip signing.
+var SignOnSave = func(dir string, cfg *Config) error { return nil }
 
 // ResolvedHost is a host plus the group and env it inherits.
 type ResolvedHost struct {
@@ -261,9 +265,6 @@ func Load(dir string) (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err := VerifyPolicy(data); err != nil {
-		return nil, err
-	}
 	if len(bytes.TrimSpace(data)) == 0 {
 		cfg := &Config{Version: 1}
 		return cfg, cfg.prepare()
@@ -282,6 +283,9 @@ func Load(dir string) (*Config, error) {
 		return nil, fmt.Errorf("unsupported config version %d", cfg.Version)
 	}
 	if err := cfg.prepare(); err != nil {
+		return nil, err
+	}
+	if err := VerifyPolicy(dir, &cfg); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
@@ -312,7 +316,10 @@ func Save(dir string, cfg *Config) error {
 		return err
 	}
 	_ = enc.Close()
-	return fsutil.WriteAtomic(filepath.Join(dir, FileName), buf.Bytes(), 0o600)
+	if err := fsutil.WriteAtomic(filepath.Join(dir, FileName), buf.Bytes(), 0o600); err != nil {
+		return err
+	}
+	return SignOnSave(dir, cfg)
 }
 
 // Update locks the config directory, reloads, applies fn, and saves when fn

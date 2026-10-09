@@ -10,6 +10,7 @@ import (
 	"os/signal"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -27,19 +28,38 @@ exec, upload, and download write a record even when policy denies the attempt, t
 
 --host, --group, --env, and --json are the global flags.`,
 	}
-	cmd.AddCommand(a.auditList(), a.auditShow(), a.auditTail())
+	cmd.AddCommand(a.auditList(), a.auditShow(), a.auditTail(), a.auditStats(), a.auditCleanup())
 	return cmd
 }
 
 func (a *App) auditList() *cobra.Command {
-	var since, until, status string
+	var since, until, status, op string
+	var page, pageSize int
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List audit records",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			f, err := a.auditFilter(since, until, status)
+			f, err := a.auditFilter(since, until, status, op)
 			if err != nil {
 				return err
+			}
+			if page > 0 || pageSize > 0 {
+				pg, err := audit.QueryPage(a.Dir, f, page, pageSize)
+				if err != nil {
+					return exitcode.New(exitcode.Usage, "%s", err.Error())
+				}
+				if a.JSON {
+					return a.emit(pg)
+				}
+				if len(pg.Records) == 0 {
+					fmt.Fprintf(a.Out, "no audit records (page %d, %d match)\n", pg.Page, pg.Total)
+					return nil
+				}
+				for _, rec := range pg.Records {
+					printAuditRecord(a.Out, rec, false)
+				}
+				fmt.Fprintf(a.Out, "page %d, %d of %d\n", pg.Page, len(pg.Records), pg.Total)
+				return nil
 			}
 			if a.JSON {
 				return a.auditListJSON(f)
@@ -62,7 +82,48 @@ func (a *App) auditList() *cobra.Command {
 	cmd.Flags().StringVar(&since, "since", "", "include records at or after this time (RFC3339, YYYY-MM-DD, or a duration like 24h)")
 	cmd.Flags().StringVar(&until, "until", "", "exclude records at or after this time (a YYYY-MM-DD includes that whole day)")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status: ok, denied, timeout, auth, connect, or error")
+	cmd.Flags().StringVar(&op, "op", "", "filter by op: exec, upload, download, relay, policy_check, session, config_change, status, service, keys")
+	cmd.Flags().IntVar(&page, "page", 0, "1-based page when set; newest records are page 1")
+	cmd.Flags().IntVar(&pageSize, "page-size", 0, "page size (default 50, max 200) when --page is set")
 	return cmd
+}
+
+func (a *App) auditStats() *cobra.Command {
+	return &cobra.Command{
+		Use:   "stats",
+		Short: "Show audit file count, bytes, and entry count",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			st, err := audit.Stat(a.Dir)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, "%s", err.Error())
+			}
+			if a.JSON {
+				return a.emit(st)
+			}
+			fmt.Fprintf(a.Out, "files=%d entries=%d bytes=%d\n", st.Files, st.Entries, st.Bytes)
+			return nil
+		},
+	}
+}
+
+func (a *App) auditCleanup() *cobra.Command {
+	return &cobra.Command{
+		Use:   "cleanup",
+		Short: "Delete audit entries older than 30 days",
+		Long:  `Delete audit entries older than 30 days. Newer entries are refused. The scan streams each file and does not load the log into memory.`,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			res, err := audit.Cleanup(a.Dir, audit.MinAge, time.Now())
+			if err != nil {
+				return exitcode.New(exitcode.Usage, "%s", err.Error())
+			}
+			if a.JSON {
+				return a.emit(res)
+			}
+			fmt.Fprintf(a.Out, "removed=%d kept=%d files_deleted=%d bytes_freed=%d cutoff=%s\n",
+				res.Removed, res.Kept, res.FilesDeleted, res.BytesFreed, res.Cutoff.Format(time.RFC3339))
+			return nil
+		},
+	}
 }
 
 func (a *App) auditShow() *cobra.Command {
@@ -120,15 +181,19 @@ func (a *App) auditTail() *cobra.Command {
 	return cmd
 }
 
-func (a *App) auditFilter(since, until, status string) (audit.Filter, error) {
+func (a *App) auditFilter(since, until, status, op string) (audit.Filter, error) {
 	if status != "" && !audit.ValidStatus(status) {
 		return audit.Filter{}, exitcode.New(exitcode.Usage, "invalid --status %q", status)
+	}
+	if op != "" && !audit.ValidOp(op) {
+		return audit.Filter{}, exitcode.New(exitcode.Usage, "invalid --op %q", op)
 	}
 	f := audit.Filter{
 		Hosts:  append([]string(nil), a.Hosts...),
 		Groups: append([]string(nil), a.Groups...),
 		Env:    a.Env,
 		Status: status,
+		Op:     op,
 	}
 	if since != "" {
 		t, err := audit.ParseBound(since, false)

@@ -69,6 +69,22 @@ type Store struct {
 	env  *string
 }
 
+// MasterMaterial returns the master key bytes. create mints one when none exists.
+// The bytes authenticate policy HMAC; they are not a plaintext secret export.
+func MasterMaterial(dir string, create bool) ([]byte, error) {
+	st, err := Open(dir, Options{Warn: io.Discard})
+	if err != nil {
+		return nil, err
+	}
+	key, err := st.masterKey(create)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, len(key))
+	copy(out, key)
+	return out, nil
+}
+
 // Open reads secrets.json. It does not create a master key until Put.
 func Open(dir string, opt Options) (*Store, error) {
 	if err := fsutil.MkdirPrivate(dir); err != nil {

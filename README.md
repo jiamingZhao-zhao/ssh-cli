@@ -2,7 +2,7 @@
 
 零依赖的单文件 SSH 运维 CLI（Go）。远程命令、文件上传下载；凭据加密存储，危险命令拦截，对 agent 友好的输出。
 
-当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。0.3.1 让 `--timeout` 限制 SSH 建连，并为分组增加可选显示名。0.3.2 让 `update --yes` 在没有交互终端时也能安装。0.3.3 起，不带参数的 `ssh-cli update` 在没有交互终端时也会安装。中继、连接复用、破窗提权、策略 HMAC、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
+当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。0.3.1 让 `--timeout` 限制 SSH 建连，并为分组增加可选显示名。0.3.2 让 `update --yes` 在没有交互终端时也能安装。0.3.3 起，不带参数的 `ssh-cli update` 在没有交互终端时也会安装。0.4.0 增加进程内会话、审计分页与 30 天清理、不含明文的配置导入导出、本机 UI 执行和上传下载、轻量 relay，以及策略 HMAC。破窗提权（elevate）、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
 
 ## 构建
 
@@ -87,7 +87,7 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 
 `--timeout` 同时约束两段时间，彼此分开计时：SSH 建连，以及连上之后的命令。没写 `--timeout` 时建连仍是 20 秒。写了更短的时间（例如 `3s`、`8s`）时，连不上的主机会在这段时间内失败，而不会固定等到大约 20 秒。比 20 秒更长的 `--timeout` 只加长命令本身，建连仍在 20 秒内结束。`status`、`service`、`keys` 的 `--timeout` 同样限制建连。
 
-内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。`policy add` / `policy edit` / `policy remove` 和本机 UI 写同一份 `hosts.yaml`。策略 HMAC 仍未做。
+内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。`policy add` / `policy edit` / `policy remove` 和本机 UI 写同一份 `hosts.yaml`。`policy sign` 用主密钥写 `policy.mac`；没有这个文件时仍按旧配置加载，有文件但不符则拒绝加载。HMAC 不代替人工确认。
 
 ## 权限怎么算
 
@@ -165,21 +165,24 @@ ssh-cli keys known remove 192.0.2.10:22
 
 每次 `exec`、`upload`、`download` 都会在配置目录追加一条 JSONL，包括策略预检拒绝（内置危险命令、确认类命令、能力开关）、超时、认证失败、连接失败，以及远程非零退出。不记录密码、私钥或明文密钥；命令里的 `password=...` 一类片段会打成 `[redacted]`。
 
-记录字段：`time`（本地时区的 RFC3339）、`op`（`exec` / `upload` / `download` / `policy_check`）、主机别名、分组、环境、命令或 `src`/`dst`、`duration_ms`、`exit_code`、截断到 8KiB 的 `result_summary`、`status`（`ok` / `denied` / `timeout` / `auth` / `connect` / `error`）、`high_risk`、`denied_by_policy`、`reason`、`actor`。`actor` 取环境变量 `SSH_CLI_ACTOR`，否则是 `cli`。
+记录字段：`time`（本地时区的 RFC3339）、`op`（`exec` / `upload` / `download` / `relay` / `policy_check` / `session` / `config_change` 等）、主机别名、分组、环境、命令或 `src`/`dst`、`duration_ms`、`exit_code`、截断到 8KiB 的 `result_summary`、`status`（`ok` / `denied` / `timeout` / `auth` / `connect` / `error`）、`high_risk`、`denied_by_policy`、`reason`、`actor`。`actor` 取环境变量 `SSH_CLI_ACTOR`，否则是 `cli`；本机 UI 写 `ui`。
 
 ```bash
-ssh-cli audit list --host main --since 24h --status denied
-ssh-cli audit list --json
+ssh-cli audit list --host main --since 24h --status denied --op exec --page 1
+ssh-cli audit stats
+ssh-cli audit cleanup
 ssh-cli audit show <id>
 ssh-cli audit tail -n 20
 ssh-cli audit tail --follow
 ```
 
+`audit cleanup` 只删除早于 30 天的记录，更近的会拒绝。清理按文件流式处理。
+
 `--host`、`--group`、`--env`、`--json` 是全局参数。`--since` / `--until` 接受 RFC3339、`YYYY-MM-DD`（直到某天包含那一整天）或 `24h` 这种时长。读取是按天顺序扫描，超出时间窗口的文件会直接跳过。
 
 ## 本地界面（可选）
 
-只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，并查看审计日志。页面按侧栏分成主机、分组、标签、环境、危险命令、已知主机密钥和审计。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。执行命令仍走 `exec` / `upload` / `download`。导入清单仍用 `import ssh-ops`。
+只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，并查看审计日志。页面按侧栏分成主机、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继和导入导出。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用对话框，保存或关闭后清空；编辑时才回填。审计按页从服务端读取，可按操作、主机、分组、环境和结果一起筛选。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。
 
 ```bash
 ssh-cli ui
@@ -191,9 +194,9 @@ ssh-cli ui --addr 127.0.0.1:7788
 - **分组**：新建、修改环境、命名策略、行内 allow/deny/confirm 和受保护路径。有主机的分组不能删，和 `group remove` 一样。
 - **标签**：标签只在主机上，给 `ssh-cli -t` 选择用，分组没有 `tags` 字段。可以把一个标签加到该分组下的每台主机，或从全组去掉。
 - **危险命令**：内置环境只读；自定义环境可以改 `maxMode` 和 `defaultPolicy`。命名策略的 mode / allow / deny / confirm 可以新建或覆盖。分组和主机的行内规则在对应表单里改。某一层不写 allow 就是全集，写成空列表则会把这一层交空。内置硬拒绝不能关。
-- **主机**和**审计**跟以前一样。密码只通过主机表单 POST 进加密存储，不会回显，也不会写入审计。
+- **主机**、**执行**、**中继**和**审计**：密码只通过主机表单 POST 进加密存储，不会回显，也不会写入审计。执行和传输与命令行使用同一套策略。审计页显示日志大小和条数，清理只删 30 天前的记录。
 
-`relay`、`elevate` 和策略 HMAC 不在这个页面里配置。
+执行、上传、下载、中继、会话、审计清理和配置导入导出都在本机页面里，策略和审计与命令行相同。elevate 仍不做。
 
 默认只监听 `127.0.0.1:7788`。`0.0.0.0` 和其他非回环地址会拒绝，除非显式加上 `--allow-non-loopback`。该参数会打印警告：界面没有认证，不要暴露到网络上。用 Ctrl-C 停止。
 
@@ -220,6 +223,18 @@ SSH_CLI_INTEGRATION=1 go test ./internal/integration -count=1
 
 集成测试在本机用 Docker 启动 `linuxserver/openssh-server`，只连接 `127.0.0.1`。没设置 `SSH_CLI_INTEGRATION=1` 时会跳过。
 
+## 会话、中继、配置包
+
+```bash
+ssh-cli session run -H box --command 'cd /tmp' --command pwd
+ssh-cli relay --from left:/tmp/a --to right:/tmp/b
+ssh-cli config export -o bundle.yaml
+ssh-cli config import bundle.yaml
+ssh-cli policy sign
+```
+
+`session run` 在同一个进程里复用一个 shell，命令结束后关闭。空闲默认 5 分钟，最长 60 分钟，忙着也会到点关闭。另开一个进程看不到这些会话。UI 进程是会话的持有者。`relay` 只经本机转发一个文件，并用远端 `sha256sum`（否则 `md5sum`）核对。配置包保存主机、策略和密钥引用，不写密码明文，也不改 `secrets.json`。
+
 ## 这次没做
 
-`relay`、连接复用、`run`、`elevate`、策略 HMAC、GoReleaser 发版、SKILL.md。`config.VerifyPolicy` 仍是留给 HMAC 的空实现。审计日志已经落盘。CI 会把六个平台的压缩包和 `checksums.txt` 作为构建产物上传，但不会自动创建 GitHub Release。
+`elevate`（破窗提权）、GoReleaser、SKILL.md。打 `v*` tag 时 Release 工作流会发布六个平台压缩包和 `checksums.txt`。

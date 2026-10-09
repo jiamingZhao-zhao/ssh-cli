@@ -6,8 +6,10 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/policyhmac"
 )
 
 func (a *App) policyCmd() *cobra.Command {
@@ -17,10 +19,43 @@ func (a *App) policyCmd() *cobra.Command {
 		Long: `Show the merged policy for a host, explain one command, and edit named policies.
 
 policy add and policy edit write hosts.yaml through the same store as the localhost UI.
-Signing those edits (policy HMAC) is not part of this version.`,
+policy sign writes policy.mac from the master key. A missing sidecar still loads.
+HMAC does not replace typing a confirmation phrase.`,
 	}
-	cmd.AddCommand(a.policyShow(), a.policyExplain(), a.policyList(), a.policyAdd(), a.policyEdit(), a.policyRemove())
+	cmd.AddCommand(a.policyShow(), a.policyExplain(), a.policyList(), a.policyAdd(), a.policyEdit(), a.policyRemove(), a.policySign(), a.policyUnsign())
 	return cmd
+}
+
+func (a *App) policySign() *cobra.Command {
+	return &cobra.Command{
+		Use:   "sign",
+		Short: "Write policy.mac for the current hosts.yaml",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			cfg, err := config.Load(a.Dir)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, "%s", err.Error())
+			}
+			if err := policyhmac.SignNew(a.Dir, cfg); err != nil {
+				return exitcode.New(exitcode.Usage, "%s", err.Error())
+			}
+			fmt.Fprintln(a.Out, "policy signed")
+			return nil
+		},
+	}
+}
+
+func (a *App) policyUnsign() *cobra.Command {
+	return &cobra.Command{
+		Use:   "unsign",
+		Short: "Delete policy.mac and accept the file as unsigned",
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			if err := policyhmac.Remove(a.Dir); err != nil {
+				return exitcode.New(exitcode.Usage, "%s", err.Error())
+			}
+			fmt.Fprintln(a.Out, "policy unsigned")
+			return nil
+		},
+	}
 }
 
 func (a *App) policyShow() *cobra.Command {

@@ -21,9 +21,26 @@
         <button type="button" data-view="policy">危险命令 <span class="badge" id="badge-policy">0</span></button>
         <button type="button" data-view="known">已知主机密钥 <span class="badge" id="badge-known">0</span></button>
         <button type="button" data-view="audit">审计 <span class="badge" id="badge-audit">0</span></button>
+        <button type="button" data-view="sessions">会话</button>
+        <button type="button" data-view="operate">执行</button>
+        <button type="button" data-view="relay">中继</button>
+        <button type="button" data-view="bundle">导入导出</button>
       </nav>
     </aside>
     <div class="workspace">
+      <div class="tabbar">
+        <button type="button" data-view="hosts">主机</button>
+        <button type="button" data-view="groups">分组</button>
+        <button type="button" data-view="tags">标签</button>
+        <button type="button" data-view="envs">环境</button>
+        <button type="button" data-view="policy">危险命令</button>
+        <button type="button" data-view="known">已知主机密钥</button>
+        <button type="button" data-view="audit">审计</button>
+        <button type="button" data-view="sessions">会话</button>
+        <button type="button" data-view="operate">执行</button>
+        <button type="button" data-view="relay">中继</button>
+        <button type="button" data-view="bundle">导入导出</button>
+      </div>
       <h1 id="page-title">主机</h1>
 
       <section id="hosts-panel" class="view" data-view="hosts" data-title="主机">
@@ -46,7 +63,8 @@
             </table>
           </div>
         </div>
-        <div class="panel">
+        <div class="pager" data-pager="#hosts"></div>
+        <dialog id="host-dialog">
           <h2 id="form-title">添加主机</h2>
           <form id="host-form">
             <label>别名 <input name="alias" required autocomplete="off"></label>
@@ -77,7 +95,7 @@
             </div>
             <p id="form-error" class="error" hidden></p>
           </form>
-        </div>
+        </dialog>
       </section>
 
       <section id="groups" class="view" data-view="groups" data-title="分组" hidden>
@@ -100,7 +118,8 @@
             </table>
           </div>
         </div>
-        <div class="panel">
+        <div class="pager" data-pager="#group-rows"></div>
+        <dialog id="group-dialog">
           <h2 id="group-form-title">添加分组</h2>
           <form id="group-form">
             <label>名称 <input name="name" required autocomplete="off"></label>
@@ -131,7 +150,7 @@
               <button type="button" id="group-clear" class="secondary">清空</button>
             </div>
           </form>
-        </div>
+        </dialog>
       </section>
 
       <section id="tags" class="view" data-view="tags" data-title="标签" hidden>
@@ -151,12 +170,16 @@
             </table>
           </div>
         </div>
+        <div class="pager" data-pager="#tag-rows"></div>
       </section>
 
       <section id="envs" class="view" data-view="envs" data-title="环境" hidden>
         <p class="muted">maxMode 是天花板。defaultPolicy 是环境这一层引用的命名策略。环境本身没有行内 allow / deny。dev、test、preprod、prod 是内置环境，不能改也不能删。可以另加自定义环境。</p>
         <div class="strip">
           <label>搜索 <input data-filter="#env-rows" placeholder="名称、显示名" autocomplete="off"></label>
+        </div>
+        <div class="toolbar">
+          <button type="button" id="env-new">添加环境</button>
         </div>
         <p class="summary" id="summary-envs"></p>
         <p id="env-error" class="error" hidden></p>
@@ -170,7 +193,8 @@
             </table>
           </div>
         </div>
-        <div class="panel">
+        <div class="pager" data-pager="#env-rows"></div>
+        <dialog id="env-dialog">
           <h2>添加环境</h2>
           <form id="env-form">
             <label>名称 <input name="name" required autocomplete="off" placeholder="lab"></label>
@@ -184,13 +208,16 @@
               </select>
             </label>
             <label>默认策略 <select name="defaultPolicy" id="env-policy"></select></label>
-            <div class="row"><button type="submit">添加环境</button></div>
+            <div class="row">
+              <button type="submit">添加环境</button>
+              <button type="button" id="env-clear" class="secondary">清空</button>
+            </div>
           </form>
-        </div>
+        </dialog>
       </section>
 
       <section id="policy" class="view" data-view="policy" data-title="危险命令" hidden>
-        <p class="muted">规则写在命名策略上，或挂到环境、分组、主机。某一层不写允许列表，这一层就是全集；写成空列表则会把这一层交空。拒绝和确认在各层取并集。内置硬拒绝（删除根目录、mkfs、把 dd 或重定向写到磁盘、修改根目录属主、fork bomb）不能在这里关掉。这个页面不配置 relay、elevate 或策略 HMAC。</p>
+        <p class="muted">规则写在命名策略上，或挂到环境、分组、主机。某一层不写允许列表，这一层就是全集；写成空列表则会把这一层交空。拒绝和确认在各层取并集。内置硬拒绝（删除根目录、mkfs、把 dd 或重定向写到磁盘、修改根目录属主、fork bomb）不能在这里关掉。策略 HMAC 不代替人工确认。elevate 不在这个版本里。</p>
         <div class="strip">
           <label>搜索 <input data-filter="#policy-rows" placeholder="策略名" autocomplete="off"></label>
         </div>
@@ -209,7 +236,8 @@
             </table>
           </div>
         </div>
-        <div class="panel">
+        <div class="pager" data-pager="#policy-rows"></div>
+        <dialog id="policy-dialog">
           <h2 id="policy-form-title">添加命名策略</h2>
           <form id="policy-form">
             <label>名称 <input name="name" required autocomplete="off"></label>
@@ -236,7 +264,7 @@
               <button type="button" id="policy-clear" class="secondary">清空</button>
             </div>
           </form>
-        </div>
+        </dialog>
       </section>
 
       <section id="known-panel" class="view" data-view="known" data-title="已知主机密钥" hidden>
@@ -254,14 +282,30 @@
             </table>
           </div>
         </div>
+        <div class="pager" data-pager="#known"></div>
       </section>
 
       <section id="audit-panel" class="view" data-view="audit" data-title="审计" hidden>
         <p class="muted">读取和命令行 <code>ssh-cli audit list</code> 同一份日志。筛选条件发给本机接口，不会改配置。</p>
         <form id="audit-filter" class="strip filters">
-          <label>主机 <input name="host" autocomplete="off"></label>
-          <label>分组 <input name="group" autocomplete="off"></label>
-          <label>环境 <input name="env" autocomplete="off"></label>
+          <label>操作
+            <select name="op" id="audit-op">
+              <option value="">全部</option>
+              <option>exec</option>
+              <option>upload</option>
+              <option>download</option>
+              <option>relay</option>
+              <option>policy_check</option>
+              <option>session</option>
+              <option>config_change</option>
+              <option>status</option>
+              <option>service</option>
+              <option>keys</option>
+            </select>
+          </label>
+          <label>主机 <select name="host" id="audit-host"><option value="">全部</option></select></label>
+          <label>分组 <select name="group" id="audit-group"><option value="">全部</option></select></label>
+          <label>环境 <select name="env" id="audit-env"><option value="">全部</option></select></label>
           <label>状态
             <select name="status">
               <option value="">全部</option>
@@ -276,7 +320,9 @@
           <label>自从 <input name="since" placeholder="24h 或 2026-01-02" autocomplete="off"></label>
           <label>直到 <input name="until" placeholder="YYYY-MM-DD" autocomplete="off"></label>
           <button type="submit">筛选</button>
+          <button type="button" id="audit-cleanup" class="secondary">清理 30 天前</button>
         </form>
+        <div class="pager" id="audit-pager"></div>
         <p class="summary" id="summary-audit"></p>
         <p id="audit-error" class="error" hidden></p>
         <div class="panel">
@@ -289,6 +335,74 @@
             </table>
           </div>
         </div>
+      </section>
+
+      <section id="sessions-panel" class="view" data-view="sessions" data-title="会话" hidden>
+        <p class="muted">会话只活在这个 UI 进程里。空闲默认 5 分钟，最长 60 分钟，进程退出会关掉。没有后台守护进程。</p>
+        <div class="toolbar">
+          <button type="button" id="session-refresh">刷新</button>
+        </div>
+        <p class="summary" id="summary-sessions"></p>
+        <p id="session-error" class="error" hidden></p>
+        <div class="panel">
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th>主机</th><th>打开</th><th>最近使用</th><th>忙</th><th></th></tr></thead>
+              <tbody id="session-rows"></tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <section id="operate-panel" class="view" data-view="operate" data-title="执行" hidden>
+        <p class="muted">执行、上传、下载走和命令行同一套策略与审计。需要确认时输入主机别名。</p>
+        <p id="operate-error" class="error" hidden></p>
+        <form id="exec-form" class="panel">
+          <label>主机 <select name="alias" id="op-host" required></select></label>
+          <label>超时 <input name="timeout" placeholder="30s" autocomplete="off"></label>
+          <label class="wide">命令 <input name="command" required autocomplete="off"></label>
+          <label>确认短语 <input name="confirm" autocomplete="off" placeholder="需要时填写主机别名"></label>
+          <div class="row"><button type="submit">执行</button></div>
+        </form>
+        <form id="upload-form" class="panel">
+          <label>主机 <select name="alias" class="op-host" required></select></label>
+          <label>远端路径 <input name="remote" required autocomplete="off"></label>
+          <label>文件 <input name="file" type="file" required></label>
+          <label>确认短语 <input name="confirm" autocomplete="off"></label>
+          <div class="row"><button type="submit">上传</button></div>
+        </form>
+        <form id="download-form" class="panel">
+          <label>主机 <select name="alias" class="op-host" required></select></label>
+          <label>远端路径 <input name="path" required autocomplete="off"></label>
+          <div class="row"><button type="submit">下载</button></div>
+        </form>
+        <pre id="operate-out" class="out" hidden></pre>
+      </section>
+
+      <section id="relay-panel" class="view" data-view="relay" data-title="中继" hidden>
+        <p class="muted">把一个远端文件经本机流转到另一台主机，并核对 sha256，没有 sha256sum 时改对 md5。不保存明文副本。</p>
+        <p id="relay-error" class="error" hidden></p>
+        <form id="relay-form" class="panel">
+          <label>来源主机 <select name="from" class="op-host" required></select></label>
+          <label>来源路径 <input name="fromPath" required autocomplete="off"></label>
+          <label>目标主机 <select name="to" class="op-host" required></select></label>
+          <label>目标路径 <input name="toPath" required autocomplete="off"></label>
+          <label>确认短语 <input name="confirm" autocomplete="off"></label>
+          <label class="check"><input name="allowCrossEnv" type="checkbox"> 允许跨环境</label>
+          <div class="row"><button type="submit">中继</button></div>
+        </form>
+      </section>
+
+      <section id="bundle-panel" class="view" data-view="bundle" data-title="导入导出" hidden>
+        <p class="muted">导出主机、策略和密钥引用。不包含明文密码。导入不改 secrets.json。</p>
+        <p id="bundle-error" class="error" hidden></p>
+        <div class="toolbar">
+          <button type="button" id="bundle-export">导出</button>
+        </div>
+        <form id="bundle-form" class="panel">
+          <label class="wide">配置 YAML <textarea name="yaml" id="bundle-yaml"></textarea></label>
+          <div class="row"><button type="submit">导入</button></div>
+        </form>
       </section>
     </div>
   </div>

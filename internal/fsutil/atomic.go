@@ -44,11 +44,20 @@ func WriteAtomic(path string, data []byte, mode os.FileMode) error {
 	if err := harden(tmpName); err != nil {
 		return err
 	}
-	if err := replaceFile(tmpName, path); err != nil {
+	if err := Replace(tmpName, path); err != nil {
 		return fmt.Errorf("replace %s: %w", path, err)
 	}
 	cleanup = false
 	return nil
+}
+
+// Replace hardens tmp and renames it onto dest. Callers that stream into a
+// same-directory temp file use this so Windows still gets the protected DACL.
+func Replace(tmp, dest string) error {
+	if err := harden(tmp); err != nil {
+		return err
+	}
+	return replaceFile(tmp, dest)
 }
 
 // MkdirPrivate creates dir with mode 0700.

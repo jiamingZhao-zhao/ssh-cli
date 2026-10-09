@@ -23,6 +23,7 @@ type Filter struct {
 	Groups   []string
 	Env      string
 	Status   string
+	Op       string
 	Since    time.Time
 	Until    time.Time
 	HasSince bool
@@ -391,6 +392,9 @@ func matchFields(rec Record, f Filter) bool {
 		return false
 	}
 	if f.Status != "" && rec.Status != f.Status {
+		return false
+	}
+	if f.Op != "" && rec.Op != f.Op {
 		return false
 	}
 	return true

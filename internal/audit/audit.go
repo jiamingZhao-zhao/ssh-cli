@@ -33,6 +33,7 @@ const (
 	OpKeys         = "keys"
 	OpConfigChange = "config_change"
 	OpSession      = "session"
+	OpRelay        = "relay"
 
 	StatusOK      = "ok"
 	StatusDenied  = "denied"
@@ -83,6 +84,16 @@ func Actor() string {
 func ValidStatus(s string) bool {
 	switch s {
 	case StatusOK, StatusDenied, StatusTimeout, StatusAuth, StatusConnect, StatusError:
+		return true
+	default:
+		return false
+	}
+}
+
+// ValidOp reports whether s is a known operation filter value.
+func ValidOp(s string) bool {
+	switch s {
+	case OpExec, OpUpload, OpDownload, OpPolicyCheck, OpStatus, OpService, OpKeys, OpConfigChange, OpSession, OpRelay:
 		return true
 	default:
 		return false
