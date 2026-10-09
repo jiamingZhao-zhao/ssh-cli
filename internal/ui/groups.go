@@ -14,6 +14,7 @@ import (
 type GroupDraft struct {
 	Name      string
 	Env       string
+	Label     string
 	Policy    string
 	Allow     *[]string
 	Deny      []string
@@ -21,6 +22,7 @@ type GroupDraft struct {
 	Protected []string
 
 	HasEnv       bool
+	HasLabel     bool
 	HasPolicy    bool
 	HasAllow     bool
 	HasDeny      bool
@@ -50,11 +52,16 @@ func AddGroup(dir string, in GroupDraft) error {
 		if policy != "" && !guard.KnownPolicy(cfg, policy) {
 			return fmt.Errorf("unknown policy %q", policy)
 		}
+		label, err := config.CleanLabel(in.Label)
+		if err != nil {
+			return err
+		}
 		if cfg.Groups == nil {
 			cfg.Groups = map[string]*config.Group{}
 		}
 		g := &config.Group{
 			Env:    envName,
+			Label:  label,
 			Policy: policy,
 			Hosts:  map[string]*config.Host{},
 		}
@@ -81,7 +88,7 @@ func UpdateGroup(dir string, in GroupDraft) error {
 	if name == "" {
 		return fmt.Errorf("group is required")
 	}
-	if !in.HasEnv && !in.HasPolicy && !in.HasAllow && !in.HasDeny && !in.HasConfirm && !in.HasProtected {
+	if !in.HasEnv && !in.HasLabel && !in.HasPolicy && !in.HasAllow && !in.HasDeny && !in.HasConfirm && !in.HasProtected {
 		return fmt.Errorf("no changes given")
 	}
 	return config.Update(dir, func(cfg *config.Config) error {
@@ -98,6 +105,13 @@ func UpdateGroup(dir string, in GroupDraft) error {
 				return fmt.Errorf("unknown env %q", envName)
 			}
 			g.Env = envName
+		}
+		if in.HasLabel {
+			label, err := config.CleanLabel(in.Label)
+			if err != nil {
+				return err
+			}
+			g.Label = label
 		}
 		if in.HasPolicy {
 			policy := strings.TrimSpace(in.Policy)

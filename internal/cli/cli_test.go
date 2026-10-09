@@ -5,6 +5,9 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"crypto/sha256"
+	"encoding/hex"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -150,6 +153,30 @@ func TestCustomEnvAndBuiltinGroup(t *testing.T) {
 	if strings.Contains(out, "lab") || !strings.Contains(out, "prod") {
 		t.Fatalf("env list after remove: %s", out)
 	}
+	code, _, errb = run("group", "add", "hunan-test", "--env", "test", "--label", "湖南组测试主机组")
+	if code != 0 {
+		t.Fatalf("group label: %d %s", code, errb)
+	}
+	code, out, errb = run("group", "list")
+	if code != 0 || !strings.Contains(out, "LABEL") || !strings.Contains(out, "hunan-test") || !strings.Contains(out, "湖南组测试主机组") {
+		t.Fatalf("group list %d %s %s", code, out, errb)
+	}
+	code, _, errb = run("group", "edit", "hunan-test", "--policy", "standard")
+	if code != 0 {
+		t.Fatalf("group edit policy: %d %s", code, errb)
+	}
+	code, out, _ = run("group", "list", "--json")
+	if !strings.Contains(out, `"label": "湖南组测试主机组"`) {
+		t.Fatalf("label dropped: %s", out)
+	}
+	code, _, errb = run("group", "edit", "hunan-test", "--label", "")
+	if code != 0 {
+		t.Fatalf("clear label: %d %s", code, errb)
+	}
+	code, out, _ = run("group", "list", "--json")
+	if strings.Contains(out, "湖南组测试主机组") {
+		t.Fatalf("label still present: %s", out)
+	}
 }
 
 func TestVersionSwitchesMatch(t *testing.T) {
@@ -211,25 +238,19 @@ func TestRootHelpListsCommands(t *testing.T) {
 	}
 	var out, errb bytes.Buffer
 	code := Execute([]string{"update", "-h"}, strings.NewReader(""), &out, &errb)
-	if code != 0 || !strings.Contains(out.String(), "checksums.txt") || !strings.Contains(out.String(), "ssh-cli_<version>_") || !strings.Contains(out.String(), "Without a TTY") {
-		t.Fatalf("update help %d\n%s\n%s", code, out.String(), errb.String())
+	help := out.String()
+	if code != 0 || !strings.Contains(help, "checksums.txt") || !strings.Contains(help, "ssh-cli_<version>_") || !strings.Contains(help, "Without a TTY the install proceeds") {
+		t.Fatalf("update help %d\n%s\n%s", code, help, errb.String())
 	}
 }
 
-func TestUpdateCheckAndNonTTYInstall(t *testing.T) {
+func TestUpdateCheckWithoutTTY(t *testing.T) {
 	ttyCheck = func() bool { return false }
 	t.Cleanup(func() { ttyCheck = defaultTTY })
-	prompted := false
-	openConfirmTTY = func() (io.ReadWriteCloser, error) {
-		prompted = true
-		return nil, os.ErrInvalid
-	}
-	t.Cleanup(func() { openConfirmTTY = defaultOpenConfirmTTY })
-	srv := updateInstallServer(t)
+	srv := updateReleaseServer(t)
 	oldBase := update.ReleaseBase
 	update.ReleaseBase = srv.URL
 	t.Cleanup(func() { update.ReleaseBase = oldBase })
-	t.Setenv("GITHUB_TOKEN", "")
 	dest := filepath.Join(t.TempDir(), "ssh-cli")
 	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
@@ -251,50 +272,34 @@ func TestUpdateCheckAndNonTTYInstall(t *testing.T) {
 	if err != nil || string(got) != "old" {
 		t.Fatal("check replaced the binary")
 	}
-	if prompted {
-		t.Fatal("check prompted")
-	}
 
 	out.Reset()
 	errb.Reset()
-	code = Execute([]string{"--config", dir, "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
-	if code != 0 || !strings.Contains(out.String(), "installed 1.2.3") {
-		t.Fatalf("install without tty: %d %s %s", code, out.String(), errb.String())
+	code = Execute([]string{"--config", dir, "--yes", "update", "--check", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
+	if code != 0 || strings.Contains(errb.String(), "--yes is only valid on an interactive TTY") {
+		t.Fatalf("--yes update --check without tty: %d %s %s", code, out.String(), errb.String())
 	}
-	if prompted {
-		t.Fatal("non-TTY update prompted")
+	if !strings.Contains(out.String(), "update available") {
+		t.Fatalf("check output %s", out.String())
 	}
-	got, err = os.ReadFile(dest)
-	if err != nil || string(got) != "updated-binary" {
-		t.Fatalf("installed %q %v", got, err)
-	}
-
-	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
-		t.Fatal(err)
-	}
-	out.Reset()
-	errb.Reset()
-	code = Execute([]string{"--config", dir, "--yes", "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
-	if code != 0 || !strings.Contains(out.String(), "installed 1.2.3") {
-		t.Fatalf("--yes update without tty: %d %s %s", code, out.String(), errb.String())
-	}
-	if prompted {
-		t.Fatal("--yes non-TTY update prompted")
-	}
-	got, err = os.ReadFile(dest)
-	if err != nil || string(got) != "updated-binary" {
-		t.Fatalf("--yes installed %q %v", got, err)
+	got, _ = os.ReadFile(dest)
+	if string(got) != "old" {
+		t.Fatal("--check with --yes replaced the binary")
 	}
 }
 
-func TestUpdateTTYRequiresConfirm(t *testing.T) {
-	ttyCheck = func() bool { return true }
+func TestUpdateYesWithoutTTYInstalls(t *testing.T) {
+	ttyCheck = func() bool { return false }
 	t.Cleanup(func() { ttyCheck = defaultTTY })
-	srv := updateInstallServer(t)
+	t.Setenv("GITHUB_TOKEN", "")
+
+	const ver = "1.2.3"
+	payload := []byte("updated-binary")
+	srv := updateInstallServer(t, ver, payload)
 	oldBase := update.ReleaseBase
 	update.ReleaseBase = srv.URL
 	t.Cleanup(func() { update.ReleaseBase = oldBase })
-	t.Setenv("GITHUB_TOKEN", "")
+
 	dest := filepath.Join(t.TempDir(), "ssh-cli")
 	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
 		t.Fatal(err)
@@ -302,7 +307,97 @@ func TestUpdateTTYRequiresConfirm(t *testing.T) {
 	oldBin := update.CurrentBinary
 	update.CurrentBinary = func() (string, error) { return dest, nil }
 	t.Cleanup(func() { update.CurrentBinary = oldBin })
+
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	code := Execute([]string{"--config", dir, "--yes", "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
+	if code != 0 {
+		t.Fatalf("yes install %d\n%s\n%s", code, out.String(), errb.String())
+	}
+	if strings.Contains(out.String()+errb.String(), "--yes is only valid on an interactive TTY") {
+		t.Fatalf("rejected non-interactive --yes:\n%s\n%s", out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "installed "+ver) {
+		t.Fatalf("output %s", out.String())
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("installed %q %v", got, err)
+	}
+}
+
+func TestConfirmReleaseNonTTYProceeds(t *testing.T) {
+	ttyCheck = func() bool { return false }
+	t.Cleanup(func() { ttyCheck = defaultTTY })
+	if err := confirmRelease("1.2.3", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := confirmRelease("1.2.3", false); err != nil {
+		t.Fatalf("bare update confirm: %v", err)
+	}
+}
+
+func TestUpdateNonTTYBareInstall(t *testing.T) {
+	ttyCheck = func() bool { return false }
+	t.Cleanup(func() { ttyCheck = defaultTTY })
+	prompted := false
+	openConfirmTTY = func() (io.ReadWriteCloser, error) {
+		prompted = true
+		return nil, os.ErrInvalid
+	}
 	t.Cleanup(func() { openConfirmTTY = defaultOpenConfirmTTY })
+	t.Setenv("GITHUB_TOKEN", "")
+
+	const ver = "1.2.3"
+	payload := []byte("updated-binary")
+	srv := updateInstallServer(t, ver, payload)
+	oldBase := update.ReleaseBase
+	update.ReleaseBase = srv.URL
+	t.Cleanup(func() { update.ReleaseBase = oldBase })
+
+	dest := filepath.Join(t.TempDir(), "ssh-cli")
+	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldBin := update.CurrentBinary
+	update.CurrentBinary = func() (string, error) { return dest, nil }
+	t.Cleanup(func() { update.CurrentBinary = oldBin })
+
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	code := Execute([]string{"--config", dir, "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
+	if code != 0 || !strings.Contains(out.String(), "installed "+ver) {
+		t.Fatalf("bare install %d\n%s\n%s", code, out.String(), errb.String())
+	}
+	if prompted {
+		t.Fatal("non-TTY update prompted")
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("installed %q %v", got, err)
+	}
+}
+
+func TestUpdateTTYRequiresConfirm(t *testing.T) {
+	ttyCheck = func() bool { return true }
+	t.Cleanup(func() { ttyCheck = defaultTTY })
+	t.Cleanup(func() { openConfirmTTY = defaultOpenConfirmTTY })
+	t.Setenv("GITHUB_TOKEN", "")
+
+	const ver = "1.2.3"
+	payload := []byte("updated-binary")
+	srv := updateInstallServer(t, ver, payload)
+	oldBase := update.ReleaseBase
+	update.ReleaseBase = srv.URL
+	t.Cleanup(func() { update.ReleaseBase = oldBase })
+
+	dest := filepath.Join(t.TempDir(), "ssh-cli")
+	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldBin := update.CurrentBinary
+	update.CurrentBinary = func() (string, error) { return dest, nil }
+	t.Cleanup(func() { update.CurrentBinary = oldBin })
 
 	var prompt bytes.Buffer
 	openConfirmTTY = func() (io.ReadWriteCloser, error) {
@@ -325,19 +420,16 @@ func TestUpdateTTYRequiresConfirm(t *testing.T) {
 
 	openConfirmTTY = func() (io.ReadWriteCloser, error) {
 		prompt.Reset()
-		return confirmRWC{Reader: strings.NewReader("1.2.3\n"), Writer: &prompt}, nil
+		return confirmRWC{Reader: strings.NewReader(ver + "\n"), Writer: &prompt}, nil
 	}
 	out.Reset()
 	errb.Reset()
 	code = Execute([]string{"--config", dir, "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
-	if code != 0 || !strings.Contains(out.String(), "installed 1.2.3") {
+	if code != 0 || !strings.Contains(out.String(), "installed "+ver) {
 		t.Fatalf("tty confirm: %d %s %s", code, out.String(), errb.String())
 	}
-	if !strings.Contains(prompt.String(), `release version "1.2.3"`) {
-		t.Fatalf("prompt %q", prompt.String())
-	}
 	got, err := os.ReadFile(dest)
-	if err != nil || string(got) != "updated-binary" {
+	if err != nil || !bytes.Equal(got, payload) {
 		t.Fatalf("confirmed install %q %v", got, err)
 	}
 
@@ -351,12 +443,8 @@ func TestUpdateTTYRequiresConfirm(t *testing.T) {
 	out.Reset()
 	errb.Reset()
 	code = Execute([]string{"--config", dir, "--yes", "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
-	if code != 0 || !strings.Contains(out.String(), "installed 1.2.3") {
+	if code != 0 || !strings.Contains(out.String(), "installed "+ver) {
 		t.Fatalf("--yes on tty: %d %s %s", code, out.String(), errb.String())
-	}
-	got, err = os.ReadFile(dest)
-	if err != nil || string(got) != "updated-binary" {
-		t.Fatalf("--yes installed %q %v", got, err)
 	}
 }
 
@@ -367,33 +455,29 @@ type confirmRWC struct {
 
 func (confirmRWC) Close() error { return nil }
 
-func updateInstallServer(t *testing.T) *httptest.Server {
+func updateInstallServer(t *testing.T, ver string, payload []byte) *httptest.Server {
 	t.Helper()
-	const ver = "1.2.3"
-	const payload = "updated-binary"
 	name := update.AssetName(ver, runtime.GOOS, runtime.GOARCH)
 	var archive []byte
 	if runtime.GOOS == "windows" {
-		archive = testZip(t, update.BinaryName(runtime.GOOS), []byte(payload))
+		archive = testZip(t, update.BinaryName(runtime.GOOS), payload)
 	} else {
-		archive = testTarGz(t, update.BinaryName(runtime.GOOS), []byte(payload))
+		archive = testTarGz(t, update.BinaryName(runtime.GOOS), payload)
 	}
-	prefix := "/example/ssh-cli/releases/download/v" + ver + "/"
+	sum := sha256.Sum256(archive)
+	tag := "v" + ver
+	prefix := "/example/ssh-cli/releases/download/" + tag + "/"
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
-			http.Redirect(w, r, "/example/ssh-cli/releases/tag/v"+ver, http.StatusFound)
-			return
-		}
-		if strings.Contains(r.URL.Path, "/repos/") {
-			t.Errorf("update contacted the releases API: %s", r.URL.Path)
-			http.NotFound(w, r)
-			return
-		}
-		if r.URL.Path == prefix+name {
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/releases/latest"):
+			http.Redirect(w, r, "/example/ssh-cli/releases/tag/"+tag, http.StatusFound)
+		case r.URL.Path == prefix+name:
 			_, _ = w.Write(archive)
-			return
+		case r.URL.Path == prefix+update.ChecksumsName:
+			fmt.Fprintf(w, "%s  %s\n", hex.EncodeToString(sum[:]), name)
+		default:
+			http.NotFound(w, r)
 		}
-		http.NotFound(w, r)
 	}))
 	t.Cleanup(srv.Close)
 	return srv
@@ -434,6 +518,22 @@ func testZip(t *testing.T, name string, data []byte) []byte {
 		t.Fatal(err)
 	}
 	return buf.Bytes()
+}
+
+func updateReleaseServer(t *testing.T) *httptest.Server {
+	t.Helper()
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/releases/latest") {
+			http.Redirect(w, r, "/example/ssh-cli/releases/tag/v1.2.3", http.StatusFound)
+			return
+		}
+		if strings.Contains(r.URL.Path, "/repos/") {
+			t.Errorf("update contacted the releases API: %s", r.URL.Path)
+		}
+		http.NotFound(w, r)
+	}))
+	t.Cleanup(srv.Close)
+	return srv
 }
 
 func TestConfirmRequiresAlias(t *testing.T) {

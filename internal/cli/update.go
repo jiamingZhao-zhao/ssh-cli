@@ -37,7 +37,7 @@ redirect to /releases/tag/<tag>). Archives and checksums.txt are downloaded
 from /releases/download/<tag>/, not the GitHub REST API, so anonymous API
 rate limits do not block an update. GITHUB_TOKEN is optional: it is sent to
 api.github.com only when that direct lookup fails.
---check prints current and latest without installing.
+--check prints current and latest without installing and does not require a TTY.
 On an interactive TTY, installing asks you to type the release version.
 --yes skips that prompt. Without a TTY the install proceeds with no prompt;
 --yes is unnecessary there and does not error.`,
@@ -86,6 +86,17 @@ On an interactive TTY, installing asks you to type the release version.
 	cmd.Flags().BoolVar(&force, "force", false, "install even when this build is not older than the release")
 	cmd.Flags().StringVar(&repo, "repo", "", "GitHub owner/name (default: SSH_CLI_REPO or jiamingZhao-zhao/ssh-cli)")
 	return cmd
+}
+
+// nonInteractiveYesOK is true only for update, where --yes means
+// "install without a confirmation prompt", including when there is no TTY.
+func nonInteractiveYesOK(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "update" {
+			return true
+		}
+	}
+	return false
 }
 
 // openConfirmTTY opens the console used for the typed release confirmation.

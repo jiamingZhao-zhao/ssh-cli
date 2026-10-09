@@ -73,7 +73,7 @@ func (a *App) transfer(kind, src, dst string) error {
 		}
 		a.header(p.host)
 		start := time.Now()
-		client, err := a.dial(p.host)
+		client, err := a.dial(p.host, 0)
 		hostMeta := meta
 		hostMeta.started = start
 		res := result{Host: p.host.Alias, Group: p.host.Group, Env: p.host.EnvName}

@@ -121,6 +121,12 @@ func groupFromMap(raw map[string]json.RawMessage) (GroupDraft, error) {
 		d.HasEnv = true
 		d.Env = s
 	}
+	if s, ok, err := rawString(raw, "label"); err != nil {
+		return GroupDraft{}, err
+	} else if ok {
+		d.HasLabel = true
+		d.Label = s
+	}
 	if s, ok, err := rawString(raw, "policy"); err != nil {
 		return GroupDraft{}, err
 	} else if ok {

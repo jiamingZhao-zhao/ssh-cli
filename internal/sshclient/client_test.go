@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"sync"
 	"testing"
 	"time"
 
@@ -125,3 +126,43 @@ func TestPasswordExecExitAndTransfer(t *testing.T) {
 }
 
 func mustAddr(s string) net.Addr { return netAddr(s) }
+
+func TestDialTimeoutBoundsHandshake(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var mu sync.Mutex
+	var held []net.Conn
+	go func() {
+		for {
+			c, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			mu.Lock()
+			held = append(held, c)
+			mu.Unlock()
+		}
+	}()
+	t.Cleanup(func() {
+		_ = ln.Close()
+		mu.Lock()
+		defer mu.Unlock()
+		for _, c := range held {
+			_ = c.Close()
+		}
+	})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	start := time.Now()
+	_, err = Dial(ctx, ln.Addr().String(), "tester", PasswordAuth("x"), HostKeyCallback(filepath.Join(t.TempDir(), "known_hosts"), true), 300*time.Millisecond)
+	elapsed := time.Since(start)
+	if err == nil {
+		t.Fatal("expected handshake timeout")
+	}
+	if elapsed > 2*time.Second {
+		t.Fatalf("handshake waited %s", elapsed)
+	}
+}
