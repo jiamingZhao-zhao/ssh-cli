@@ -14,27 +14,32 @@
         <p>本地配置与审计。不启动这个页面时，命令行照常工作。</p>
       </div>
       <nav>
-        <button type="button" data-view="hosts" class="active">主机 <span class="badge" id="badge-hosts">0</span></button>
-        <button type="button" data-view="groups">分组 <span class="badge" id="badge-groups">0</span></button>
-        <button type="button" data-view="tags">标签 <span class="badge" id="badge-tags">0</span></button>
-        <button type="button" data-view="envs">环境 <span class="badge" id="badge-envs">0</span></button>
-        <button type="button" data-view="policy">危险命令 <span class="badge" id="badge-policy">0</span></button>
-        <button type="button" data-view="known">已知主机密钥 <span class="badge" id="badge-known">0</span></button>
-        <button type="button" data-view="audit">审计 <span class="badge" id="badge-audit">0</span></button>
+        <button type="button" data-view="hosts" class="active">主机 <span class="badge" id="badge-hosts" hidden>0</span></button>
+        <button type="button" data-view="groups">分组 <span class="badge" id="badge-groups" hidden>0</span></button>
+        <button type="button" data-view="tags">标签 <span class="badge" id="badge-tags" hidden>0</span></button>
+        <button type="button" data-view="envs">环境 <span class="badge" id="badge-envs" hidden>0</span></button>
+        <button type="button" data-view="policy">危险命令 <span class="badge" id="badge-policy" hidden>0</span></button>
+        <button type="button" data-view="known">已知主机密钥 <span class="badge" id="badge-known" hidden>0</span></button>
+        <button type="button" data-view="audit">审计 <span class="badge" id="badge-audit" hidden>0</span></button>
       </nav>
     </aside>
     <div class="workspace">
-      <h1 id="page-title">主机</h1>
+      <div class="tabbar">
+        <span class="tab" id="page-title">主机</span>
+      </div>
 
       <section id="hosts-panel" class="view" data-view="hosts" data-title="主机">
-        <p class="muted">密码只通过主机表单提交，不会出现在审计记录里。从清单导入仍用命令行 <code>ssh-cli import ssh-ops</code>。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#hosts" placeholder="别名、分组、地址、标签" autocomplete="off"></label>
+        <div class="strip" data-table="#hosts">
+          <label>别名 <input data-col="0" placeholder="请输入" autocomplete="off"></label>
+          <label>分组 <input data-col="1" placeholder="请输入" autocomplete="off"></label>
+          <label>环境 <input data-col="2" placeholder="请输入" autocomplete="off"></label>
+          <label>标签 <input data-col="7" placeholder="请输入" autocomplete="off"></label>
         </div>
         <div class="toolbar">
-          <button type="button" id="host-new">添加主机</button>
+          <button type="button" id="host-new">+ 添加主机</button>
+          <button type="button" id="host-reset" class="secondary">清空</button>
         </div>
-        <p class="summary" id="summary-hosts"></p>
+        <div class="summary" id="summary-hosts"></div>
         <div id="catalog-error" class="error" hidden></div>
         <div class="panel">
           <div class="table-wrap">
@@ -46,6 +51,7 @@
             </table>
           </div>
         </div>
+        <p class="muted">密码只通过主机表单提交，不会出现在审计记录里。从清单导入仍用命令行 <code>ssh-cli import ssh-ops</code>。</p>
         <div class="panel">
           <h2 id="form-title">添加主机</h2>
           <form id="host-form">
@@ -81,14 +87,16 @@
       </section>
 
       <section id="groups" class="view" data-view="groups" data-title="分组" hidden>
-        <p class="muted">一台主机只能属于一个分组，环境从分组继承。分组上的命名策略和允许 / 拒绝 / 确认会参与该组主机的规则合并。有主机时不能删除，和 <code>group remove</code> 一样。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#group-rows" placeholder="名称、显示名、环境" autocomplete="off"></label>
+        <div class="strip" data-table="#group-rows">
+          <label>名称 <input data-col="0" placeholder="请输入" autocomplete="off"></label>
+          <label>显示名 <input data-col="1" placeholder="请输入" autocomplete="off"></label>
+          <label>环境 <input data-col="2" placeholder="请输入" autocomplete="off"></label>
         </div>
         <div class="toolbar">
-          <button type="button" id="group-new">添加分组</button>
+          <button type="button" id="group-new">+ 添加分组</button>
+          <button type="button" id="group-reset" class="secondary">清空</button>
         </div>
-        <p class="summary" id="summary-groups"></p>
+        <div class="summary" id="summary-groups"></div>
         <p id="group-error" class="error" hidden></p>
         <div class="panel">
           <div class="table-wrap">
@@ -100,6 +108,7 @@
             </table>
           </div>
         </div>
+        <p class="muted">一台主机只能属于一个分组，环境从分组继承。分组上的命名策略和允许 / 拒绝 / 确认会参与该组主机的规则合并。有主机时不能删除，和 <code>group remove</code> 一样。</p>
         <div class="panel">
           <h2 id="group-form-title">添加分组</h2>
           <form id="group-form">
@@ -135,11 +144,15 @@
       </section>
 
       <section id="tags" class="view" data-view="tags" data-title="标签" hidden>
-        <p class="muted">标签只写在主机上，用来配合 <code>ssh-cli -t</code> 选择主机，不表示权限。分组没有 tags 字段。把标签加到某个分组，实际是写到该分组里的每一台主机上。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#tag-rows" placeholder="分组、主机、标签" autocomplete="off"></label>
+        <div class="strip" data-table="#tag-rows">
+          <label>分组 <input data-col="0" placeholder="请输入" autocomplete="off"></label>
+          <label>环境 <input data-col="1" placeholder="请输入" autocomplete="off"></label>
+          <label>主机 <input data-col="2" placeholder="请输入" autocomplete="off"></label>
         </div>
-        <p class="summary" id="summary-tags"></p>
+        <div class="toolbar">
+          <button type="button" id="tags-refresh" class="secondary">刷新</button>
+        </div>
+        <div class="summary" id="summary-tags"></div>
         <p id="tag-error" class="error" hidden></p>
         <div class="panel">
           <div class="table-wrap">
@@ -151,14 +164,18 @@
             </table>
           </div>
         </div>
+        <p class="muted">标签只写在主机上，用来配合 <code>ssh-cli -t</code> 选择主机，不表示权限。分组没有 tags 字段。把标签加到某个分组，实际是写到该分组里的每一台主机上。</p>
       </section>
 
       <section id="envs" class="view" data-view="envs" data-title="环境" hidden>
-        <p class="muted">maxMode 是天花板。defaultPolicy 是环境这一层引用的命名策略。环境本身没有行内 allow / deny。dev、test、preprod、prod 是内置环境，不能改也不能删。可以另加自定义环境。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#env-rows" placeholder="名称、显示名" autocomplete="off"></label>
+        <div class="strip" data-table="#env-rows">
+          <label>名称 <input data-col="0" placeholder="请输入" autocomplete="off"></label>
+          <label>显示名 <input data-col="1" placeholder="请输入" autocomplete="off"></label>
         </div>
-        <p class="summary" id="summary-envs"></p>
+        <div class="toolbar">
+          <button type="button" id="env-new">+ 添加环境</button>
+        </div>
+        <div class="summary" id="summary-envs"></div>
         <p id="env-error" class="error" hidden></p>
         <div class="panel">
           <div class="table-wrap">
@@ -187,17 +204,19 @@
             <div class="row"><button type="submit">添加环境</button></div>
           </form>
         </div>
+        <p class="muted">maxMode 是天花板。defaultPolicy 是环境这一层引用的命名策略。环境本身没有行内 allow / deny。dev、test、preprod、prod 是内置环境，不能改也不能删。可以另加自定义环境。</p>
       </section>
 
       <section id="policy" class="view" data-view="policy" data-title="危险命令" hidden>
-        <p class="muted">规则写在命名策略上，或挂到环境、分组、主机。某一层不写允许列表，这一层就是全集；写成空列表则会把这一层交空。拒绝和确认在各层取并集。内置硬拒绝（删除根目录、mkfs、把 dd 或重定向写到磁盘、修改根目录属主、fork bomb）不能在这里关掉。这个页面不配置 relay、elevate 或策略 HMAC。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#policy-rows" placeholder="策略名" autocomplete="off"></label>
+        <div class="strip" data-table="#policy-rows">
+          <label>名称 <input data-col="0" placeholder="请输入" autocomplete="off"></label>
+          <label>来源 <input data-col="1" placeholder="内置 / 自定义" autocomplete="off"></label>
         </div>
         <div class="toolbar">
-          <button type="button" id="policy-new">添加命名策略</button>
+          <button type="button" id="policy-new">+ 添加策略</button>
+          <button type="button" id="policy-reset" class="secondary">清空</button>
         </div>
-        <p class="summary" id="summary-policy"></p>
+        <div class="summary" id="summary-policy"></div>
         <p id="policy-error" class="error" hidden></p>
         <div class="panel">
           <div class="table-wrap">
@@ -237,14 +256,18 @@
             </div>
           </form>
         </div>
+        <p class="muted">规则写在命名策略上，或挂到环境、分组、主机。某一层不写允许列表，这一层就是全集；写成空列表则会把这一层交空。拒绝和确认在各层取并集。内置硬拒绝（删除根目录、mkfs、把 dd 或重定向写到磁盘、修改根目录属主、fork bomb）不能在这里关掉。这个页面不配置 relay、elevate 或策略 HMAC。</p>
       </section>
 
       <section id="known-panel" class="view" data-view="known" data-title="已知主机密钥" hidden>
-        <p class="muted">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙；已经记下的钥匙如果变了，仍然会拒绝。</p>
-        <div class="strip">
-          <label>搜索 <input data-filter="#known" placeholder="标记、指纹" autocomplete="off"></label>
+        <div class="strip" data-table="#known">
+          <label>标记 <input data-col="0" placeholder="请输入" autocomplete="off"></label>
+          <label>指纹 <input data-col="2" placeholder="请输入" autocomplete="off"></label>
         </div>
-        <p class="summary" id="summary-known"></p>
+        <div class="toolbar">
+          <button type="button" id="known-refresh" class="secondary">刷新</button>
+        </div>
+        <div class="summary" id="summary-known"></div>
         <p id="known-error" class="error" hidden></p>
         <div class="panel">
           <div class="table-wrap">
@@ -254,30 +277,35 @@
             </table>
           </div>
         </div>
+        <p class="muted">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙；已经记下的钥匙如果变了，仍然会拒绝。</p>
       </section>
 
       <section id="audit-panel" class="view" data-view="audit" data-title="审计" hidden>
-        <p class="muted">读取和命令行 <code>ssh-cli audit list</code> 同一份日志。筛选条件发给本机接口，不会改配置。</p>
-        <form id="audit-filter" class="strip filters">
-          <label>主机 <input name="host" autocomplete="off"></label>
-          <label>分组 <input name="group" autocomplete="off"></label>
-          <label>环境 <input name="env" autocomplete="off"></label>
-          <label>状态
-            <select name="status">
-              <option value="">全部</option>
-              <option>ok</option>
-              <option>denied</option>
-              <option>timeout</option>
-              <option>auth</option>
-              <option>connect</option>
-              <option>error</option>
-            </select>
-          </label>
-          <label>自从 <input name="since" placeholder="24h 或 2026-01-02" autocomplete="off"></label>
-          <label>直到 <input name="until" placeholder="YYYY-MM-DD" autocomplete="off"></label>
-          <button type="submit">筛选</button>
+        <form id="audit-filter">
+          <div class="strip">
+            <label>主机 <input name="host" placeholder="请输入" autocomplete="off"></label>
+            <label>分组 <input name="group" placeholder="请输入" autocomplete="off"></label>
+            <label>环境 <input name="env" placeholder="请输入" autocomplete="off"></label>
+            <label>状态
+              <select name="status">
+                <option value="">全部</option>
+                <option>ok</option>
+                <option>denied</option>
+                <option>timeout</option>
+                <option>auth</option>
+                <option>connect</option>
+                <option>error</option>
+              </select>
+            </label>
+            <label>自从 <input name="since" placeholder="24h 或 2026-01-02" autocomplete="off"></label>
+            <label>直到 <input name="until" placeholder="YYYY-MM-DD" autocomplete="off"></label>
+          </div>
+          <div class="toolbar">
+            <button type="submit">筛选</button>
+            <button type="button" id="audit-reset" class="secondary">清空</button>
+          </div>
         </form>
-        <p class="summary" id="summary-audit"></p>
+        <div class="summary" id="summary-audit"></div>
         <p id="audit-error" class="error" hidden></p>
         <div class="panel">
           <div class="table-wrap">
@@ -289,6 +317,7 @@
             </table>
           </div>
         </div>
+        <p class="muted">读取和命令行 <code>ssh-cli audit list</code> 同一份日志。筛选条件发给本机接口，不会改配置。</p>
       </section>
     </div>
   </div>

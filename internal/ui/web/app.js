@@ -669,7 +669,7 @@ async function loadAudit(query) {
     auditBody.appendChild(tr);
   }
   const n = (data.records || []).length;
-  setText("#summary-audit", n + " 条");
+  setText("#summary-audit", "共计 " + n + " 条");
   setBadge("audit", n);
 }
 
@@ -714,7 +714,7 @@ async function loadKnown() {
     knownBody.appendChild(tr);
   }
   const n = (data.knownHosts || []).length;
-  setText("#summary-known", n + " 条");
+  setText("#summary-known", "共计 " + n + " 条");
   setBadge("known", n);
   applyFilters();
 }
@@ -725,7 +725,10 @@ function setText(sel, text) {
 }
 
 function setBadge(name, n) {
-  setText("#badge-" + name, String(n));
+  const el = document.querySelector("#badge-" + name);
+  if (!el) return;
+  el.textContent = String(n);
+  el.hidden = !n;
 }
 
 function refreshChrome() {
@@ -740,21 +743,28 @@ function refreshChrome() {
   setBadge("envs", envs.length);
   setBadge("policy", policies.length);
   const def = hosts.find((h) => h.default);
-  setText("#summary-hosts", hosts.length + " 台主机" + (def ? " · 默认 " + def.alias : ""));
-  setText("#summary-groups", groups.length + " 个分组");
-  setText("#summary-tags", tagged + " 台主机带了标签");
+  setText("#summary-hosts", "共计 " + hosts.length + " 台主机" + (def ? "，默认 " + def.alias : ""));
+  setText("#summary-groups", "共计 " + groups.length + " 个分组");
+  setText("#summary-tags", "共计 " + tagged + " 台主机带了标签");
   const builtin = envs.filter((e) => e.builtin).length;
-  setText("#summary-envs", envs.length + " 个环境 · 内置 " + builtin);
-  setText("#summary-policy", policies.length + " 条命名策略");
+  setText("#summary-envs", "共计 " + envs.length + " 个环境，其中内置 " + builtin + " 个");
+  setText("#summary-policy", "共计 " + policies.length + " 条命名策略");
 }
 
 function applyFilters() {
-  document.querySelectorAll("[data-filter]").forEach((input) => {
-    const body = document.querySelector(input.dataset.filter);
+  document.querySelectorAll(".strip[data-table]").forEach((strip) => {
+    const body = document.querySelector(strip.dataset.table);
     if (!body) return;
-    const q = input.value.trim().toLowerCase();
+    const fields = [];
+    strip.querySelectorAll("[data-col]").forEach((input) => {
+      const q = input.value.trim().toLowerCase();
+      if (q) fields.push({ col: Number(input.dataset.col), q });
+    });
     for (const tr of body.rows) {
-      tr.hidden = q !== "" && !tr.textContent.toLowerCase().includes(q);
+      tr.hidden = fields.some((f) => {
+        const cell = tr.cells[f.col];
+        return !cell || !cell.textContent.toLowerCase().includes(f.q);
+      });
     }
   });
 }
@@ -796,10 +806,14 @@ function showView(name) {
 document.querySelectorAll(".sidebar button").forEach((btn) => {
   btn.addEventListener("click", () => showView(btn.dataset.view));
 });
-document.querySelectorAll("[data-filter]").forEach((input) => {
+document.querySelectorAll("[data-col]").forEach((input) => {
   input.addEventListener("input", applyFilters);
 });
 document.querySelector("#host-new").addEventListener("click", () => {
+  resetForm();
+  reveal(form);
+});
+document.querySelector("#host-reset").addEventListener("click", () => {
   resetForm();
   reveal(form);
 });
@@ -807,9 +821,31 @@ document.querySelector("#group-new").addEventListener("click", () => {
   resetGroupForm();
   reveal(groupForm);
 });
+document.querySelector("#group-reset").addEventListener("click", () => {
+  resetGroupForm();
+  reveal(groupForm);
+});
 document.querySelector("#policy-new").addEventListener("click", () => {
   resetPolicyForm();
   reveal(policyForm);
+});
+document.querySelector("#policy-reset").addEventListener("click", () => {
+  resetPolicyForm();
+  reveal(policyForm);
+});
+document.querySelector("#env-new").addEventListener("click", () => {
+  reveal(envForm);
+  envForm.elements.namedItem("name").focus();
+});
+document.querySelector("#tags-refresh").addEventListener("click", () => {
+  loadCatalog().catch((err) => showError(tagError, err.message));
+});
+document.querySelector("#known-refresh").addEventListener("click", () => {
+  loadKnown().catch((err) => showError(knownError, err.message));
+});
+document.querySelector("#audit-reset").addEventListener("click", () => {
+  document.querySelector("#audit-filter").reset();
+  loadAudit("").catch((err) => showError(auditError, err.message));
 });
 window.addEventListener("hashchange", () => showView(location.hash.replace("#", "")));
 showView(location.hash.replace("#", ""));
