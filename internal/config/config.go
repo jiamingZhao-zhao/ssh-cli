@@ -6,12 +6,15 @@ package config
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -200,6 +203,29 @@ func (h *Host) PortOrDefault() int {
 	return h.Port
 }
 
+// ConnFingerprint identifies the SSH target a session is bound to.
+// Address, port, user, auth, identity, and passwordRef are included.
+// The password bytes are not.
+func (h *Host) ConnFingerprint() string {
+	if h == nil {
+		return ""
+	}
+	auth := h.Auth
+	if auth == "" {
+		auth = "password"
+	}
+	canon := strings.Join([]string{
+		strings.TrimSpace(h.Host),
+		strconv.Itoa(h.PortOrDefault()),
+		h.User,
+		auth,
+		h.Identity,
+		h.PasswordRef,
+	}, "\x00")
+	sum := sha256.Sum256([]byte(canon))
+	return hex.EncodeToString(sum[:])
+}
+
 // SessionDefaults is the in-process pool window. Empty fields use the built-in
 // defaults: idle 5m, maxLife 60m. There is no background daemon.
 type SessionDefaults struct {
@@ -290,6 +316,9 @@ func Load(dir string) (*Config, error) {
 	}
 	return &cfg, nil
 }
+
+// Normalize restores locked built-in env fields and validates the document.
+func (c *Config) Normalize() error { return c.prepare() }
 
 // prepare inserts the locked built-in envs and validates the document.
 func (c *Config) prepare() error {

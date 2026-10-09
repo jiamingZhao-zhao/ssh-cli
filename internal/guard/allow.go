@@ -45,8 +45,11 @@ func (a allowSet) allows(args []Arg) bool {
 	if a.universal {
 		return true
 	}
+	// Global options are removed, but argv0 stays intact so /bin/ls does not
+	// satisfy an allow entry of ls.
+	viewed := normalizeOps(args)
 	for _, p := range a.patterns {
-		if prefixMatch(p, args) {
+		if prefixMatch(p, viewed) {
 			return true
 		}
 	}
@@ -68,7 +71,7 @@ func prefixMatch(p pattern, args []Arg) bool {
 func matchAny(patterns []string, args []Arg) (string, bool) {
 	// Deny and confirm match the command basename. Allow stays on the full
 	// argv0 so an arbitrary path cannot widen a whitelist entry.
-	viewed := basenameArgs(args)
+	viewed := normalizeOps(basenameArgs(args))
 	for _, raw := range patterns {
 		if prefixMatch(parsePattern(raw), viewed) {
 			return raw, true

@@ -91,6 +91,32 @@ func TestUIExecUploadDownload(t *testing.T) {
 	if err != nil || string(got) != "uploaded" {
 		t.Fatalf("uploaded %q %v", got, err)
 	}
+	destDir := t.TempDir()
+	var dirBuf bytes.Buffer
+	dw := multipart.NewWriter(&dirBuf)
+	_ = dw.WriteField("alias", "box")
+	_ = dw.WriteField("remote", destDir)
+	part, err = dw.CreateFormFile("file", "original.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, _ = part.Write([]byte("named"))
+	_ = dw.Close()
+	req = httptest.NewRequest(http.MethodPost, "/api/upload", &dirBuf)
+	req.RemoteAddr = "127.0.0.1:9"
+	req.Host = "127.0.0.1"
+	req.Header.Set("Content-Type", dw.FormDataContentType())
+	attachCSRF(t, h, req)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != 200 {
+		t.Fatalf("dir upload %d %s", rr.Code, rr.Body.String())
+	}
+	named, err := os.ReadFile(filepath.Join(destDir, "original.txt"))
+	if err != nil || string(named) != "named" {
+		entries, _ := os.ReadDir(destDir)
+		t.Fatalf("kept name %q %v entries %v", named, err, entries)
+	}
 
 	rr = post("/api/download", `{"alias":"box","path":"`+remote+`"}`)
 	if rr.Code != 200 || !bytes.Contains(rr.Body.Bytes(), []byte("uploaded")) {
@@ -143,6 +169,103 @@ func auditText(t *testing.T, dir string) string {
 		t.Fatal(err)
 	}
 	return string(b)
+}
+
+func TestUIImportAndSessionIdentity(t *testing.T) {
+	a, err := sshtest.Start("tester", "ui-secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(a.Close)
+	b, err := sshtest.Start("tester", "ui-secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(b.Close)
+	ah, ap, err := net.SplitHostPort(a.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, bp, err := net.SplitHostPort(b.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	h := Handler(dir, false)
+	t.Cleanup(func() {
+		req := httptest.NewRequest(http.MethodPost, "/api/session/close", strings.NewReader(`{"alias":"box"}`))
+		req.RemoteAddr = "127.0.0.1:9"
+		req.Host = "127.0.0.1"
+		req.Header.Set("Content-Type", "application/json")
+		attachCSRF(t, h, req)
+		h.ServeHTTP(httptest.NewRecorder(), req)
+	})
+	post := func(path, body string) *httptest.ResponseRecorder {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.RemoteAddr = "127.0.0.1:9"
+		req.Host = "127.0.0.1"
+		req.Header.Set("Content-Type", "application/json")
+		attachCSRF(t, h, req)
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		return rr
+	}
+	if rr := post("/api/groups", `{"name":"app","env":"prod"}`); rr.Code != 200 {
+		t.Fatalf("group %d %s", rr.Code, rr.Body.String())
+	}
+	exp := httptest.NewRequest(http.MethodGet, "/api/config/export", nil)
+	exp.RemoteAddr = "127.0.0.1:9"
+	exp.Host = "127.0.0.1"
+	useLoopback(exp)
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, exp)
+	var doc struct {
+		YAML string `json:"yaml"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &doc); err != nil {
+		t.Fatal(err)
+	}
+	weaker := strings.Replace(doc.YAML, "env: prod", "env: dev", 1)
+	denied := post("/api/config/import", `{"yaml":`+mustJSON(t, weaker)+`}`)
+	if denied.Code != http.StatusConflict || !strings.Contains(denied.Body.String(), `"confirm":"prod"`) {
+		t.Fatalf("import confirm %d %s", denied.Code, denied.Body.String())
+	}
+	raw, err := os.ReadFile(filepath.Join(dir, "hosts.yaml"))
+	if err != nil || !strings.Contains(string(raw), "env: prod") {
+		t.Fatalf("committed without confirm\n%s", raw)
+	}
+	ok := post("/api/config/import", `{"humanConfirm":"prod","yaml":`+mustJSON(t, weaker)+`}`)
+	if ok.Code != 200 {
+		t.Fatalf("confirmed import %d %s", ok.Code, ok.Body.String())
+	}
+
+	if rr := post("/api/groups", `{"name":"sandbox","env":"dev"}`); rr.Code != 200 {
+		t.Fatalf("sandbox %d %s", rr.Code, rr.Body.String())
+	}
+	add := `{"alias":"box","group":"sandbox","host":"` + ah + `","port":` + ap + `,"user":"tester","password":"ui-secret"}`
+	if rr := post("/api/hosts", add); rr.Code != 200 {
+		t.Fatalf("host %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := post("/api/exec", `{"alias":"box","command":"X=from-a"}`); rr.Code != 200 {
+		t.Fatalf("set %d %s", rr.Code, rr.Body.String())
+	}
+	if rr := post("/api/hosts/update", `{"alias":"box","port":`+bp+`}`); rr.Code != 200 {
+		t.Fatalf("port %d %s", rr.Code, rr.Body.String())
+	}
+	rr = post("/api/exec", `{"alias":"box","command":"printf %s \"$X\""}`)
+	if rr.Code != 200 {
+		t.Fatalf("echo %d %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		Stdout string `json:"stdout"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(body.Stdout, "from-a") {
+		t.Fatalf("reused old ssh session %q", body.Stdout)
+	}
 }
 
 func TestUIPageStillMentionsDanger(t *testing.T) {

@@ -23,6 +23,8 @@ type Server struct {
 	wg     sync.WaitGroup
 	closed chan struct{}
 	pass   string
+	mu     sync.Mutex
+	conns  map[net.Conn]struct{}
 }
 
 // Start listens and serves until Close.
@@ -64,6 +66,15 @@ func (s *Server) Close() {
 		close(s.closed)
 	}
 	_ = s.ln.Close()
+	s.mu.Lock()
+	conns := make([]net.Conn, 0, len(s.conns))
+	for c := range s.conns {
+		conns = append(conns, c)
+	}
+	s.mu.Unlock()
+	for _, c := range conns {
+		_ = c.Close()
+	}
 	s.wg.Wait()
 }
 
@@ -74,9 +85,20 @@ func (s *Server) accept(cfg *ssh.ServerConfig) {
 		if err != nil {
 			return
 		}
+		s.mu.Lock()
+		if s.conns == nil {
+			s.conns = map[net.Conn]struct{}{}
+		}
+		s.conns[conn] = struct{}{}
+		s.mu.Unlock()
 		s.wg.Add(1)
 		go func() {
 			defer s.wg.Done()
+			defer func() {
+				s.mu.Lock()
+				delete(s.conns, conn)
+				s.mu.Unlock()
+			}()
 			s.handle(conn, cfg)
 		}()
 	}

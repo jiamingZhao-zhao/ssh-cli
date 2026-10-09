@@ -2,6 +2,7 @@ package guard
 
 import (
 	"fmt"
+	"path"
 	"strings"
 
 	"mvdan.cc/sh/v3/syntax"
@@ -28,7 +29,22 @@ type parsed struct {
 	commands   []command
 	obfuscated string
 	dynamic    string
+	// unresolved means the real command cannot be seen. Readonly denies it.
+	// Standard and admin require confirmation instead of allowing it.
+	unresolved string
+	depth      int
 }
+
+const maxShellDepth = 6
+const maxWrapDepth = 6
+
+type unwrapKind int
+
+const (
+	unwrapOK unwrapKind = iota
+	unwrapDynamic
+	unwrapUnresolved
+)
 
 var shellNames = map[string]bool{
 	"sh": true, "bash": true, "dash": true, "zsh": true, "ksh": true,
@@ -36,12 +52,19 @@ var shellNames = map[string]bool{
 }
 
 func parseScript(src string) (*parsed, error) {
+	return parseScriptAt(src, 0)
+}
+
+func parseScriptAt(src string, depth int) (*parsed, error) {
+	if depth > maxShellDepth {
+		return &parsed{unresolved: "nested shell exceeded depth limit", depth: depth}, nil
+	}
 	parser := syntax.NewParser(syntax.Variant(syntax.LangBash))
 	file, err := parser.Parse(strings.NewReader(src), "")
 	if err != nil {
 		return nil, err
 	}
-	p := &parsed{}
+	p := &parsed{depth: depth}
 	for _, st := range file.Stmts {
 		p.stmt(st)
 	}
@@ -49,7 +72,7 @@ func parseScript(src string) (*parsed, error) {
 }
 
 func (p *parsed) feed(src string) {
-	inner, err := parseScript(src)
+	inner, err := parseScriptAt(src, p.depth+1)
 	if err != nil {
 		if p.dynamic == "" {
 			p.dynamic = "nested shell script did not parse"
@@ -62,6 +85,9 @@ func (p *parsed) feed(src string) {
 	}
 	if p.dynamic == "" {
 		p.dynamic = inner.dynamic
+	}
+	if inner.unresolved != "" {
+		p.noteUnresolved(inner.unresolved)
 	}
 }
 
@@ -130,11 +156,12 @@ func entryCommandName(s *syntax.Stmt) (string, bool) {
 			arg, _ := literalWord(w)
 			args = append(args, arg)
 		}
-		rest, ok := unwrapWrappers(args)
-		if !ok || len(rest) == 0 || !rest[0].Static {
+		rest, kind, _ := unwrapWrappers(args)
+		if kind != unwrapOK || len(rest) == 0 || !rest[0].Static {
 			return "", false
 		}
-		return rest[0].Value, true
+		base, _ := commandIdentity(rest[0].Value)
+		return base, true
 	case *syntax.Subshell:
 		if len(c.Stmts) > 0 {
 			return entryCommandName(c.Stmts[0])
@@ -242,9 +269,13 @@ func (p *parsed) call(call *syntax.CallExpr) {
 	if len(args) == 0 {
 		return
 	}
-	rest, ok := unwrapWrappers(args)
-	if !ok {
+	rest, kind, why := unwrapWrappers(args)
+	switch kind {
+	case unwrapDynamic:
 		p.noteDynamic("could not unwrap sudo/command/exec/env because an argument is dynamic")
+		return
+	case unwrapUnresolved:
+		p.noteUnresolved(why)
 		return
 	}
 	if len(rest) == 0 {
@@ -262,9 +293,13 @@ func (p *parsed) call(call *syntax.CallExpr) {
 	if rest[0].Static && (rest[0].Value == "source" || rest[0].Value == ".") && proc {
 		p.noteObfuscated("source of a process substitution")
 	}
-	if script, isShell, dynamic := shellScript(rest); isShell {
-		if dynamic {
-			p.noteDynamic("shell invocation whose script is not a static literal")
+	if script, isShell, skind, swhy := shellScript(rest); isShell {
+		switch skind {
+		case unwrapUnresolved:
+			p.noteUnresolved(swhy)
+			return
+		case unwrapDynamic:
+			p.noteDynamic(swhy)
 			return
 		}
 		p.feed(script)
@@ -295,7 +330,32 @@ func (p *parsed) word(w *syntax.Word) (Arg, bool) {
 		return Arg{}, false
 	}
 	p.walkParts(w.Parts)
+	if ansiCEscape(w) {
+		p.noteUnresolved("ANSI-C quote cannot be parsed reliably")
+	}
 	return literalWord(w)
+}
+
+func ansiCEscape(w *syntax.Word) bool {
+	if w == nil {
+		return false
+	}
+	var hit bool
+	var walk func(parts []syntax.WordPart)
+	walk = func(parts []syntax.WordPart) {
+		for _, part := range parts {
+			switch v := part.(type) {
+			case *syntax.SglQuoted:
+				if v.Dollar && strings.Contains(v.Value, "\\") {
+					hit = true
+				}
+			case *syntax.DblQuoted:
+				walk(v.Parts)
+			}
+		}
+	}
+	walk(w.Parts)
+	return hit
 }
 
 // evalOnly extracts a literal without walking, used when walk already happened.
@@ -333,16 +393,25 @@ func literalWord(w *syntax.Word) (Arg, bool) {
 	var b strings.Builder
 	static := true
 	proc := false
-	var walk func(parts []syntax.WordPart)
-	walk = func(parts []syntax.WordPart) {
+	var walk func(parts []syntax.WordPart, doubleQuoted bool)
+	walk = func(parts []syntax.WordPart, doubleQuoted bool) {
 		for _, part := range parts {
 			switch v := part.(type) {
 			case *syntax.Lit:
-				b.WriteString(v.Value)
+				s, ok := unescapeShellLit(v.Value, doubleQuoted)
+				if !ok {
+					static = false
+					continue
+				}
+				b.WriteString(s)
 			case *syntax.SglQuoted:
+				if v.Dollar && strings.Contains(v.Value, "\\") {
+					static = false
+					continue
+				}
 				b.WriteString(v.Value)
 			case *syntax.DblQuoted:
-				walk(v.Parts)
+				walk(v.Parts, true)
 			case *syntax.ProcSubst:
 				static = false
 				proc = true
@@ -351,11 +420,54 @@ func literalWord(w *syntax.Word) (Arg, bool) {
 			}
 		}
 	}
-	walk(w.Parts)
+	walk(w.Parts, false)
 	if !static {
 		return Arg{Static: false}, proc
 	}
 	return Arg{Static: true, Value: b.String()}, proc
+}
+
+// unescapeShellLit removes shell backslash escapes so a nested script is the
+// text the shell will execute. Unquoted escapes consume the next byte.
+// Double quotes only consume \, $, `, ", and a newline. A dangling unquoted
+// backslash is not a reliable literal.
+func unescapeShellLit(value string, doubleQuoted bool) (string, bool) {
+	if !strings.Contains(value, "\\") {
+		return value, true
+	}
+	var b strings.Builder
+	b.Grow(len(value))
+	for i := 0; i < len(value); i++ {
+		if value[i] != '\\' {
+			b.WriteByte(value[i])
+			continue
+		}
+		if i+1 >= len(value) {
+			if doubleQuoted {
+				b.WriteByte('\\')
+				return b.String(), true
+			}
+			return "", false
+		}
+		n := value[i+1]
+		if doubleQuoted {
+			switch n {
+			case '$', '`', '"', '\\', '\n':
+				if n != '\n' {
+					b.WriteByte(n)
+				}
+				i++
+			default:
+				b.WriteByte('\\')
+			}
+			continue
+		}
+		if n != '\n' {
+			b.WriteByte(n)
+		}
+		i++
+	}
+	return b.String(), true
 }
 
 func (p *parsed) noteObfuscated(why string) {
@@ -370,39 +482,96 @@ func (p *parsed) noteDynamic(why string) {
 	}
 }
 
-func unwrapWrappers(args []Arg) ([]Arg, bool) {
+func (p *parsed) noteUnresolved(why string) {
+	if p.unresolved == "" {
+		p.unresolved = why
+	}
+}
+
+var wrapperNames = map[string]bool{
+	"sudo": true, "command": true, "exec": true, "env": true,
+}
+
+// commandIdentity splits argv0 into a basename and whether that path is a
+// trusted wrapper location. Bare names stay trusted so PATH lookups keep
+// working. Allow-list checks still see the original argv0.
+func commandIdentity(argv0 string) (base string, trusted bool) {
+	if argv0 == "" || strings.Contains(argv0, "\\") {
+		return argv0, false
+	}
+	if !strings.Contains(argv0, "/") {
+		return argv0, true
+	}
+	base = path.Base(argv0)
+	switch path.Dir(argv0) {
+	case "/bin", "/usr/bin", "/usr/local/bin", "/sbin", "/usr/sbin":
+		return base, true
+	default:
+		return base, false
+	}
+}
+
+func unwrapWrappers(args []Arg) ([]Arg, unwrapKind, string) {
 	rest := args
-	for i := 0; i < 6 && len(rest) > 0 && rest[0].Static; i++ {
-		switch rest[0].Value {
+	for i := 0; i < maxWrapDepth; i++ {
+		if len(rest) == 0 {
+			return rest, unwrapOK, ""
+		}
+		if !rest[0].Static {
+			return nil, unwrapDynamic, ""
+		}
+		base, trusted := commandIdentity(rest[0].Value)
+		if shellNames[base] && !trusted {
+			return nil, unwrapUnresolved, "untrusted shell path " + rest[0].Value
+		}
+		if !wrapperNames[base] {
+			return rest, unwrapOK, ""
+		}
+		if !trusted {
+			return nil, unwrapUnresolved, "untrusted wrapper path " + rest[0].Value
+		}
+		var next []Arg
+		var kind unwrapKind
+		var why string
+		switch base {
 		case "sudo":
-			next, ok := stripSudo(rest)
+			var ok bool
+			next, ok = stripSudo(rest)
 			if !ok {
-				return nil, false
+				kind = unwrapDynamic
 			}
-			rest = next
 		case "command":
-			next, ok := stripCommand(rest)
+			var ok bool
+			next, ok = stripCommand(rest)
 			if !ok {
-				return nil, false
+				kind = unwrapDynamic
 			}
-			rest = next
 		case "exec":
-			next, ok := stripExec(rest)
+			var ok bool
+			next, ok = stripExec(rest)
 			if !ok {
-				return nil, false
+				kind = unwrapDynamic
 			}
-			rest = next
 		case "env":
-			next, ok := stripEnv(rest)
-			if !ok {
-				return nil, false
-			}
-			rest = next
+			next, kind, why = stripEnv(rest)
 		default:
-			return rest, true
+			return rest, unwrapOK, ""
+		}
+		if kind != unwrapOK {
+			if why == "" {
+				why = "command wrapper could not be resolved"
+			}
+			return nil, kind, why
+		}
+		rest = next
+	}
+	if len(rest) > 0 && rest[0].Static {
+		base, _ := commandIdentity(rest[0].Value)
+		if wrapperNames[base] || shellNames[base] {
+			return nil, unwrapUnresolved, "nested wrappers exceeded depth limit"
 		}
 	}
-	return rest, true
+	return rest, unwrapOK, ""
 }
 
 func stripSudo(args []Arg) ([]Arg, bool) {
@@ -499,17 +668,17 @@ func isWriteRedirect(op syntax.RedirOperator) bool {
 	}
 }
 
-func stripEnv(args []Arg) ([]Arg, bool) {
+func stripEnv(args []Arg) ([]Arg, unwrapKind, string) {
 	i := 1
 	for i < len(args) {
 		a := args[i]
 		if !a.Static {
-			return nil, false
+			return nil, unwrapDynamic, ""
 		}
 		v := a.Value
 		switch {
 		case v == "--":
-			return args[i+1:], true
+			return args[i+1:], unwrapOK, ""
 		case v == "-":
 			i++
 		case !strings.HasPrefix(v, "-"):
@@ -517,23 +686,37 @@ func stripEnv(args []Arg) ([]Arg, bool) {
 				i++
 				continue
 			}
-			return args[i:], true
+			return args[i:], unwrapOK, ""
 		case strings.HasPrefix(v, "--"):
-			name, _, hasEq := strings.Cut(v, "=")
+			name, val, hasEq := strings.Cut(v, "=")
 			switch name {
 			case "--ignore-environment", "--null", "--debug":
 				i++
-			case "--unset", "--chdir", "--split-string":
+			case "--unset", "--chdir":
 				if hasEq {
 					i++
 					continue
 				}
 				if i+1 >= len(args) || !args[i+1].Static {
-					return nil, false
+					return nil, unwrapDynamic, ""
 				}
 				i += 2
+			case "--split-string":
+				payload := val
+				rest := args[i+1:]
+				if !hasEq {
+					if i+1 >= len(args) {
+						return nil, unwrapUnresolved, "env -S command string cannot be parsed reliably"
+					}
+					if !args[i+1].Static {
+						return nil, unwrapUnresolved, "env -S command string cannot be parsed reliably"
+					}
+					payload = args[i+1].Value
+					rest = args[i+2:]
+				}
+				return finishEnvSplit(payload, rest)
 			default:
-				return nil, false
+				return nil, unwrapDynamic, ""
 			}
 		default:
 			chars := v[1:]
@@ -541,19 +724,33 @@ func stripEnv(args []Arg) ([]Arg, bool) {
 			for k := 0; k < len(chars); k++ {
 				switch chars[k] {
 				case 'i', '0', 'v':
-				case 'u', 'C', 'S':
+				case 'u', 'C':
 					if k+1 < len(chars) {
 						i++
 					} else {
 						if i+1 >= len(args) || !args[i+1].Static {
-							return nil, false
+							return nil, unwrapDynamic, ""
 						}
 						i += 2
 					}
 					advanced = true
 					k = len(chars)
+				case 'S':
+					payload := ""
+					rest := []Arg{}
+					if k+1 < len(chars) {
+						payload = chars[k+1:]
+						rest = args[i+1:]
+					} else {
+						if i+1 >= len(args) || !args[i+1].Static {
+							return nil, unwrapUnresolved, "env -S command string cannot be parsed reliably"
+						}
+						payload = args[i+1].Value
+						rest = args[i+2:]
+					}
+					return finishEnvSplit(payload, rest)
 				default:
-					return nil, false
+					return nil, unwrapDynamic, ""
 				}
 			}
 			if !advanced {
@@ -561,7 +758,94 @@ func stripEnv(args []Arg) ([]Arg, bool) {
 			}
 		}
 	}
-	return args[i:], true
+	return args[i:], unwrapOK, ""
+}
+
+// finishEnvSplit turns a GNU env -S / --split-string payload into the command
+// env would execute. Strings that depend on the remote environment, or that
+// use escapes this parser does not reproduce, are refused upstream.
+func finishEnvSplit(payload string, rest []Arg) ([]Arg, unwrapKind, string) {
+	cmd, ok := splitEnvCommand(payload)
+	if !ok {
+		return nil, unwrapUnresolved, "env -S command string cannot be parsed reliably"
+	}
+	for _, a := range rest {
+		if !a.Static {
+			return nil, unwrapUnresolved, "env -S command string cannot be parsed reliably"
+		}
+	}
+	return append(cmd, rest...), unwrapOK, ""
+}
+
+// splitEnvCommand splits a static env -S string. It understands quotes and
+// comments. $ expansions and backslash escapes are rejected: GNU env expands
+// ${VAR} from the remote environment, so those strings are not knowable here.
+func splitEnvCommand(s string) ([]Arg, bool) {
+	var args []Arg
+	var b strings.Builder
+	token := false
+	inSingle := false
+	inDouble := false
+	flush := func() {
+		if !token {
+			return
+		}
+		args = append(args, Arg{Static: true, Value: b.String()})
+		b.Reset()
+		token = false
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if inSingle {
+			if c == '\'' {
+				inSingle = false
+				continue
+			}
+			b.WriteByte(c)
+			token = true
+			continue
+		}
+		if inDouble {
+			if c == '"' {
+				inDouble = false
+				continue
+			}
+			if c == '$' || c == '\\' || c == '`' {
+				return nil, false
+			}
+			b.WriteByte(c)
+			token = true
+			continue
+		}
+		switch c {
+		case '\'':
+			inSingle = true
+			token = true
+		case '"':
+			inDouble = true
+			token = true
+		case '$', '\\', '`':
+			return nil, false
+		case '#':
+			if !token {
+				if inSingle || inDouble {
+					return nil, false
+				}
+				return args, true
+			}
+			b.WriteByte(c)
+		case ' ', '\t', '\n', '\r':
+			flush()
+		default:
+			b.WriteByte(c)
+			token = true
+		}
+	}
+	if inSingle || inDouble {
+		return nil, false
+	}
+	flush()
+	return args, true
 }
 
 func stripExec(args []Arg) ([]Arg, bool) {
@@ -589,23 +873,30 @@ func stripExec(args []Arg) ([]Arg, bool) {
 	return args[i:], true
 }
 
-func shellScript(args []Arg) (script string, isShell, dynamic bool) {
-	if len(args) == 0 || !args[0].Static || !shellNames[args[0].Value] {
-		return "", false, false
+func shellScript(args []Arg) (script string, isShell bool, kind unwrapKind, why string) {
+	if len(args) == 0 || !args[0].Static {
+		return "", false, unwrapOK, ""
+	}
+	base, trusted := commandIdentity(args[0].Value)
+	if !shellNames[base] {
+		return "", false, unwrapOK, ""
+	}
+	if !trusted {
+		return "", true, unwrapUnresolved, "untrusted shell path " + args[0].Value
 	}
 	for i := 1; i < len(args); i++ {
 		if !args[i].Static {
-			return "", true, true
+			return "", true, unwrapDynamic, "shell invocation whose script is not a static literal"
 		}
 		switch args[i].Value {
 		case "-c", "--command":
 			if i+1 >= len(args) || !args[i+1].Static {
-				return "", true, true
+				return "", true, unwrapDynamic, "shell invocation whose script is not a static literal"
 			}
-			return args[i+1].Value, true, false
+			return args[i+1].Value, true, unwrapOK, ""
 		}
 	}
-	return "", true, true
+	return "", true, unwrapDynamic, "shell invocation whose script is not a static literal"
 }
 
 func (p *parsed) arith(ex syntax.ArithmExpr) {

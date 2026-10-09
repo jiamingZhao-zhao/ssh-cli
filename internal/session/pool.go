@@ -26,8 +26,10 @@ const (
 	DefaultMaxLife = 60 * time.Minute
 )
 
-// DialFunc opens one SSH connection. The pool calls it outside its lock.
-type DialFunc func(ctx context.Context, alias string) (*sshclient.Client, error)
+// DialFunc opens one SSH connection for alias at the given connection
+// fingerprint. The pool calls it outside its lock. The dial function must
+// refuse to connect when the live config no longer matches fingerprint.
+type DialFunc func(ctx context.Context, alias, fingerprint string) (*sshclient.Client, error)
 
 // CloseFunc is invoked after a session's channel is torn down.
 type CloseFunc func(alias, reason string)
@@ -54,14 +56,15 @@ type Pool struct {
 }
 
 type entry struct {
-	alias   string
-	client  *sshclient.Client
-	shell   *sshclient.Shell
-	opened  time.Time
-	used    time.Time
-	busy    int
-	closed  bool
-	closeCh chan struct{}
+	alias       string
+	fingerprint string
+	client      *sshclient.Client
+	shell       *sshclient.Shell
+	opened      time.Time
+	used        time.Time
+	busy        int
+	closed      bool
+	closeCh     chan struct{}
 }
 
 // New returns a pool. dial is required. onClose may be nil.
@@ -137,19 +140,27 @@ func (p *Pool) SetClock(now func() time.Time) {
 }
 
 // Open returns the live shell for alias, dialing when needed.
-// ForceNew closes any existing session for that alias first.
-func (p *Pool) Open(ctx context.Context, alias string, forceNew bool) error {
+// A session is reused only when fingerprint still matches. ForceNew closes
+// any existing session for that alias first.
+func (p *Pool) Open(ctx context.Context, alias, fingerprint string, forceNew bool) error {
 	if forceNew {
 		p.finish(alias, "explicit")
+	} else if !p.reusable(alias, fingerprint) {
+		p.finish(alias, "identity")
 	}
 	p.mu.Lock()
-	if e := p.items[alias]; e != nil && !e.closed {
+	if e := p.items[alias]; e != nil && !e.closed && e.fingerprint == fingerprint {
 		e.used = p.now()
 		p.mu.Unlock()
 		return nil
 	}
 	p.mu.Unlock()
-	client, err := p.dial(ctx, alias)
+	if ctx != nil {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+	}
+	client, err := p.dial(ctx, alias, fingerprint)
 	if err != nil {
 		return err
 	}
@@ -159,12 +170,32 @@ func (p *Pool) Open(ctx context.Context, alias string, forceNew bool) error {
 		return err
 	}
 	now := p.now()
-	e := &entry{alias: alias, client: client, shell: shell, opened: now, used: now, closeCh: make(chan struct{})}
+	e := &entry{
+		alias: alias, fingerprint: fingerprint, client: client, shell: shell,
+		opened: now, used: now, closeCh: make(chan struct{}),
+	}
 	p.mu.Lock()
 	if cur := p.items[alias]; cur != nil && !cur.closed {
+		if cur.fingerprint == fingerprint {
+			p.mu.Unlock()
+			_ = shell.Close()
+			_ = client.Close()
+			return nil
+		}
+		cur.closed = true
+		delete(p.items, alias)
+		oldShell, oldClient := cur.shell, cur.client
+		p.items[alias] = e
 		p.mu.Unlock()
-		_ = shell.Close()
-		_ = client.Close()
+		if oldShell != nil {
+			_ = oldShell.Close()
+		}
+		if oldClient != nil {
+			_ = oldClient.Close()
+		}
+		if p.onClose != nil {
+			p.onClose(alias, "identity")
+		}
 		return nil
 	}
 	p.items[alias] = e
@@ -172,14 +203,42 @@ func (p *Pool) Open(ctx context.Context, alias string, forceNew bool) error {
 	return nil
 }
 
+func (p *Pool) reusable(alias, fingerprint string) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e := p.items[alias]
+	return e != nil && !e.closed && e.fingerprint == fingerprint
+}
+
+// Retain closes sessions whose alias is gone or whose fingerprint no longer
+// matches the live config.
+func (p *Pool) Retain(want map[string]string) {
+	p.mu.Lock()
+	var drop []string
+	for alias, e := range p.items {
+		if e.closed {
+			continue
+		}
+		fp, ok := want[alias]
+		if !ok || fp != e.fingerprint {
+			drop = append(drop, alias)
+		}
+	}
+	p.mu.Unlock()
+	for _, alias := range drop {
+		p.finish(alias, "identity")
+	}
+}
+
 // Exec runs command on the alias session, opening it when needed.
-func (p *Pool) Exec(ctx context.Context, alias, command string, stdout, stderr io.Writer) (int, error) {
-	if err := p.Open(ctx, alias, false); err != nil {
+// A protocol or context error closes the session so a desynced shell is not reused.
+func (p *Pool) Exec(ctx context.Context, alias, fingerprint, command string, stdout, stderr io.Writer) (int, error) {
+	if err := p.Open(ctx, alias, fingerprint, false); err != nil {
 		return 0, err
 	}
 	p.mu.Lock()
 	e := p.items[alias]
-	if e == nil || e.closed {
+	if e == nil || e.closed || e.fingerprint != fingerprint {
 		p.mu.Unlock()
 		return 0, fmt.Errorf("session %s is closed", alias)
 	}
@@ -196,15 +255,19 @@ func (p *Pool) Exec(ctx context.Context, alias, command string, stdout, stderr i
 		e.used = p.now()
 	}
 	p.mu.Unlock()
+	if err != nil {
+		p.finish(alias, "desync")
+	}
 	return code, err
 }
 
 // Use marks alias busy around fn. Upload, download, and relay call this so
 // idle close does not drop an in-flight transfer. Max life still closes it.
-func (p *Pool) Use(alias string, fn func() error) error {
+// fingerprint must match the session or the call fails closed.
+func (p *Pool) Use(alias, fingerprint string, fn func() error) error {
 	p.mu.Lock()
 	e := p.items[alias]
-	if e == nil || e.closed {
+	if e == nil || e.closed || e.fingerprint != fingerprint {
 		p.mu.Unlock()
 		return fmt.Errorf("session %s is not open", alias)
 	}
@@ -322,12 +385,12 @@ func (p *Pool) finish(alias, reason string) {
 	}
 }
 
-// Client returns the live SSH client for alias, if the session is open.
-func (p *Pool) Client(alias string) (*ssh.Client, bool) {
+// Client returns the live SSH client for alias when the fingerprint still matches.
+func (p *Pool) Client(alias, fingerprint string) (*ssh.Client, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e := p.items[alias]
-	if e == nil || e.closed || e.client == nil {
+	if e == nil || e.closed || e.client == nil || e.fingerprint != fingerprint {
 		return nil, false
 	}
 	return e.client.Raw(), true

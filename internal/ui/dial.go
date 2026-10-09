@@ -16,7 +16,7 @@ import (
 	"golang.org/x/crypto/ssh"
 )
 
-func (s *service) dialAlias(ctx context.Context, alias string) (*sshclient.Client, error) {
+func (s *service) dialAlias(ctx context.Context, alias, fingerprint string) (*sshclient.Client, error) {
 	cfg, err := config.Load(s.dir)
 	if err != nil {
 		return nil, err
@@ -25,7 +25,26 @@ func (s *service) dialAlias(ctx context.Context, alias string) (*sshclient.Clien
 	if !ok {
 		return nil, fmt.Errorf("unknown host %s", alias)
 	}
+	if h.Host == nil || h.Host.ConnFingerprint() != fingerprint {
+		return nil, fmt.Errorf("host %s connection identity changed", alias)
+	}
 	return s.dialResolved(ctx, h)
+}
+
+// reconcile drops pooled sessions whose connection identity no longer matches
+// the saved config, including hosts that were removed.
+func (s *service) reconcile() {
+	cfg, err := config.Load(s.dir)
+	if err != nil || s.pool == nil {
+		return
+	}
+	want := map[string]string{}
+	for alias, h := range cfg.Index() {
+		if h.Host != nil {
+			want[alias] = h.Host.ConnFingerprint()
+		}
+	}
+	s.pool.Retain(want)
 }
 
 func (s *service) dialResolved(ctx context.Context, h config.ResolvedHost) (*sshclient.Client, error) {
