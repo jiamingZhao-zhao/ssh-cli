@@ -75,6 +75,7 @@ ssh-cli host add main --group app-prod --host 192.0.2.10 --user viewer --passwor
 ssh-cli host list
 
 ssh-cli exec -H main --timeout 30s -- "df -h /"
+ssh-cli exec -H a -H b --parallel 2 -- "uptime"
 ssh-cli exec -H main --script ./status.sh
 ssh-cli upload -H main ./dist //root/app/dist
 ssh-cli download -H main /var/log/app.log ./app.log
@@ -98,7 +99,7 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 - `confirm` 取并集。确认必须在交互终端里输入主机别名。没有 TTY（包括 agent）直接拒绝，退出码 253。`--yes` 只在有 TTY 时有效。
 - 只读 / 标准模式下，解析不了的命令：只读拒绝，标准视为需确认。`curl|bash`、`base64 -d|sh`、`eval`、`source <(...)` 在这两种模式下拒绝。
 - 命令用 `mvdan.cc/sh` 解析，`;`、`&&`、管道、`$( )`、`sudo`、`bash -c`、`xargs`、`nohup`、`timeout`、`nice`、`stdbuf` 都会展开后再检查。`flock`、`ionice`、`chrt`、`taskset`、`setsid`、`watch` 以及带 `-exec` 的 `find` 展不开：只读拒绝，标准和 admin 需要确认。
-- 多台主机先整体预检，有一台被拒绝就整批取消；`--skip-denied` 改为跳过被拒绝的主机。
+- 多台主机先整体预检，有一台被拒绝就整批取消；`--skip-denied` 改为跳过被拒绝的主机。`exec --parallel N` 同时跑 N 台（1 到 4，默认 1）。大于 1 时最多 16 台，和本机页面的批量执行一样。包含 `prod` 且多于一台时仍整批只读。
 - 一次选择跨了多个环境，必须加 `--allow-cross-env`。选择里包含 `prod` 且多于一台时，整批强制只读。
 
 主机必须属于且只属于一个分组，环境从分组继承，主机上不能写 `env`。`tags` 只用于 `-t` 选择，分组没有 `tags` 字段。
@@ -186,7 +187,7 @@ ssh-cli audit tail --follow
 
 0.5.0 的页面用内嵌的 Tabler 和 Alpine.js CSP 版。样式和脚本打进二进制，不跑 npm，断网也能打开。内容安全策略仍是 `default-src 'self'`，没有 `unsafe-eval`。Alpine 只把按钮、表单和表格接到原来的 JSON 接口。导航、卡片、表格、对话框、表单、徽章、提示、分页和空状态都用 Tabler 自带的组件。
 
-左侧栏切换：概览、主机、主机详情、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继、运维、设置。列表默认每页 10 条，可改成 20 或 50。在主机页按 `/` 聚焦搜索。深色用 `data-bs-theme`，紧凑表格用 Tabler 的 `table-sm`。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用居中对话框。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。命令行还没有 `--parallel`，批量执行目前只在本机页面和 `/api/exec/batch`。
+左侧栏切换：概览、主机、主机详情、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继、运维、设置。列表默认每页 10 条，可改成 20 或 50。在主机页按 `/` 聚焦搜索。深色用 `data-bs-theme`，紧凑表格用 Tabler 的 `table-sm`。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用居中对话框。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。批量执行在页面上对应 `POST /api/exec/batch`，在命令行上对应 `exec --parallel`。
 
 ```bash
 ssh-cli ui

@@ -1039,7 +1039,7 @@
             <label class="form-check mt-3"><input class="form-check-input" type="checkbox" x-model="batchSkip"><span class="form-check-label">跳过被策略拒绝的主机</span></label>
             <label class="form-check"><input class="form-check-input" type="checkbox" x-model="batchCross"><span class="form-check-label">允许跨环境</span></label>
             <label class="form-check"><input class="form-check-input" type="checkbox" x-model="exec.allowOutflow"><span class="form-check-label">允许带回命令输出</span></label>
-            <p class="form-hint">一次最多 16 台，并行最多 4。包含 prod 且多于一台时，整批按只读策略检查。需要确认时逐台输入主机别名。</p>
+            <p class="form-hint">一次最多 16 台，并行最多 4。命令行是 exec --parallel，上限相同。包含 prod 且多于一台时，整批按只读策略检查。需要确认时逐台输入主机别名。</p>
             <pre class="mt-3 mb-0" x-show="batchOut" x-text="batchOut"></pre>
           </div>
           <div class="modal-footer">

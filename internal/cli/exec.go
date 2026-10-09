@@ -7,6 +7,7 @@ import (
 	"io"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -21,6 +22,7 @@ func (a *App) execCmd() *cobra.Command {
 	var script string
 	var fromStdin bool
 	var allowOutflow bool
+	var parallel int
 	cmd := &cobra.Command{
 		Use:   "exec [--] <command>",
 		Short: "Run a remote command",
@@ -72,11 +74,17 @@ func (a *App) execCmd() *cobra.Command {
 			if err != nil {
 				return exitcode.New(exitcode.Usage, "%s", err.Error())
 			}
+			if parallel < 1 || parallel > guard.MaxParallel {
+				return exitcode.New(exitcode.Usage, "--parallel must be from 1 to %d", guard.MaxParallel)
+			}
 			meta := a.auditMeta(audit.OpExec, command, "", "")
 			cfg, hosts, err := a.loadSelection()
 			if err != nil {
 				a.auditSelectionError(meta, hosts, err)
 				return err
+			}
+			if parallel > 1 && len(hosts) > guard.MaxBatchHosts {
+				return exitcode.New(exitcode.Usage, "at most %d hosts", guard.MaxBatchHosts)
 			}
 			plan, err := a.plan(cfg, hosts, meta, func(eff guard.Effective) guard.Decision {
 				return guard.Decide(eff, command)
@@ -84,13 +92,14 @@ func (a *App) execCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return a.runAll(meta, plan, remote, scriptBody, dur, allowOutflow)
+			return a.runAll(meta, plan, remote, scriptBody, dur, allowOutflow, parallel)
 		},
 	}
 	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds); also bounds SSH connect")
 	cmd.Flags().StringVar(&script, "script", "", "read the remote script from a file")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read the remote script from stdin")
 	cmd.Flags().BoolVar(&allowOutflow, "allow-outflow", false, "return stdout and stderr from a noDataOutflow env; requires typing outflow")
+	cmd.Flags().IntVar(&parallel, "parallel", 1, "run up to N selected hosts at once (1-4); above 1, at most 16 hosts")
 	return cmd
 }
 
@@ -106,7 +115,10 @@ type execResult struct {
 	Error            string `json:"error,omitempty"`
 }
 
-func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool) error {
+func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool, parallel int) error {
+	if parallel > 1 {
+		return a.runParallel(meta, plan, remote, scriptBody, timeout, allowOutflow, parallel)
+	}
 	var results []execResult
 	final := 0
 	for _, p := range plan {
@@ -184,6 +196,129 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 		return exitcode.Silent(final)
 	}
 	return nil
+}
+
+func (a *App) confirmAll(meta auditMeta, plan []planned, allowOutflow bool) error {
+	askedOut := false
+	for _, p := range plan {
+		if p.dec.NeedsConfirm {
+			if err := confirmAlias(p.host.Alias, a.Yes); err != nil {
+				a.logDenial(meta, p.host, &p.dec, err.Error())
+				return err
+			}
+		}
+		if _, needs := guard.ExecOutflow(p.eff.NoDataOut, allowOutflow); needs && !askedOut {
+			if err := confirmOutflow(a.Yes); err != nil {
+				a.logDenial(meta, p.host, &p.dec, err.Error())
+				return err
+			}
+			askedOut = true
+		}
+	}
+	return nil
+}
+
+func (a *App) runParallel(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool, parallel int) error {
+	if err := a.confirmAll(meta, plan, allowOutflow); err != nil {
+		return err
+	}
+	results := make([]execResult, len(plan))
+	var mu sync.Mutex
+	var auditErr error
+	sem := make(chan struct{}, parallel)
+	var wg sync.WaitGroup
+	for i, p := range plan {
+		wg.Add(1)
+		go func(i int, p planned) {
+			defer wg.Done()
+			sem <- struct{}{}
+			defer func() { <-sem }()
+			res, auditFailure := a.execCaptured(meta, p, remote, scriptBody, timeout, allowOutflow, &mu)
+			mu.Lock()
+			results[i] = res
+			if auditFailure != nil && auditErr == nil {
+				auditErr = auditFailure
+			}
+			mu.Unlock()
+		}(i, p)
+	}
+	wg.Wait()
+	if auditErr != nil {
+		return auditErr
+	}
+	if a.JSON {
+		if err := a.emit(map[string]any{"results": results}); err != nil {
+			return err
+		}
+	}
+	final := 0
+	for _, res := range results {
+		final = preferCode(final, res.ExitCode)
+	}
+	if final != 0 {
+		return exitcode.Silent(final)
+	}
+	return nil
+}
+
+func (a *App) execCaptured(meta auditMeta, p planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool, printMu *sync.Mutex) (execResult, error) {
+	suppress, _ := guard.ExecOutflow(p.eff.NoDataOut, allowOutflow)
+	res := execResult{Host: p.host.Alias, Group: p.host.Group, Env: p.host.EnvName}
+	outCap := &capWriter{max: 4 << 10}
+	errCap := &capWriter{max: 4 << 10}
+	var stdout, stderr io.Writer
+	var outBuf, errBuf bytes.Buffer
+	if suppress {
+		stdout = io.Discard
+		stderr = io.Discard
+		res.StdoutSuppressed = true
+		res.Notice = guard.OutflowDiscarded
+	} else {
+		stdout = io.MultiWriter(&outBuf, outCap)
+		stderr = io.MultiWriter(&errBuf, errCap)
+	}
+	start := time.Now()
+	code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, timeout)
+	hostMeta := meta
+	hostMeta.started = start
+	if runErr != nil {
+		res.Error = runErr.Error()
+		res.ExitCode = exitcode.From(runErr)
+	} else {
+		res.ExitCode = code
+	}
+	if a.JSON {
+		res.Stdout = outBuf.String()
+		res.Stderr = errBuf.String()
+	}
+	printMu.Lock()
+	a.header(p.host)
+	if suppress {
+		fmt.Fprintln(a.Err, guard.OutflowDiscarded)
+	} else if !a.JSON {
+		_, _ = a.Out.Write(outBuf.Bytes())
+		_, _ = a.Err.Write(errBuf.Bytes())
+	}
+	if runErr != nil {
+		fmt.Fprintf(a.Err, "error: %s: %s\n", p.host.Alias, runErr.Error())
+	}
+	printMu.Unlock()
+	st, exitCode := statusOf(res.ExitCode, runErr)
+	extra := ""
+	if runErr != nil {
+		extra = runErr.Error()
+	}
+	summary := summarizeOutputs(outCap.buf.String(), errCap.buf.String(), outCap.cut || errCap.cut, extra)
+	if suppress {
+		summary = guard.OutflowDiscarded
+		if extra != "" {
+			summary = guard.OutflowDiscarded + "; " + extra
+		}
+	}
+	if err := a.logRemote(hostMeta, p.host, p.dec, st, exitCode, summary, ""); err != nil {
+		return res, err
+	}
+	return res, nil
 }
 
 func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Writer, timeout time.Duration) (int, error) {

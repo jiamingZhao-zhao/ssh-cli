@@ -21,8 +21,8 @@ import (
 )
 
 const (
-	maxBatchHosts  = 16
-	maxParallel    = 4
+	maxBatchHosts  = guard.MaxBatchHosts
+	maxParallel    = guard.MaxParallel
 	auditExportCap = 2000
 	dashRecent     = 8
 	dashScan       = 40

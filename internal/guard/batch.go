@@ -5,6 +5,14 @@ import (
 	"strings"
 )
 
+const (
+	// MaxBatchHosts is the most hosts one parallel exec may target.
+	// Sequential exec is not capped. The localhost batch API uses the same limit.
+	MaxBatchHosts = 16
+	// MaxParallel is the most hosts that may run at once.
+	MaxParallel = 4
+)
+
 // HostDecision is one host's preflight result.
 type HostDecision struct {
 	Alias    string
