@@ -167,9 +167,9 @@ func (s *service) guard(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
-		// alpine-csp does not eval. xterm and Litepicker inject style elements, so
-		// styles allow unsafe-inline. Scripts stay same-origin.
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'")
+		// alpine-csp does not eval. xterm and Litepicker inject style elements.
+		// Tabler paints select and check icons with data: SVG images.
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:")
 		if !s.allowRemote && !remoteLoopback(r.RemoteAddr) {
 			http.Error(w, "localhost only", http.StatusForbidden)
 			return

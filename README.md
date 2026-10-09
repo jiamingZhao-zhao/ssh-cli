@@ -185,7 +185,7 @@ ssh-cli audit tail --follow
 
 ## 本地界面（可选）
 
-0.5.0 的页面用内嵌的 Tabler 和 Alpine.js CSP 版。样式和脚本打进二进制，不跑 npm，断网也能打开。脚本仍限制在 `default-src 'self'`，没有 `unsafe-eval`。xterm 和日期选择器会插入 style 标签，所以样式额外允许 `'unsafe-inline'`。Alpine 只把按钮、表单和表格接到原来的 JSON 接口。导航、卡片、表格、对话框、表单、徽章、提示、分页和空状态都用 Tabler 自带的组件。
+0.5.0 的页面用内嵌的 Tabler 和 Alpine.js CSP 版。样式和脚本打进二进制，不跑 npm，断网也能打开。脚本仍限制在 `default-src 'self'`，没有 `unsafe-eval`。xterm 和日期选择器会插入 style 标签，所以样式额外允许 `'unsafe-inline'`。Tabler 的选择框和勾选用 `data:` 图片，所以图片额外允许 `data:`。Alpine 只把按钮、表单和表格接到原来的 JSON 接口。导航、卡片、表格、对话框、表单、徽章、提示、分页和空状态都用 Tabler 自带的组件。
 
 左侧栏切换：概览、终端、主机、主机详情、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继、运维、设置。列表默认每页 10 条，可改成 20 或 50。在主机页按 `/` 聚焦搜索。深色用 `data-bs-theme`，紧凑表格用 Tabler 的 `table-sm`。长命令和路径截断，点开看全文。审计日期用日历选择，也可以点 1 小时、24 小时、7 天或 30 天。页面上的时间都是 `yyyy-MM-dd HH:mm:ss`。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用居中对话框。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。批量执行在页面上对应 `POST /api/exec/batch`，在命令行上对应 `exec --parallel`。
 
