@@ -24,6 +24,7 @@ type Filter struct {
 	Env      string
 	Status   string
 	Op       string
+	Source   string
 	Since    time.Time
 	Until    time.Time
 	HasSince bool
@@ -395,6 +396,9 @@ func matchFields(rec Record, f Filter) bool {
 		return false
 	}
 	if f.Op != "" && rec.Op != f.Op {
+		return false
+	}
+	if f.Source != "" && rec.Source != f.Source {
 		return false
 	}
 	return true

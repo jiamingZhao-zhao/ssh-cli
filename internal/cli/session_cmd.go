@@ -204,5 +204,6 @@ func (a *App) auditSession(h config.ResolvedHost, reason, status string) {
 		Status: status,
 		Reason: reason,
 		Actor:  audit.Actor(),
+		Source: audit.SourceCLI,
 	})
 }

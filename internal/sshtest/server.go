@@ -129,6 +129,11 @@ func (s *Server) session(channel ssh.Channel, requests <-chan *ssh.Request) {
 	defer channel.Close()
 	for req := range requests {
 		switch req.Type {
+		case "pty-req", "window-change":
+			_ = req.Reply(true, nil)
+		case "shell":
+			_ = req.Reply(true, nil)
+			go runLoginShell(channel)
 		case "exec":
 			var msg struct{ Command string }
 			if err := ssh.Unmarshal(req.Payload, &msg); err != nil {
@@ -168,4 +173,27 @@ func (s *Server) session(channel ssh.Channel, requests <-chan *ssh.Request) {
 			_ = req.Reply(false, nil)
 		}
 	}
+}
+
+// runLoginShell is the interactive terminal used by UI tests.
+// stdbuf keeps echo output line-buffered on the SSH channel.
+func runLoginShell(channel ssh.Channel) {
+	cmd := exec.Command("stdbuf", "-oL", "-eL", "sh")
+	if _, err := exec.LookPath("stdbuf"); err != nil {
+		cmd = exec.Command("sh")
+	}
+	cmd.Stdin = channel
+	cmd.Stdout = channel
+	cmd.Stderr = channel.Stderr()
+	err := cmd.Run()
+	code := uint32(0)
+	if err != nil {
+		if ee, ok := err.(*exec.ExitError); ok {
+			code = uint32(ee.ExitCode())
+		} else {
+			code = 1
+		}
+	}
+	_, _ = channel.SendRequest("exit-status", false, ssh.Marshal(struct{ Status uint32 }{code}))
+	_ = channel.Close()
 }

@@ -61,6 +61,10 @@ func write(dir, actor, status string, denied bool, reason, object string) {
 	if strings.TrimSpace(actor) == "" {
 		actor = audit.Actor()
 	}
+	source := audit.SourceCLI
+	if actor == audit.SourceUI {
+		source = audit.SourceUI
+	}
 	_, _ = audit.Append(dir, audit.Record{
 		Op:             audit.OpConfigChange,
 		Status:         status,
@@ -69,6 +73,7 @@ func write(dir, actor, status string, denied bool, reason, object string) {
 		Reason:         reason,
 		DeniedByPolicy: denied,
 		HighRisk:       true,
+		Source:         source,
 	})
 }
 

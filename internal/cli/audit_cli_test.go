@@ -132,6 +132,9 @@ func TestAuditDenialsUploadsAndRemoteResults(t *testing.T) {
 		if rec["actor"] != "agent-test" {
 			t.Fatalf("actor %+v", rec["actor"])
 		}
+		if rec["source"] != "cli" {
+			t.Fatalf("source %+v", rec["source"])
+		}
 		cmd, _ := rec["command"].(string)
 		switch {
 		case strings.Contains(cmd, "rm -rf /"):

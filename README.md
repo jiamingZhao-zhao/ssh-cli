@@ -167,10 +167,10 @@ ssh-cli keys known remove 192.0.2.10:22
 
 每次 `exec`、`upload`、`download` 都会在配置目录追加一条 JSONL，包括策略预检拒绝（内置危险命令、确认类命令、能力开关）、超时、认证失败、连接失败，以及远程非零退出。不记录密码、私钥或明文密钥；命令里的 `password=...` 一类片段会打成 `[redacted]`。
 
-记录字段：`time`（本地时区的 RFC3339）、`op`（`exec` / `upload` / `download` / `relay` / `policy_check` / `session` / `config_change` 等）、主机别名、分组、环境、命令或 `src`/`dst`、`duration_ms`、`exit_code`、截断到 8KiB 的 `result_summary`、`status`（`ok` / `denied` / `timeout` / `auth` / `connect` / `error`）、`high_risk`、`denied_by_policy`、`reason`、`actor`。`actor` 取环境变量 `SSH_CLI_ACTOR`，否则是 `cli`；本机 UI 写 `ui`。
+记录字段：`time`（本地时区的 RFC3339；本机页面显示为 `yyyy-MM-dd HH:mm:ss`）、`op`（`exec` / `upload` / `download` / `relay` / `policy_check` / `session` / `terminal` / `config_change` 等）、主机别名、分组、环境、命令或 `src`/`dst`、`duration_ms`、`exit_code`、截断到 8KiB 的 `result_summary`、`status`（`ok` / `denied` / `timeout` / `auth` / `connect` / `error`）、`high_risk`、`denied_by_policy`、`reason`、`actor`、`source`（`cli` 或 `ui`）。`actor` 取环境变量 `SSH_CLI_ACTOR`，否则是 `cli`；本机 UI 写 `ui`。`source` 由进程填写，请求里自报的来源不算数。交互终端只记开关和字节数，不记按键内容。
 
 ```bash
-ssh-cli audit list --host main --since 24h --status denied --op exec --page 1
+ssh-cli audit list --host main --since 24h --status denied --op exec --source cli --page 1
 ssh-cli audit stats
 ssh-cli audit cleanup
 ssh-cli audit show <id>
@@ -184,7 +184,7 @@ ssh-cli audit tail --follow
 
 ## 本地界面（可选）
 
-只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，并查看审计日志。页面只靠左侧栏切换：主机、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继和导入导出。列表默认每页 10 条，可改成 20 或 50。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用对话框，保存或关闭后清空；编辑时才回填。审计按页从服务端读取，可按操作、主机、分组、环境和结果一起筛选。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。
+只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，查看审计，并打开交互终端。页面用左侧栏切换：工作台、终端、主机、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继和导入导出。工作台汇总近 14 天审计。列表默认每页 10 条，可改成 20 或 50。长命令和路径截断，点开看全文。审计日期用日历选择，不手填。页面上的时间都是 `yyyy-MM-dd HH:mm:ss`。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用对话框，保存或关闭后清空；编辑时才回填。审计按页从服务端读取，可按操作、来源、主机和结果一起筛选。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。
 
 ```bash
 ssh-cli ui
@@ -197,8 +197,9 @@ ssh-cli ui --addr 127.0.0.1:7788
 - **标签**：标签只在主机上，给 `ssh-cli -t` 选择用，分组没有 `tags` 字段。可以把一个标签加到该分组下的每台主机，或从全组去掉。
 - **危险命令**：内置环境只读；自定义环境可以改 `maxMode` 和 `defaultPolicy`。命名策略的 mode / allow / deny / confirm 可以新建或覆盖。分组和主机的行内规则在对应表单里改。某一层不写 allow 就是全集，写成空列表则会把这一层交空。内置硬拒绝不能关。
 - **主机**、**执行**、**中继**和**审计**：密码只通过主机表单 POST 进加密存储，不会回显，也不会写入审计。执行和传输与命令行使用同一套策略。审计页显示日志大小和条数，清理只删 30 天前的记录。
+- **终端**：选一台主机，可以开多个标签，用法接近 FinalShell。这条路径不套用允许 / 拒绝 / 确认，只记审计（`source=ui`），不记按键。命令行和「执行」页仍然拦截。连接复用本机会话：终端开着时不算空闲，最长仍是 60 分钟；关掉之后空闲 5 分钟会断开。没有端口转发。CLI 或 agent 不能靠自称 `source=ui` 走这条路径。
 
-执行、上传、下载、中继、会话、审计清理和配置导入导出都在本机页面里，策略和审计与命令行相同。elevate 仍不做。
+执行、上传、下载、中继、会话、审计清理和配置导入导出都在本机页面里。除交互终端外，策略和审计与命令行相同。elevate 仍不做。
 
 默认只监听 `127.0.0.1:7788`。`0.0.0.0` 和其他非回环地址会拒绝，除非显式加上 `--allow-non-loopback`。该模式启动时打印一次随机 Bearer token。之后每个 `/api` 请求都要带 `Authorization: Bearer <token>`。页面会提示粘贴这个 token。`Host: localhost` 不能代替它。更稳妥的做法是 SSH 隧道到 `127.0.0.1`，不要把端口暴露到公网。用 Ctrl-C 停止。
 

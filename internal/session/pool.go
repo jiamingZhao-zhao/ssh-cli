@@ -143,6 +143,17 @@ func (p *Pool) SetClock(now func() time.Time) {
 // A session is reused only when fingerprint still matches. ForceNew closes
 // any existing session for that alias first.
 func (p *Pool) Open(ctx context.Context, alias, fingerprint string, forceNew bool) error {
+	return p.open(ctx, alias, fingerprint, forceNew, true)
+}
+
+// OpenConn opens or reuses the SSH connection without starting the
+// non-interactive command shell. The interactive terminal uses this so a PTY
+// does not depend on stdbuf. Idle and max-life are the same windows as Open.
+func (p *Pool) OpenConn(ctx context.Context, alias, fingerprint string) error {
+	return p.open(ctx, alias, fingerprint, false, false)
+}
+
+func (p *Pool) open(ctx context.Context, alias, fingerprint string, forceNew, withShell bool) error {
 	if forceNew {
 		p.finish(alias, "explicit")
 	} else if !p.reusable(alias, fingerprint) {
@@ -151,8 +162,13 @@ func (p *Pool) Open(ctx context.Context, alias, fingerprint string, forceNew boo
 	p.mu.Lock()
 	if e := p.items[alias]; e != nil && !e.closed && e.fingerprint == fingerprint {
 		e.used = p.now()
+		needShell := withShell && e.shell == nil
+		client := e.client
 		p.mu.Unlock()
-		return nil
+		if !needShell {
+			return nil
+		}
+		return p.attachShell(ctx, alias, client)
 	}
 	p.mu.Unlock()
 	if ctx != nil {
@@ -164,11 +180,44 @@ func (p *Pool) Open(ctx context.Context, alias, fingerprint string, forceNew boo
 	if err != nil {
 		return err
 	}
+	var shell *sshclient.Shell
+	if withShell {
+		shell, err = sshclient.NewShell(ctx, client.Raw())
+		if err != nil {
+			_ = client.Close()
+			return err
+		}
+	}
+	return p.store(alias, fingerprint, client, shell)
+}
+
+func (p *Pool) attachShell(ctx context.Context, alias string, client *sshclient.Client) error {
+	if client == nil || client.Raw() == nil {
+		return fmt.Errorf("session %s is closed", alias)
+	}
 	shell, err := sshclient.NewShell(ctx, client.Raw())
 	if err != nil {
-		_ = client.Close()
+		p.finish(alias, "desync")
 		return err
 	}
+	p.mu.Lock()
+	e := p.items[alias]
+	if e == nil || e.closed || e.client != client {
+		p.mu.Unlock()
+		_ = shell.Close()
+		return fmt.Errorf("session %s is closed", alias)
+	}
+	if e.shell != nil {
+		p.mu.Unlock()
+		_ = shell.Close()
+		return nil
+	}
+	e.shell = shell
+	p.mu.Unlock()
+	return nil
+}
+
+func (p *Pool) store(alias, fingerprint string, client *sshclient.Client, shell *sshclient.Shell) error {
 	now := p.now()
 	e := &entry{
 		alias: alias, fingerprint: fingerprint, client: client, shell: shell,
@@ -178,7 +227,9 @@ func (p *Pool) Open(ctx context.Context, alias, fingerprint string, forceNew boo
 	if cur := p.items[alias]; cur != nil && !cur.closed {
 		if cur.fingerprint == fingerprint {
 			p.mu.Unlock()
-			_ = shell.Close()
+			if shell != nil {
+				_ = shell.Close()
+			}
 			_ = client.Close()
 			return nil
 		}
@@ -246,6 +297,14 @@ func (p *Pool) Exec(ctx context.Context, alias, fingerprint, command string, std
 	e.used = p.now()
 	shell := e.shell
 	p.mu.Unlock()
+	if shell == nil {
+		p.mu.Lock()
+		if e.busy > 0 {
+			e.busy--
+		}
+		p.mu.Unlock()
+		return 0, fmt.Errorf("session %s has no shell", alias)
+	}
 	code, err := shell.Exec(ctx, command, stdout, stderr)
 	p.mu.Lock()
 	if e.busy > 0 {
