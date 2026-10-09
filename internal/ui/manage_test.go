@@ -43,6 +43,7 @@ groups:
 	password := "s3cret-ui"
 
 	page := httptest.NewRequest(http.MethodGet, "/", nil)
+	page.Host = "127.0.0.1"
 	page.RemoteAddr = "127.0.0.1:9"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, page)
@@ -110,7 +111,7 @@ groups:
 	if pol.Code != 200 {
 		t.Fatalf("policy %d %s", pol.Code, pol.Body.String())
 	}
-	upd := postJSON(t, h, "/api/groups/update", `{"name":"app-test","policy":"no-prune"}`)
+	upd := postJSON(t, h, "/api/groups/update", `{"name":"app-test","policy":"no-prune","humanConfirm":"app-test"}`)
 	if upd.Code != 200 {
 		t.Fatalf("attach %d %s", upd.Code, upd.Body.String())
 	}
@@ -133,6 +134,7 @@ groups:
 	}
 
 	catReq := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
+	catReq.Host = "127.0.0.1"
 	catReq.RemoteAddr = "127.0.0.1:9"
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, catReq)
@@ -281,6 +283,7 @@ func postJSON(t *testing.T, h http.Handler, path, body string) *httptest.Respons
 	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 	req.RemoteAddr = "127.0.0.1:9"
 	req.Header.Set("Content-Type", "application/json")
+	attachCSRF(t, h, req)
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
 	return rr

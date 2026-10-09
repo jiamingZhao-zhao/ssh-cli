@@ -30,6 +30,9 @@ const (
 	version     = 1
 )
 
+// ErrNoMasterKey is returned when a ciphertext must be opened and no master key exists.
+var ErrNoMasterKey = errors.New("no master key available to decrypt secrets")
+
 // Keyring is the OS keyring. Tests substitute a fake.
 type Keyring interface {
 	Get(service, user string) (string, error)
@@ -64,6 +67,22 @@ type Store struct {
 	kr   Keyring
 	warn io.Writer
 	env  *string
+}
+
+// MasterMaterial returns the master key bytes. create mints one when none exists.
+// The bytes authenticate policy HMAC; they are not a plaintext secret export.
+func MasterMaterial(dir string, create bool) ([]byte, error) {
+	st, err := Open(dir, Options{Warn: io.Discard})
+	if err != nil {
+		return nil, err
+	}
+	key, err := st.masterKey(create)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, len(key))
+	copy(out, key)
+	return out, nil
 }
 
 // Open reads secrets.json. It does not create a master key until Put.
@@ -206,7 +225,7 @@ func (s *Store) masterKey(create bool) ([]byte, error) {
 		return nil, err
 	}
 	if !create {
-		return nil, fmt.Errorf("no master key available to decrypt secrets")
+		return nil, fmt.Errorf("%w", ErrNoMasterKey)
 	}
 	key := make([]byte, chacha20poly1305.KeySize)
 	if _, err := rand.Read(key); err != nil {
@@ -297,6 +316,9 @@ func decrypt(key []byte, ref string, e entry) ([]byte, error) {
 	nonce, err := base64.StdEncoding.DecodeString(e.Nonce)
 	if err != nil {
 		return nil, err
+	}
+	if len(nonce) != aead.NonceSize() {
+		return nil, fmt.Errorf("secret %s: nonce length %d, want %d", ref, len(nonce), aead.NonceSize())
 	}
 	ct, err := base64.StdEncoding.DecodeString(e.Ciphertext)
 	if err != nil {

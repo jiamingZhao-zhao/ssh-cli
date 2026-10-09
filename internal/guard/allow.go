@@ -1,6 +1,9 @@
 package guard
 
-import "strings"
+import (
+	"path"
+	"strings"
+)
 
 type pattern []string
 
@@ -63,12 +66,29 @@ func prefixMatch(p pattern, args []Arg) bool {
 }
 
 func matchAny(patterns []string, args []Arg) (string, bool) {
+	// Deny and confirm match the command basename. Allow stays on the full
+	// argv0 so an arbitrary path cannot widen a whitelist entry.
+	viewed := basenameArgs(args)
 	for _, raw := range patterns {
-		if prefixMatch(parsePattern(raw), args) {
+		if prefixMatch(parsePattern(raw), viewed) {
 			return raw, true
 		}
 	}
 	return "", false
+}
+
+func basenameArgs(args []Arg) []Arg {
+	if len(args) == 0 || !args[0].Static {
+		return args
+	}
+	base := path.Base(args[0].Value)
+	if base == args[0].Value {
+		return args
+	}
+	out := make([]Arg, len(args))
+	copy(out, args)
+	out[0].Value = base
+	return out
 }
 
 // intersectAllow computes the intersection of allow-sets.

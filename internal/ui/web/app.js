@@ -18,7 +18,10 @@ const knownBody = document.querySelector("#known");
 const knownError = document.querySelector("#known-error");
 
 let catalog = { envs: [], groups: [], hosts: [], policies: [] };
+let csrfToken = "";
 let editing = false;
+let auditPage = 1;
+const pageState = {};
 let editingGroup = false;
 let editingPolicy = "";
 let groupEnvWas = "";
@@ -41,17 +44,45 @@ async function readJSON(res) {
   return data;
 }
 
+async function ensureSession() {
+  if (csrfToken) return;
+  const data = await readJSON(await fetch("/api/session"));
+  csrfToken = data.csrf || "";
+}
+
 async function postJSON(url, body) {
-  return readJSON(await fetch(url, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body)
-  }));
+  await ensureSession();
+  const payload = Object.assign({}, body);
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const res = await fetch(url, {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify(payload)
+    });
+    const data = await res.json();
+    if (res.status === 409 && data.needsConfirm && attempt === 0) {
+      const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + (data.confirm || ""));
+      if (typed == null) throw new Error(data.error || "已取消");
+      if (Array.isArray(payload.confirm)) payload.humanConfirm = typed;
+      else payload.confirm = typed;
+      payload.humanConfirm = payload.humanConfirm || typed;
+      continue;
+    }
+    if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);
+    return data;
+  }
+  throw new Error("确认失败");
 }
 
 function cell(text) {
   const td = document.createElement("td");
-  td.textContent = text == null || text === "" ? "" : String(text);
+  const span = document.createElement("span");
+  span.className = "clip";
+  span.textContent = text == null || text === "" ? "" : String(text);
+  span.title = span.textContent;
+  span.addEventListener("click", () => span.classList.toggle("open"));
+  td.append(span);
   return td;
 }
 
@@ -141,6 +172,7 @@ async function loadCatalog() {
   renderEnvs();
   renderHosts();
   refreshChrome();
+  fillChoices();
   applyFilters();
 }
 
@@ -573,13 +605,14 @@ groupForm.addEventListener("submit", async (ev) => {
   try {
     await postJSON(editingGroup ? "/api/groups/update" : "/api/groups", body);
     resetGroupForm();
+    closeDialog(groupForm);
     await loadCatalog();
   } catch (err) {
     showError(groupError, err.message);
   }
 });
 
-document.querySelector("#group-clear").addEventListener("click", resetGroupForm);
+document.querySelector("#group-clear").addEventListener("click", () => { resetGroupForm(); closeDialog(groupForm); });
 
 policyForm.addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -591,13 +624,14 @@ policyForm.addEventListener("submit", async (ev) => {
   try {
     await postJSON(editingPolicy === "update" ? "/api/policies/update" : "/api/policies", body);
     resetPolicyForm();
+    closeDialog(policyForm);
     await loadCatalog();
   } catch (err) {
     showError(policyError, err.message);
   }
 });
 
-document.querySelector("#policy-clear").addEventListener("click", resetPolicyForm);
+document.querySelector("#policy-clear").addEventListener("click", () => { resetPolicyForm(); closeDialog(policyForm); });
 
 envForm.addEventListener("submit", async (ev) => {
   ev.preventDefault();
@@ -611,6 +645,7 @@ envForm.addEventListener("submit", async (ev) => {
       defaultPolicy: envForm.elements.namedItem("defaultPolicy").value
     });
     HTMLFormElement.prototype.reset.call(envForm);
+    closeDialog(envForm);
     await loadCatalog();
   } catch (err) {
     showError(envError, err.message);
@@ -635,13 +670,14 @@ form.addEventListener("submit", async (ev) => {
   try {
     await postJSON(editing ? "/api/hosts/update" : "/api/hosts", body);
     resetForm();
+    closeDialog(form);
     await loadCatalog();
   } catch (err) {
     showError(formError, err.message);
   }
 });
 
-document.querySelector("#clear-form").addEventListener("click", resetForm);
+document.querySelector("#clear-form").addEventListener("click", () => { resetForm(); closeDialog(form); });
 
 function subject(rec) {
   if (rec.command) return rec.command;
@@ -649,9 +685,20 @@ function subject(rec) {
   return "";
 }
 
-async function loadAudit(query) {
+function auditQuery() {
+  const fd = new FormData(document.querySelector("#audit-filter"));
+  const params = new URLSearchParams();
+  for (const [k, v] of fd.entries()) {
+    if (String(v).trim() !== "") params.set(k, String(v).trim());
+  }
+  params.set("page", String(auditPage));
+  params.set("pageSize", "50");
+  return params;
+}
+
+async function loadAudit() {
   showError(auditError, "");
-  const data = await readJSON(await fetch("/api/audit" + (query || "")));
+  const data = await readJSON(await fetch("/api/audit?" + auditQuery().toString()));
   auditBody.replaceChildren();
   for (const rec of data.records || []) {
     const tr = document.createElement("tr");
@@ -668,21 +715,45 @@ async function loadAudit(query) {
     );
     auditBody.appendChild(tr);
   }
-  const n = (data.records || []).length;
-  setText("#summary-audit", n + " 条");
-  setBadge("audit", n);
+  const stats = data.stats || {};
+  const pages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 50)));
+  setText("#summary-audit", "日志 " + (stats.files || 0) + " 个文件，" + (stats.entries || 0) + " 条，" + (stats.bytes || 0) + " 字节 · 筛选 " + (data.total || 0) + " 条");
+  setBadge("audit", stats.entries || 0);
+  const bar = document.querySelector("#audit-pager");
+  bar.replaceChildren();
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "secondary";
+  prev.textContent = "上一页";
+  prev.disabled = auditPage <= 1;
+  prev.addEventListener("click", () => { auditPage -= 1; loadAudit().catch((err) => showError(auditError, err.message)); });
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "secondary";
+  next.textContent = "下一页";
+  next.disabled = auditPage >= pages;
+  next.addEventListener("click", () => { auditPage += 1; loadAudit().catch((err) => showError(auditError, err.message)); });
+  const label = document.createElement("span");
+  label.textContent = "第 " + (data.page || auditPage) + " / " + pages + " 页";
+  bar.append(prev, label, next);
 }
 
 document.querySelector("#audit-filter").addEventListener("submit", async (ev) => {
   ev.preventDefault();
-  const fd = new FormData(ev.target);
-  const params = new URLSearchParams();
-  for (const [k, v] of fd.entries()) {
-    if (String(v).trim() !== "") params.set(k, String(v).trim());
-  }
-  const q = params.toString();
+  auditPage = 1;
   try {
-    await loadAudit(q ? "?" + q : "");
+    await loadAudit();
+  } catch (err) {
+    showError(auditError, err.message);
+  }
+});
+document.querySelector("#audit-cleanup").addEventListener("click", async () => {
+  showError(auditError, "");
+  try {
+    const data = await postJSON("/api/audit/cleanup", {});
+    await loadAudit();
+    showError(auditError, "");
+    setText("#summary-audit", (document.querySelector("#summary-audit").textContent || "") + " · 已删除 " + data.removed + " 条");
   } catch (err) {
     showError(auditError, err.message);
   }
@@ -754,13 +825,84 @@ function applyFilters() {
     if (!body) return;
     const q = input.value.trim().toLowerCase();
     for (const tr of body.rows) {
-      tr.hidden = q !== "" && !tr.textContent.toLowerCase().includes(q);
+      tr.dataset.hit = q === "" || tr.textContent.toLowerCase().includes(q) ? "1" : "0";
     }
+  });
+  pageTables();
+}
+
+function pageTables() {
+  document.querySelectorAll("[data-pager]").forEach((bar) => {
+    const body = document.querySelector(bar.dataset.pager);
+    if (!body) return;
+    const size = 25;
+    const rows = [...body.rows].filter((tr) => tr.dataset.hit !== "0");
+    const pages = Math.max(1, Math.ceil(rows.length / size));
+    let page = pageState[bar.dataset.pager] || 1;
+    if (page > pages) page = pages;
+    pageState[bar.dataset.pager] = page;
+    for (const tr of body.rows) tr.hidden = true;
+    rows.forEach((tr, i) => {
+      tr.hidden = i < (page - 1) * size || i >= page * size;
+    });
+    bar.replaceChildren();
+    if (rows.length <= size) return;
+    const prev = document.createElement("button");
+    prev.type = "button";
+    prev.className = "secondary";
+    prev.textContent = "上一页";
+    prev.disabled = page <= 1;
+    prev.addEventListener("click", () => { pageState[bar.dataset.pager] = page - 1; pageTables(); });
+    const next = document.createElement("button");
+    next.type = "button";
+    next.className = "secondary";
+    next.textContent = "下一页";
+    next.disabled = page >= pages;
+    next.addEventListener("click", () => { pageState[bar.dataset.pager] = page + 1; pageTables(); });
+    const label = document.createElement("span");
+    label.textContent = rows.length + " 条 · 第 " + page + " / " + pages + " 页";
+    bar.append(prev, label, next);
+  });
+}
+
+function fillSelect(select, values, current) {
+  const keep = current != null ? current : select.value;
+  select.replaceChildren(option("", "全部", ""));
+  for (const v of values) select.appendChild(option(v, v, keep));
+  if (keep) select.value = keep;
+}
+
+function fillChoices() {
+  const hosts = (catalog.hosts || []).map((h) => h.alias).sort();
+  const groups = (catalog.groups || []).map((g) => g.name).sort();
+  const envs = (catalog.envs || []).map((e) => e.name).sort();
+  fillSelect(document.querySelector("#audit-host"), hosts);
+  fillSelect(document.querySelector("#audit-group"), groups);
+  fillSelect(document.querySelector("#audit-env"), envs);
+  document.querySelectorAll("#op-host, .op-host, select[name=from], select[name=to]").forEach((select) => {
+    const keep = select.value;
+    select.replaceChildren();
+    for (const alias of hosts) select.appendChild(option(alias, alias, keep));
   });
 }
 
 function reveal(el) {
-  if (el) el.scrollIntoView({ block: "nearest" });
+  const dialog = el && el.closest ? el.closest("dialog") : null;
+  if (dialog && !dialog.open) dialog.showModal();
+}
+
+function closeDialog(el) {
+  const dialog = el && el.closest ? el.closest("dialog") : null;
+  if (dialog && dialog.open) dialog.close();
+}
+
+function bindDialog(id, reset) {
+  const dialog = document.querySelector(id);
+  if (!dialog) return;
+  dialog.addEventListener("close", reset);
+  dialog.addEventListener("click", (ev) => {
+    if (ev.target === dialog) dialog.close();
+  });
 }
 
 const viewAlias = {
@@ -774,7 +916,11 @@ const viewAlias = {
   known: "known",
   "known-panel": "known",
   audit: "audit",
-  "audit-panel": "audit"
+  "audit-panel": "audit",
+  sessions: "sessions",
+  operate: "operate",
+  relay: "relay",
+  bundle: "bundle"
 };
 
 function showView(name) {
@@ -782,7 +928,7 @@ function showView(name) {
   document.querySelectorAll(".view").forEach((el) => {
     el.hidden = el.dataset.view !== view;
   });
-  document.querySelectorAll(".sidebar button").forEach((btn) => {
+  document.querySelectorAll("button[data-view]").forEach((btn) => {
     const on = btn.dataset.view === view;
     btn.classList.toggle("active", on);
     if (on) btn.setAttribute("aria-current", "page");
@@ -793,7 +939,7 @@ function showView(name) {
   if (location.hash !== "#" + view) history.replaceState(null, "", "#" + view);
 }
 
-document.querySelectorAll(".sidebar button").forEach((btn) => {
+document.querySelectorAll("button[data-view]").forEach((btn) => {
   btn.addEventListener("click", () => showView(btn.dataset.view));
 });
 document.querySelectorAll("[data-filter]").forEach((input) => {
@@ -811,9 +957,193 @@ document.querySelector("#policy-new").addEventListener("click", () => {
   resetPolicyForm();
   reveal(policyForm);
 });
+document.querySelector("#env-new").addEventListener("click", () => {
+  HTMLFormElement.prototype.reset.call(envForm);
+  reveal(envForm);
+});
+bindDialog("#host-dialog", resetForm);
+bindDialog("#group-dialog", resetGroupForm);
+bindDialog("#policy-dialog", resetPolicyForm);
+bindDialog("#env-dialog", () => HTMLFormElement.prototype.reset.call(envForm));
 window.addEventListener("hashchange", () => showView(location.hash.replace("#", "")));
 showView(location.hash.replace("#", ""));
 
+const operateError = document.querySelector("#operate-error");
+const relayError = document.querySelector("#relay-error");
+const bundleError = document.querySelector("#bundle-error");
+const sessionError = document.querySelector("#session-error");
+
+async function loadSessions() {
+  showError(sessionError, "");
+  const data = await readJSON(await fetch("/api/sessions"));
+  const body = document.querySelector("#session-rows");
+  body.replaceChildren();
+  for (const item of data.sessions || []) {
+    const tr = document.createElement("tr");
+    tr.append(cell(item.alias), cell(item.opened), cell(item.used), cell(item.busy));
+    const actions = document.createElement("td");
+    const close = document.createElement("button");
+    close.type = "button";
+    close.className = "danger";
+    close.textContent = "关闭";
+    close.addEventListener("click", async () => {
+      try {
+        await postJSON("/api/sessions/close", { alias: item.alias });
+        await loadSessions();
+      } catch (err) {
+        showError(sessionError, err.message);
+      }
+    });
+    actions.append(close);
+    tr.append(actions);
+    body.appendChild(tr);
+  }
+  setText("#summary-sessions", (data.sessions || []).length + " 个会话在这个进程里");
+}
+
+document.querySelector("#session-refresh").addEventListener("click", () => {
+  loadSessions().catch((err) => showError(sessionError, err.message));
+});
+
+document.querySelector("#exec-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  showError(operateError, "");
+  const fd = new FormData(ev.target);
+  try {
+    const data = await postJSON("/api/exec", {
+      alias: fd.get("alias"),
+      command: fd.get("command"),
+      timeout: fd.get("timeout") || "",
+      confirm: fd.get("confirm") || ""
+    });
+    const out = document.querySelector("#operate-out");
+    out.hidden = false;
+    out.textContent = "exit " + data.exitCode + "\n" + (data.stdout || "") + (data.stderr || "");
+    ev.target.reset();
+    await loadAudit();
+  } catch (err) {
+    showError(operateError, err.message);
+  }
+});
+
+document.querySelector("#upload-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  showError(operateError, "");
+  await ensureSession();
+  const fd = new FormData(ev.target);
+  try {
+    const res = await fetch("/api/upload", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "X-CSRF-Token": csrfToken },
+      body: fd
+    });
+    const data = await res.json();
+    if (res.status === 409 && data.needsConfirm) {
+      const typed = window.prompt(data.error + "\n请输入：" + data.confirm);
+      if (typed == null) throw new Error(data.error);
+      fd.set("confirm", typed);
+      const retry = await fetch("/api/upload", {
+        method: "POST",
+        credentials: "same-origin",
+        headers: { "X-CSRF-Token": csrfToken },
+        body: fd
+      });
+      const again = await retry.json();
+      if (!retry.ok || again.ok === false) throw new Error(again.error || retry.statusText);
+    } else if (!res.ok || data.ok === false) {
+      throw new Error(data.error || res.statusText);
+    }
+    ev.target.reset();
+    await loadAudit();
+  } catch (err) {
+    showError(operateError, err.message);
+  }
+});
+
+document.querySelector("#download-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  showError(operateError, "");
+  await ensureSession();
+  const fd = new FormData(ev.target);
+  try {
+    const res = await fetch("/api/download", {
+      method: "POST",
+      credentials: "same-origin",
+      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      body: JSON.stringify({ alias: fd.get("alias"), path: fd.get("path") })
+    });
+    if (!res.ok) {
+      const data = await res.json();
+      throw new Error(data.error || res.statusText);
+    }
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "download";
+    a.click();
+    URL.revokeObjectURL(url);
+    ev.target.reset();
+    await loadAudit();
+  } catch (err) {
+    showError(operateError, err.message);
+  }
+});
+
+document.querySelector("#relay-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  showError(relayError, "");
+  const fd = new FormData(ev.target);
+  try {
+    const data = await postJSON("/api/relay", {
+      from: fd.get("from"),
+      fromPath: fd.get("fromPath"),
+      to: fd.get("to"),
+      toPath: fd.get("toPath"),
+      confirm: fd.get("confirm") || "",
+      allowCrossEnv: fd.get("allowCrossEnv") === "on"
+    });
+    ev.target.reset();
+    showError(relayError, "");
+    setText("#summary-sessions", "");
+    const out = document.querySelector("#operate-out");
+    out.hidden = false;
+    out.textContent = "relay " + data.algo + " " + data.sum + " " + data.bytes + " bytes";
+    await loadAudit();
+  } catch (err) {
+    showError(relayError, err.message);
+  }
+});
+
+document.querySelector("#bundle-export").addEventListener("click", async () => {
+  showError(bundleError, "");
+  try {
+    const data = await readJSON(await fetch("/api/config/export"));
+    document.querySelector("#bundle-yaml").value = data.yaml || "";
+  } catch (err) {
+    showError(bundleError, err.message);
+  }
+});
+
+document.querySelector("#bundle-form").addEventListener("submit", async (ev) => {
+  ev.preventDefault();
+  showError(bundleError, "");
+  try {
+    await postJSON("/api/config/import", { yaml: document.querySelector("#bundle-yaml").value });
+    document.querySelector("#bundle-yaml").value = "";
+    await loadCatalog();
+  } catch (err) {
+    showError(bundleError, err.message);
+  }
+});
+
+document.querySelector("#env-clear").addEventListener("click", () => {
+  HTMLFormElement.prototype.reset.call(envForm);
+  closeDialog(envForm);
+});
+
 loadCatalog().catch((err) => showError(catalogError, err.message));
 loadKnown().catch((err) => showError(knownError, err.message));
-loadAudit("").catch((err) => showError(auditError, err.message));
+loadAudit().catch((err) => showError(auditError, err.message));
+loadSessions().catch((err) => showError(sessionError, err.message));

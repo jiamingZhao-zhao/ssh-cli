@@ -136,6 +136,12 @@ func groupFromMap(raw map[string]json.RawMessage) (GroupDraft, error) {
 	if err := fillRuleFields(raw, &d.Allow, &d.Deny, &d.Confirm, &d.HasAllow, &d.HasDeny, &d.HasConfirm); err != nil {
 		return GroupDraft{}, err
 	}
+	d.Actor = "ui"
+	if s, ok, err := rawString(raw, "humanConfirm"); err != nil {
+		return GroupDraft{}, err
+	} else if ok {
+		d.HumanConfirm = s
+	}
 	if ok, list, err := rawList(raw, "protectedPaths"); err != nil {
 		return GroupDraft{}, err
 	} else if ok {
@@ -162,6 +168,12 @@ func policyFromMap(raw map[string]json.RawMessage) (PolicyDraft, error) {
 	}
 	if err := fillRuleFields(raw, &d.Allow, &d.Deny, &d.Confirm, &d.HasAllow, &d.HasDeny, &d.HasConfirm); err != nil {
 		return PolicyDraft{}, err
+	}
+	d.Actor = "ui"
+	if s, ok, err := rawString(raw, "humanConfirm"); err != nil {
+		return PolicyDraft{}, err
+	} else if ok {
+		d.HumanConfirm = s
 	}
 	return d, nil
 }
@@ -200,6 +212,12 @@ func envFromMap(raw map[string]json.RawMessage) (EnvDraft, error) {
 	if v, ok := raw["noDataOutflow"]; ok {
 		d.HasNoDataOutflow = true
 		d.NoDataOutflow = truthy(v)
+	}
+	d.Actor = "ui"
+	if s, ok, err := rawString(raw, "humanConfirm"); err != nil {
+		return EnvDraft{}, err
+	} else if ok {
+		d.HumanConfirm = s
 	}
 	return d, nil
 }

@@ -16,9 +16,19 @@ import (
 // LogFunc receives non-fatal transfer notes (skipped symlinks, chmod failures).
 type LogFunc func(string)
 
+// CheckFunc is invoked with every remote path that would be created or written.
+// UploadChecked calls it for the full plan before any write.
+type CheckFunc func(remotePath string) error
+
 // Upload copies a local file or directory to remote. Directories are recursive
 // and missing remote parents are created.
 func Upload(client *ssh.Client, local, remote string, log LogFunc) error {
+	return UploadChecked(client, local, remote, log, nil)
+}
+
+// UploadChecked plans every destination, runs check on each path, then writes.
+// A check error leaves the remote tree unchanged by this call.
+func UploadChecked(client *ssh.Client, local, remote string, log LogFunc, check CheckFunc) error {
 	sf, err := sftp.NewClient(client)
 	if err != nil {
 		return err
@@ -32,14 +42,108 @@ func Upload(client *ssh.Client, local, remote string, log LogFunc) error {
 	if info.Mode()&os.ModeSymlink != 0 {
 		return fmt.Errorf("refusing to upload symlink %s", local)
 	}
-	if info.IsDir() {
-		return uploadDir(sf, local, remote, log)
-	}
-	remote, err = remoteFileDest(sf, remote, filepath.Base(local))
+	plan, err := planUpload(sf, local, remote, info, log)
 	if err != nil {
 		return err
 	}
-	return uploadFile(sf, local, remote, info.Mode(), log)
+	if check != nil {
+		for _, item := range plan {
+			if err := check(item.remote); err != nil {
+				return err
+			}
+		}
+	}
+	for _, item := range plan {
+		if item.dir {
+			if err := sf.MkdirAll(item.remote); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := uploadFile(sf, item.local, item.remote, item.mode, log); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+type plannedUpload struct {
+	local  string
+	remote string
+	dir    bool
+	mode   os.FileMode
+}
+
+func planUpload(sf *sftp.Client, local, remote string, info os.FileInfo, log LogFunc) ([]plannedUpload, error) {
+	if !info.IsDir() {
+		dest, err := remoteFileDest(sf, remote, filepath.Base(local))
+		if err != nil {
+			return nil, err
+		}
+		items := missingParents(sf, dest)
+		items = append(items, plannedUpload{local: local, remote: dest, mode: info.Mode()})
+		return items, nil
+	}
+	items := []plannedUpload{{remote: remote, dir: true}}
+	err := filepath.WalkDir(local, func(p string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		if d.Type()&os.ModeSymlink != 0 {
+			note(log, "skipping symlink "+p)
+			return nil
+		}
+		rel, err := filepath.Rel(local, p)
+		if err != nil {
+			return err
+		}
+		if rel == "." {
+			return nil
+		}
+		remotePath := path.Join(remote, filepath.ToSlash(rel))
+		st, err := d.Info()
+		if err != nil {
+			return err
+		}
+		if d.IsDir() {
+			items = append(items, plannedUpload{remote: remotePath, dir: true})
+			return nil
+		}
+		if !st.Mode().IsRegular() {
+			note(log, "skipping non-regular file "+p)
+			return nil
+		}
+		items = append(items, plannedUpload{local: p, remote: remotePath, mode: st.Mode()})
+		return nil
+	})
+	return items, err
+}
+
+func missingParents(sf *sftp.Client, remote string) []plannedUpload {
+	dir := path.Dir(remote)
+	if dir == "" || dir == "." || dir == "/" {
+		return nil
+	}
+	if _, err := sf.Stat(dir); err == nil {
+		return nil
+	}
+	var chain []string
+	for dir != "" && dir != "." && dir != "/" {
+		if _, err := sf.Stat(dir); err == nil {
+			break
+		}
+		chain = append(chain, dir)
+		next := path.Dir(dir)
+		if next == dir {
+			break
+		}
+		dir = next
+	}
+	items := make([]plannedUpload, 0, len(chain))
+	for i := len(chain) - 1; i >= 0; i-- {
+		items = append(items, plannedUpload{remote: chain[i], dir: true})
+	}
+	return items
 }
 
 // Download copies a remote file or directory to local.
@@ -61,38 +165,6 @@ func Download(client *ssh.Client, remote, local string, log LogFunc) error {
 		local = filepath.Join(local, path.Base(remote))
 	}
 	return downloadFile(sf, remote, local, info.Mode(), log)
-}
-
-func uploadDir(sf *sftp.Client, local, remote string, log LogFunc) error {
-	if err := sf.MkdirAll(remote); err != nil {
-		return err
-	}
-	return filepath.WalkDir(local, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		if d.Type()&os.ModeSymlink != 0 {
-			note(log, "skipping symlink "+p)
-			return nil
-		}
-		rel, err := filepath.Rel(local, p)
-		if err != nil {
-			return err
-		}
-		remotePath := path.Join(remote, filepath.ToSlash(rel))
-		info, err := d.Info()
-		if err != nil {
-			return err
-		}
-		if d.IsDir() {
-			return sf.MkdirAll(remotePath)
-		}
-		if !info.Mode().IsRegular() {
-			note(log, "skipping non-regular file "+p)
-			return nil
-		}
-		return uploadFile(sf, p, remotePath, info.Mode(), log)
-	})
 }
 
 func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc) error {

@@ -229,7 +229,9 @@ func (a *App) hostEdit() *cobra.Command {
 				draft.HasPassword = true
 				draft.Password = pw
 			}
-			return catalogErr(catalog.UpdateHost(a.Dir, draft, catalog.Options{Warn: a.Err}))
+			return a.withConfirm(func(phrase string) error {
+				return catalog.UpdateHost(a.Dir, draft, catalog.Options{Warn: a.Err, HumanConfirm: phrase})
+			})
 		},
 	}
 	bindHostFlags(cmd, &f, false)

@@ -43,6 +43,7 @@ type Effective struct {
 	Service    []string    `json:"-"`
 	ServiceAll bool        `json:"-"`
 	Protected  []string    `json:"protectedPaths,omitempty"`
+	NoDataOut  bool        `json:"-"`
 	Warnings   []string    `json:"warnings,omitempty"`
 	layers     []layer
 	// fallback is an extra allow-list used when readonly mode had no configured
@@ -191,6 +192,7 @@ func Resolve(cfg *config.Config, h config.ResolvedHost, forceReadonly bool) (Eff
 		Service:    service,
 		ServiceAll: serviceAll,
 		Protected:  paths,
+		NoDataOut:  h.Env.NoDataOutflow,
 		Warnings:   warnings,
 		layers:     layers,
 		fallback:   fallback,
@@ -435,6 +437,9 @@ func Decide(eff Effective, command string) Decision {
 			if why := builtinDeny(c.args); why != "" {
 				dec.Allowed = false
 				dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
+			} else if eff.Mode == config.ModeReadonly {
+				dec.Allowed = false
+				dec.Findings = append(dec.Findings, Finding{Layer: "mode", Kind: "deny", Detail: "readonly mode refuses write redirects"})
 			}
 			continue
 		}
@@ -452,6 +457,11 @@ func Decide(eff Effective, command string) Decision {
 			continue
 		}
 		if why := builtinDeny(c.args); why != "" {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
+			continue
+		}
+		if why := semanticDeny(eff.Mode, c.args); why != "" {
 			dec.Allowed = false
 			dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
 			continue
@@ -585,6 +595,10 @@ func DecideCapability(eff Effective, capability, remotePath string) Decision {
 			dec.Allowed = false
 			dec.Findings = append(dec.Findings, Finding{Layer: "capability", Kind: "deny", Detail: "download is disabled"})
 		}
+		if eff.NoDataOut {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "env", Kind: "deny", Detail: "noDataOutflow forbids download"})
+		}
 	default:
 		dec.Allowed = false
 		dec.Findings = append(dec.Findings, Finding{Layer: "capability", Kind: "deny", Detail: "unknown capability " + capability})
@@ -596,6 +610,43 @@ func DecideCapability(eff Effective, capability, remotePath string) Decision {
 		})
 	}
 	return dec
+}
+
+// DecideRelay checks a stream from src to dst. Source may be allow or
+// source-only. Destination must be allow. A protected destination needs confirm.
+// noDataOutflow on the source blocks a different destination env.
+func DecideRelay(src, dst Effective, srcEnv, dstEnv, destPath string, allowCross bool) Decision {
+	dec := Decision{Mode: string(dst.Mode), Allowed: true}
+	if srcEnv != dstEnv && !allowCross {
+		dec.Allowed = false
+		dec.Findings = append(dec.Findings, Finding{Layer: "env", Kind: "deny", Detail: "cross-env relay requires --allow-cross-env"})
+	}
+	if src.NoDataOut && srcEnv != dstEnv {
+		dec.Allowed = false
+		dec.Findings = append(dec.Findings, Finding{Layer: "env", Kind: "deny", Detail: "noDataOutflow forbids relay to another env"})
+	}
+	if !relaySourceOK(src.Relay) {
+		dec.Allowed = false
+		dec.Findings = append(dec.Findings, Finding{Layer: "capability", Kind: "deny", Detail: "relay source is not allowed"})
+	}
+	if dst.Relay != string(config.RelayAllow) {
+		dec.Allowed = false
+		dec.Findings = append(dec.Findings, Finding{Layer: "capability", Kind: "deny", Detail: "relay destination is not allowed"})
+	}
+	if dec.Allowed && destPath != "" && pathProtected(dst.Protected, destPath) {
+		dec.NeedsConfirm = true
+		dec.Findings = append(dec.Findings, Finding{Layer: "protected", Kind: "confirm", Detail: "path is protected: " + destPath})
+	}
+	return dec
+}
+
+func relaySourceOK(mode string) bool {
+	switch config.RelayMode(mode) {
+	case config.RelayAllow, config.RelaySourceOnly:
+		return true
+	default:
+		return false
+	}
 }
 
 func pathProtected(protected []string, remote string) bool {

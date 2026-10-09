@@ -14,6 +14,7 @@ import (
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/policyhmac"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/version"
 )
 
@@ -60,6 +61,7 @@ func Execute(args []string, in io.Reader, out, errw io.Writer) int {
 	if errw == nil {
 		errw = os.Stderr
 	}
+	policyhmac.Install()
 	if err := rejectPasswordFlag(args); err != nil {
 		fmt.Fprintf(errw, "error: %s\n", err)
 		return exitcode.Usage
@@ -176,12 +178,15 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 		a.groupCmd(),
 		a.envCmd(),
 		a.execCmd(),
+		a.sessionCmd(),
 		a.uploadCmd(),
 		a.downloadCmd(),
 		a.statusCmd(),
 		a.serviceCmd(),
 		a.keysCmd(),
 		a.importCmd(),
+		a.configCmd(),
+		a.relayCmd(),
 		a.policyCmd(),
 		a.auditCmd(),
 		a.uiCmd(),

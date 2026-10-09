@@ -16,11 +16,15 @@ jobs:
         run: python3 scripts/check-install-cmd.py
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.27"
       - name: go vet
         run: go vet ./...
       - name: unit tests
         run: go test ./...
+      - name: govulncheck
+        run: |
+          go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
+          govulncheck ./...
 
   integration:
     name: openssh integration
@@ -29,7 +33,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.27"
       - name: integration test
         run: SSH_CLI_INTEGRATION=1 go test ./internal/integration -count=1 -timeout 20m
 
@@ -56,7 +60,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.27"
       - name: build
         env:
           CGO_ENABLED: "0"
@@ -71,7 +75,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.27"
       - name: pack release archives
         run: |
           if [[ "${GITHUB_REF}" == refs/tags/v* ]]; then

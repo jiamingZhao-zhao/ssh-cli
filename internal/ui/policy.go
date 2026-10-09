@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
 
@@ -22,6 +23,9 @@ type PolicyDraft struct {
 	HasAllow   bool
 	HasDeny    bool
 	HasConfirm bool
+
+	HumanConfirm string
+	Actor        string
 }
 
 // EnvDraft edits an env label. maxMode is the ceiling; defaultPolicy is the
@@ -40,6 +44,9 @@ type EnvDraft struct {
 	HasMaxMode       bool
 	HasDefaultPolicy bool
 	HasNoDataOutflow bool
+
+	HumanConfirm string
+	Actor        string
 }
 
 // AddPolicy creates a named policy. Naming a built-in copies that built-in
@@ -88,7 +95,8 @@ func UpdatePolicy(dir string, in PolicyDraft) error {
 			return err
 		}
 	}
-	return config.Update(dir, func(cfg *config.Config) error {
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
 		if cfg.Policies == nil {
 			return fmt.Errorf("policy %q is not in the config", name)
 		}
@@ -96,9 +104,26 @@ func UpdatePolicy(dir string, in PolicyDraft) error {
 		if !ok || pol == nil {
 			return fmt.Errorf("policy %q is not in the config", name)
 		}
+		next := *pol
+		if pol.Capabilities != nil {
+			c := *pol.Capabilities
+			next.Capabilities = &c
+		}
+		applyPolicy(&next, in)
+		if confirmgate.PolicyWider(pol, &next) {
+			needs = []confirmgate.Need{confirmgate.WidenNeed(name, "policy "+name+" would widen")}
+			if err := confirmgate.Require(dir, in.Actor, in.HumanConfirm, needs); err != nil {
+				return err
+			}
+		}
 		applyPolicy(pol, in)
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, in.Actor, needs)
+	return nil
 }
 
 // RemovePolicy deletes a stored policy. A custom policy still referenced by an
@@ -223,10 +248,23 @@ func UpdateEnv(dir string, in EnvDraft) error {
 			return err
 		}
 	}
-	return config.Update(dir, func(cfg *config.Config) error {
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
 		env, ok := cfg.Envs[name]
 		if !ok || env == nil {
 			return fmt.Errorf("env %q not found", name)
+		}
+		if in.HasMaxMode {
+			mode := config.Mode(strings.TrimSpace(in.MaxMode))
+			if mode.Valid() && env.MaxMode.Valid() && mode.Rank() > env.MaxMode.Rank() {
+				needs = append(needs, confirmgate.WidenNeed(name, "env "+name+" maxMode would widen"))
+			}
+		}
+		if in.HasDefaultPolicy && confirmgate.NamedWider(cfg, env.DefaultPolicy, strings.TrimSpace(in.DefaultPolicy)) {
+			needs = append(needs, confirmgate.WidenNeed(name, "env "+name+" default policy would widen"))
+		}
+		if err := confirmgate.Require(dir, in.Actor, in.HumanConfirm, needs); err != nil {
+			return err
 		}
 		if in.HasLabel {
 			env.Label = strings.TrimSpace(in.Label)
@@ -249,6 +287,11 @@ func UpdateEnv(dir string, in EnvDraft) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, in.Actor, needs)
+	return nil
 }
 
 // RemoveEnv deletes an env label that no group uses, matching `env remove`.

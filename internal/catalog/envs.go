@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
 
@@ -22,6 +23,8 @@ type EnvDraft struct {
 	HasDefaultPolicy   bool
 	ClearDefaultPolicy bool
 	HasNoDataOutflow   bool
+	HumanConfirm       string
+	Actor              string
 }
 
 // AddEnv defines an env label. maxMode is required.
@@ -69,25 +72,58 @@ func addEnv(cfg *config.Config, in EnvDraft) error {
 
 // EditEnv changes fields that were set on the draft.
 func EditEnv(dir string, in EnvDraft) error {
-	return config.Update(dir, func(cfg *config.Config) error {
-		return editEnv(cfg, in)
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
+		n, err := editEnv(dir, cfg, in)
+		needs = n
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, in.Actor, needs)
+	return nil
 }
 
-func editEnv(cfg *config.Config, in EnvDraft) error {
+func editEnv(dir string, cfg *config.Config, in EnvDraft) ([]confirmgate.Need, error) {
 	name := strings.TrimSpace(in.Name)
 	if config.IsBuiltinEnv(name) {
-		return fmt.Errorf("env %q is built-in and cannot be changed", name)
+		return nil, fmt.Errorf("env %q is built-in and cannot be changed", name)
 	}
 	env, ok := cfg.Envs[name]
 	if !ok || env == nil {
-		return fmt.Errorf("env %q not found", name)
+		return nil, fmt.Errorf("env %q not found", name)
 	}
 	if !in.HasLabel && !in.HasColor && !in.HasMaxMode && !in.HasDefaultPolicy && !in.ClearDefaultPolicy && !in.HasNoDataOutflow {
-		return fmt.Errorf("no changes given")
+		return nil, fmt.Errorf("no changes given")
 	}
 	if in.ClearDefaultPolicy && in.HasDefaultPolicy && strings.TrimSpace(in.DefaultPolicy) != "" {
-		return fmt.Errorf("use only one of default-policy and clear-default-policy")
+		return nil, fmt.Errorf("use only one of default-policy and clear-default-policy")
+	}
+	var needs []confirmgate.Need
+	if in.HasMaxMode {
+		mode := config.Mode(strings.TrimSpace(in.MaxMode))
+		if !mode.Valid() {
+			return nil, fmt.Errorf("maxMode must be readonly, standard, or admin")
+		}
+		if mode.Rank() > env.MaxMode.Rank() && env.MaxMode.Valid() {
+			needs = append(needs, confirmgate.WidenNeed(name, "env "+name+" maxMode would widen"))
+		}
+	}
+	if in.ClearDefaultPolicy || in.HasDefaultPolicy {
+		next := ""
+		if in.HasDefaultPolicy && !in.ClearDefaultPolicy {
+			next = strings.TrimSpace(in.DefaultPolicy)
+		}
+		if next != "" && !guard.KnownPolicy(cfg, next) {
+			return nil, fmt.Errorf("unknown policy %q", next)
+		}
+		if confirmgate.NamedWider(cfg, env.DefaultPolicy, next) {
+			needs = append(needs, confirmgate.WidenNeed(name, "env "+name+" default policy would widen"))
+		}
+	}
+	if err := confirmgate.Require(dir, in.Actor, in.HumanConfirm, needs); err != nil {
+		return nil, err
 	}
 	if in.HasLabel {
 		label := strings.TrimSpace(in.Label)
@@ -100,25 +136,17 @@ func editEnv(cfg *config.Config, in EnvDraft) error {
 		env.Color = strings.TrimSpace(in.Color)
 	}
 	if in.HasMaxMode {
-		mode := config.Mode(strings.TrimSpace(in.MaxMode))
-		if !mode.Valid() {
-			return fmt.Errorf("maxMode must be readonly, standard, or admin")
-		}
-		env.MaxMode = mode
+		env.MaxMode = config.Mode(strings.TrimSpace(in.MaxMode))
 	}
 	if in.ClearDefaultPolicy || (in.HasDefaultPolicy && strings.TrimSpace(in.DefaultPolicy) == "") {
 		env.DefaultPolicy = ""
 	} else if in.HasDefaultPolicy {
-		policy := strings.TrimSpace(in.DefaultPolicy)
-		if !guard.KnownPolicy(cfg, policy) {
-			return fmt.Errorf("unknown policy %q", policy)
-		}
-		env.DefaultPolicy = policy
+		env.DefaultPolicy = strings.TrimSpace(in.DefaultPolicy)
 	}
 	if in.HasNoDataOutflow {
 		env.NoDataOutflow = in.NoDataOutflow
 	}
-	return nil
+	return needs, nil
 }
 
 // RemoveEnv deletes an env label that no group uses.

@@ -89,8 +89,30 @@ func (a *App) transfer(kind, src, dst string) error {
 			continue
 		}
 		log := func(msg string) { fmt.Fprintf(a.Err, "warning: %s\n", msg) }
+		var policyErr error
 		if kind == "upload" {
-			err = transfer.Upload(client.Raw(), local, remote, log)
+			already := p.dec.NeedsConfirm
+			err = transfer.UploadChecked(client.Raw(), local, remote, log, func(remotePath string) error {
+				d := guard.DecideCapability(p.eff, "upload", remotePath)
+				if !d.Allowed {
+					policyErr = exitcode.New(exitcode.Denied, "%s", decisionReason(d))
+					a.logDenial(hostMeta, p.host, &d, decisionReason(d))
+					return policyErr
+				}
+				if d.NeedsConfirm && !already {
+					if cerr := confirmAlias(p.host.Alias, a.Yes); cerr != nil {
+						policyErr = cerr
+						a.logDenial(hostMeta, p.host, &d, cerr.Error())
+						return cerr
+					}
+					already = true
+				}
+				return nil
+			})
+			if policyErr != nil {
+				client.Close()
+				return policyErr
+			}
 		} else {
 			err = transfer.Download(client.Raw(), remote, local, log)
 		}

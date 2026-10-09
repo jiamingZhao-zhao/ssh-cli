@@ -6,13 +6,18 @@ import (
 	"strings"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/secrets"
 )
 
 // Options configures secret storage. A nil Warn discards keyring warnings.
+// HumanConfirm is the typed phrase for a prod leave, host move, address change,
+// or policy widen. Actor is stored on the config_change audit record.
 type Options struct {
-	Warn io.Writer
+	Warn         io.Writer
+	HumanConfirm string
+	Actor        string
 }
 
 // HostDraft is a host add or edit. Password is never written to hosts.yaml,
@@ -108,41 +113,56 @@ func addHost(dir string, cfg *config.Config, in HostDraft, opt Options) error {
 
 // UpdateHost edits one host. An empty password does not change the secret.
 func UpdateHost(dir string, in HostDraft, opt Options) error {
-	return config.Update(dir, func(cfg *config.Config) error {
-		return updateHost(dir, cfg, in, opt)
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
+		n, err := updateHost(dir, cfg, in, opt)
+		needs = n
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, opt.Actor, needs)
+	return nil
 }
 
-func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) error {
+func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) ([]confirmgate.Need, error) {
 	alias := strings.TrimSpace(in.Alias)
 	if alias == "" {
-		return fmt.Errorf("alias is required")
+		return nil, fmt.Errorf("alias is required")
 	}
 	if in.Password != "" && strings.TrimSpace(in.Identity) != "" {
-		return fmt.Errorf("pass only one of password and identity")
+		return nil, fmt.Errorf("pass only one of password and identity")
 	}
 	if err := checkPortPtr(in.Port); err != nil {
-		return err
+		return nil, err
 	}
 	changed := in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
 		in.HasPassword || in.HasPolicy || in.HasTags || in.SetDefault || in.ClearTags
 	if !changed {
-		return fmt.Errorf("no changes given")
+		return nil, fmt.Errorf("no changes given")
 	}
 	if in.ClearTags && in.HasTags {
-		return fmt.Errorf("use only one of tags and clearTags")
+		return nil, fmt.Errorf("use only one of tags and clearTags")
 	}
 	found, ok := cfg.Find(alias)
 	if !ok {
-		return fmt.Errorf("host %q not found", alias)
+		return nil, fmt.Errorf("host %q not found", alias)
 	}
 	h := found.Host
+	needs, err := hostChangeNeeds(cfg, found, h, in)
+	if err != nil {
+		return nil, err
+	}
+	if err := confirmgate.Require(dir, opt.Actor, opt.HumanConfirm, needs); err != nil {
+		return nil, err
+	}
 	oldRef := h.PasswordRef
 	if in.HasGroup {
 		group := strings.TrimSpace(in.Group)
 		g, ok := cfg.Groups[group]
 		if !ok {
-			return fmt.Errorf("group %q not found", group)
+			return nil, fmt.Errorf("group %q not found", group)
 		}
 		delete(found.GroupDef.Hosts, alias)
 		if g.Hosts == nil {
@@ -154,7 +174,7 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) error
 	}
 	if in.HasAddress {
 		if strings.TrimSpace(in.Address) == "" {
-			return fmt.Errorf("empty address")
+			return nil, fmt.Errorf("empty address")
 		}
 		h.Host = strings.TrimSpace(in.Address)
 	}
@@ -163,13 +183,13 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) error
 	}
 	if in.HasUser {
 		if strings.TrimSpace(in.User) == "" {
-			return fmt.Errorf("empty user")
+			return nil, fmt.Errorf("empty user")
 		}
 		h.User = strings.TrimSpace(in.User)
 	}
 	if in.HasPolicy {
 		if in.Policy != "" && !guard.KnownPolicy(cfg, in.Policy) {
-			return fmt.Errorf("unknown policy %q", in.Policy)
+			return nil, fmt.Errorf("unknown policy %q", in.Policy)
 		}
 		h.Policy = in.Policy
 	}
@@ -184,7 +204,7 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) error
 	}
 	st, err := secrets.Open(dir, secrets.Options{Warn: warnOf(opt)})
 	if err != nil {
-		return err
+		return nil, err
 	}
 	dirty := false
 	if in.HasIdentity && strings.TrimSpace(in.Identity) != "" {
@@ -199,7 +219,7 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) error
 			h.PasswordRef = found.Group + "." + alias
 		}
 		if err := st.Put(h.PasswordRef, in.Password); err != nil {
-			return err
+			return nil, err
 		}
 		dirty = true
 	}
@@ -208,9 +228,38 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) error
 		dirty = true
 	}
 	if dirty {
-		return st.Save()
+		if err := st.Save(); err != nil {
+			return nil, err
+		}
 	}
-	return nil
+	return needs, nil
+}
+
+func hostChangeNeeds(cfg *config.Config, found config.ResolvedHost, h *config.Host, in HostDraft) ([]confirmgate.Need, error) {
+	alias := strings.TrimSpace(in.Alias)
+	newGroup := found.Group
+	newEnv := found.EnvName
+	groupChanged := false
+	if in.HasGroup {
+		newGroup = strings.TrimSpace(in.Group)
+		g, ok := cfg.Groups[newGroup]
+		if !ok || g == nil {
+			return nil, fmt.Errorf("group %q not found", newGroup)
+		}
+		groupChanged = newGroup != found.Group
+		newEnv = g.Env
+	}
+	newAddr := h.Host
+	addrChanged := false
+	if in.HasAddress {
+		newAddr = strings.TrimSpace(in.Address)
+		addrChanged = newAddr != strings.TrimSpace(h.Host)
+	}
+	needs := confirmgate.HostNeeds(alias, found.Group, newGroup, found.EnvName, newEnv, h.Host, newAddr, groupChanged, addrChanged)
+	if in.HasPolicy && confirmgate.NamedWider(cfg, h.Policy, in.Policy) {
+		needs = append(needs, confirmgate.WidenNeed(alias, "host "+alias+" policy would widen"))
+	}
+	return needs, nil
 }
 
 // RemoveHost deletes one host and its secret when nothing else references it.

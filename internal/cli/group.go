@@ -72,7 +72,10 @@ func (a *App) groupEdit() *cobra.Command {
 				draft.HasPaths = true
 				draft.ProtectedPaths = splitList(paths)
 			}
-			return catalogErr(catalog.EditGroup(a.Dir, draft))
+			return a.withConfirm(func(phrase string) error {
+				draft.HumanConfirm = phrase
+				return catalog.EditGroup(a.Dir, draft)
+			})
 		},
 	}
 	cmd.Flags().StringVar(&label, "label", "", "display label (empty clears it)")
@@ -143,9 +146,16 @@ func (a *App) groupSetEnv() *cobra.Command {
 		Short: "Change a group's env label",
 		Args:  cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			prev, err := catalog.SetGroupEnv(a.Dir, args[0], args[1])
+			var prev string
+			err := a.withConfirm(func(phrase string) error {
+				p, e := catalog.SetGroupEnvConfirmed(a.Dir, args[0], args[1], phrase, "")
+				if e == nil {
+					prev = p
+				}
+				return e
+			})
 			if err != nil {
-				return catalogErr(err)
+				return err
 			}
 			if prev == "prod" && args[1] != "prod" {
 				fmt.Fprintf(a.Err, "warning: group %s env changed from prod to %s\n", args[0], args[1])
@@ -220,7 +230,10 @@ func (a *App) envEdit() *cobra.Command {
 				draft.HasNoDataOutflow = true
 				draft.NoDataOutflow = noOut
 			}
-			return catalogErr(catalog.EditEnv(a.Dir, draft))
+			return a.withConfirm(func(phrase string) error {
+				draft.HumanConfirm = phrase
+				return catalog.EditEnv(a.Dir, draft)
+			})
 		},
 	}
 	cmd.Flags().StringVar(&label, "label", "", "display label")

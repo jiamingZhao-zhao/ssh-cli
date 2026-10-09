@@ -20,7 +20,7 @@ func TestAppendScrubListShowAndMode(t *testing.T) {
 		Host:           "main",
 		Group:          "app-prod",
 		Env:            "prod",
-		Command:        "echo password=s3cret-leak && cat " + pem,
+		Command:        "echo password=s3cret-leak && curl -H 'Authorization: Bearer eyJ.leak' --token s3cret && cat " + pem,
 		Status:         StatusDenied,
 		HighRisk:       true,
 		DeniedByPolicy: true,
@@ -35,7 +35,7 @@ func TestAppendScrubListShowAndMode(t *testing.T) {
 	if rec.ID == "" || !strings.HasPrefix(rec.ID, "20200102T150405") {
 		t.Fatalf("id %q", rec.ID)
 	}
-	if strings.Contains(rec.Command, "s3cret-leak") || strings.Contains(rec.Command, "SECRETKEYDATA") {
+	if strings.Contains(rec.Command, "s3cret") || strings.Contains(rec.Command, "SECRETKEYDATA") || strings.Contains(rec.Command, "eyJ") {
 		t.Fatalf("scrub failed: %s", rec.Command)
 	}
 	if !strings.Contains(rec.Command, "[redacted]") || !strings.Contains(rec.Command, "[redacted-key]") {

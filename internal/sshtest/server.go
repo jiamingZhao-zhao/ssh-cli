@@ -115,6 +115,7 @@ func (s *Server) session(channel ssh.Channel, requests <-chan *ssh.Request) {
 			}
 			_ = req.Reply(true, nil)
 			cmd := exec.Command("sh", "-c", msg.Command)
+			cmd.Stdin = channel
 			cmd.Stdout = channel
 			cmd.Stderr = channel.Stderr()
 			err := cmd.Run()

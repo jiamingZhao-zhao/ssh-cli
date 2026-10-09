@@ -104,7 +104,12 @@ if [ "$sum_code" = "200" ]; then
     exit 1
   fi
 elif [ "$sum_code" = "404" ]; then
-  echo "warning: release has no checksums.txt; the download was not verified" >&2
+  if [ "${SSH_CLI_ALLOW_MISSING_CHECKSUM:-}" = "1" ]; then
+    echo "warning: release has no checksums.txt; the download was not verified" >&2
+  else
+    echo "refusing to install without checksums.txt (set SSH_CLI_ALLOW_MISSING_CHECKSUM=1 to override)" >&2
+    exit 1
+  fi
 else
   echo "checksum download failed (HTTP ${sum_code})" >&2
   exit 1

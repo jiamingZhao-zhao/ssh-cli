@@ -14,7 +14,7 @@ import (
 )
 
 func (a *App) updateCmd() *cobra.Command {
-	var check, force bool
+	var check, force, allowMissing bool
 	var repo string
 	cmd := &cobra.Command{
 		Use:   "update",
@@ -26,9 +26,10 @@ the background.
 Asset names (version has no leading v):
   ssh-cli_<version>_<os>_<arch>.tar.gz    Unix, contains ssh-cli
   ssh-cli_<version>_windows_<arch>.zip    Windows, contains ssh-cli.exe
-  checksums.txt                           optional sha256sum manifest
+  checksums.txt                           sha256sum manifest
 
-When checksums.txt is missing, ssh-cli prints a warning and continues.
+When checksums.txt is missing, ssh-cli refuses the install unless
+--allow-missing-checksum is set. A check-only run still prints a warning.
 A published checksum that does not match is a hard error.
 
 --repo or SSH_CLI_REPO selects owner/name (default jiamingZhao-zhao/ssh-cli).
@@ -46,12 +47,13 @@ On an interactive TTY, installing asks you to type the release version.
 				repo = os.Getenv("SSH_CLI_REPO")
 			}
 			res, err := update.Run(cmd.Context(), update.Options{
-				Repo:    repo,
-				Current: version.Version,
-				GOOS:    runtime.GOOS,
-				GOARCH:  runtime.GOARCH,
-				Check:   check,
-				Force:   force,
+				Repo:                 repo,
+				Current:              version.Version,
+				GOOS:                 runtime.GOOS,
+				GOARCH:               runtime.GOARCH,
+				Check:                check,
+				Force:                force,
+				AllowMissingChecksum: allowMissing,
 				Confirm: func(latest string) error {
 					return confirmRelease(latest, a.Yes)
 				},
@@ -84,6 +86,7 @@ On an interactive TTY, installing asks you to type the release version.
 	}
 	cmd.Flags().BoolVar(&check, "check", false, "print current and latest versions without installing")
 	cmd.Flags().BoolVar(&force, "force", false, "install even when this build is not older than the release")
+	cmd.Flags().BoolVar(&allowMissing, "allow-missing-checksum", false, "install even when checksums.txt is absent")
 	cmd.Flags().StringVar(&repo, "repo", "", "GitHub owner/name (default: SSH_CLI_REPO or jiamingZhao-zhao/ssh-cli)")
 	return cmd
 }

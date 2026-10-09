@@ -322,6 +322,95 @@ func hasLayer(d Decision, layer string) bool {
 	return false
 }
 
+func TestCommandIdentityAndRedirects(t *testing.T) {
+	cfg, roHost := prodReadonlyHost("", nil)
+	ro := resolve(t, cfg, roHost, false)
+	stdEnv := &config.Env{MaxMode: config.ModeStandard, DefaultPolicy: "standard"}
+	g := &config.Group{Env: "test", Deny: []string{"rm"}, Confirm: []string{"systemctl restart"}}
+	h := &config.Host{Host: "192.0.2.20", User: "root"}
+	std := resolve(t, &config.Config{Version: 1, Envs: map[string]*config.Env{"test": stdEnv}, Groups: map[string]*config.Group{"g": g}},
+		config.ResolvedHost{Alias: "t1", Group: "g", EnvName: "test", Env: stdEnv, GroupDef: g, Host: h}, false)
+	adminEnv := &config.Env{MaxMode: config.ModeAdmin, DefaultPolicy: "admin"}
+	ag := &config.Group{Env: "dev"}
+	ah := &config.Host{Host: "192.0.2.30", User: "root"}
+	admin := resolve(t, &config.Config{Version: 1, Envs: map[string]*config.Env{"dev": adminEnv}, Groups: map[string]*config.Group{"g": ag}},
+		config.ResolvedHost{Alias: "d", Group: "g", EnvName: "dev", Env: adminEnv, GroupDef: ag, Host: ah}, false)
+
+	if d := Decide(ro, "echo hi > /tmp/x"); d.Allowed {
+		t.Fatalf("readonly redirect: %+v", d)
+	}
+	if d := Decide(ro, "echo hi >> /tmp/x"); d.Allowed {
+		t.Fatalf("readonly append: %+v", d)
+	}
+	if d := Decide(ro, "echo hi <> /tmp/x"); d.Allowed {
+		t.Fatalf("readonly <> : %+v", d)
+	}
+	if d := Decide(admin, "echo hi > /tmp/x"); !d.Allowed {
+		t.Fatalf("admin redirect: %+v", d)
+	}
+	if d := Decide(admin, "echo ok > /dev/sda"); d.Allowed {
+		t.Fatalf("disk redirect: %+v", d)
+	}
+	if d := Decide(ro, "/bin/ls /tmp"); d.Allowed {
+		t.Fatalf("absolute ls must not match allow ls: %+v", d)
+	}
+	if d := Decide(admin, "/bin/rm -rf /"); d.Allowed {
+		t.Fatalf("absolute rm: %+v", d)
+	}
+	if d := Decide(admin, "env rm -rf /"); d.Allowed {
+		t.Fatalf("env rm: %+v", d)
+	}
+	if d := Decide(admin, "env -i /bin/rm -rf /"); d.Allowed {
+		t.Fatalf("env -i rm: %+v", d)
+	}
+	if d := Decide(std, "/usr/bin/systemctl restart nginx"); !d.NeedsConfirm {
+		t.Fatalf("basename confirm: %+v", d)
+	}
+	if d := Decide(std, "/bin/rm /tmp/x"); d.Allowed {
+		t.Fatalf("basename deny: %+v", d)
+	}
+	if d := Decide(ro, "journalctl -u nginx"); !d.Allowed {
+		t.Fatalf("journalctl -u: %+v", d)
+	}
+	if d := Decide(ro, "journalctl --vacuum-size=100M"); d.Allowed {
+		t.Fatalf("journalctl vacuum readonly: %+v", d)
+	}
+	if d := Decide(std, "journalctl --rotate"); d.Allowed {
+		t.Fatalf("journalctl rotate standard: %+v", d)
+	}
+	if d := Decide(admin, "journalctl --flush"); !d.Allowed {
+		t.Fatalf("journalctl flush admin: %+v", d)
+	}
+	if d := Decide(ro, "less /var/log/syslog"); !d.Allowed {
+		t.Fatalf("less file: %+v", d)
+	}
+	if d := Decide(ro, "less +!id"); d.Allowed {
+		t.Fatalf("less shell readonly: %+v", d)
+	}
+	if d := Decide(std, "less --shell"); d.Allowed {
+		t.Fatalf("less --shell standard: %+v", d)
+	}
+}
+
+func TestNoDataOutflowDeniesDownload(t *testing.T) {
+	env := &config.Env{MaxMode: config.ModeStandard, DefaultPolicy: "standard", NoDataOutflow: true}
+	g := &config.Group{Env: "lab"}
+	h := &config.Host{Host: "192.0.2.20", User: "root"}
+	cfg := &config.Config{Version: 1, Envs: map[string]*config.Env{"lab": env}, Groups: map[string]*config.Group{"g": g}}
+	eff := resolve(t, cfg, config.ResolvedHost{Alias: "h", Group: "g", EnvName: "lab", Env: env, GroupDef: g, Host: h}, false)
+	d := DecideCapability(eff, "download", "/tmp/x")
+	if d.Allowed {
+		t.Fatalf("download: %+v", d)
+	}
+	plain := &config.Env{MaxMode: config.ModeReadonly, DefaultPolicy: "readonly"}
+	pcfg, ph := prodReadonlyHost("", nil)
+	_ = plain
+	eff = resolve(t, pcfg, ph, false)
+	if !DecideCapability(eff, "download", "/tmp/x").Allowed {
+		t.Fatal("builtin prod download stays allowed")
+	}
+}
+
 func hasKind(d Decision, kind string) bool {
 	for _, f := range d.Findings {
 		if f.Kind == kind {

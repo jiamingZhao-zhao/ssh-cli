@@ -1,6 +1,7 @@
 package guard
 
 import (
+	"path"
 	"regexp"
 	"strings"
 )
@@ -12,7 +13,8 @@ func builtinDeny(args []Arg) string {
 	if len(args) == 0 || !args[0].Static {
 		return ""
 	}
-	name := args[0].Value
+	// Deny matches the command basename so /bin/rm cannot skip a hard deny.
+	name := path.Base(args[0].Value)
 	switch name {
 	case "redirect":
 		if len(args) >= 2 && args[1].Static && diskPath.MatchString(args[1].Value) {

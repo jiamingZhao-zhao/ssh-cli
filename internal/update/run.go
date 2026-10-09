@@ -28,6 +28,9 @@ type Options struct {
 	// Check-only and already-current runs do not call it.
 	// A nil Confirm allows the install (tests). The CLI passes a TTY check.
 	Confirm func(latest string) error
+	// AllowMissingChecksum installs when checksums.txt is absent.
+	// The default refuses that install.
+	AllowMissingChecksum bool
 }
 
 // Result is the outcome of a check or install.
@@ -44,8 +47,9 @@ type Result struct {
 }
 
 // Run looks up the latest GitHub release and, unless Check is set, replaces the current executable.
-// force installs even when the current version is not older. A missing checksums.txt sets Warning
-// and still installs; a present checksum that does not match is an error.
+// force installs even when the current version is not older. A missing checksums.txt
+// refuses the install unless AllowMissingChecksum is set. A present checksum that
+// does not match is an error. Check-only still reports the missing file as Warning.
 func Run(ctx context.Context, opt Options) (Result, error) {
 	if opt.Current == "" {
 		opt.Current = version.Version
@@ -81,6 +85,9 @@ func Run(ctx context.Context, opt Options) (Result, error) {
 	if opt.Check || (!available && !opt.Force) {
 		return res, nil
 	}
+	if !trySums && !opt.AllowMissingChecksum {
+		return res, errUsage("refusing to install without checksums.txt")
+	}
 	if opt.Confirm != nil {
 		if err := opt.Confirm(rel.version); err != nil {
 			return res, err
@@ -96,8 +103,8 @@ func Run(ctx context.Context, opt Options) (Result, error) {
 			return res, err
 		}
 		if missing {
-			if sumsListed {
-				return res, errUsage("checksums.txt is missing")
+			if sumsListed || !opt.AllowMissingChecksum {
+				return res, errUsage("refusing to install without checksums.txt")
 			}
 			res.Warning = noChecksumWarning
 		} else {
