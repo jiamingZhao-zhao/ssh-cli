@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -19,8 +20,11 @@ func (a *App) policyCmd() *cobra.Command {
 		Long: `Show the merged policy for a host, explain one command, and edit named policies.
 
 policy add and policy edit write hosts.yaml through the same store as the localhost UI.
-policy sign writes policy.mac from the master key. A missing sidecar still loads.
-HMAC does not replace typing a confirmation phrase.`,
+policy sign writes policy.mac from the master key. The sidecar covers policy and
+each host's address, port, user, and auth. A missing sidecar still loads until
+the first successful sign, which records policySigned in hosts.yaml. After that,
+a missing policy.mac refuses to load. policy unsign clears that marker.
+HMAC does not replace typing a confirmation phrase. A v1 sidecar must be signed again.`,
 	}
 	cmd.AddCommand(a.policyShow(), a.policyExplain(), a.policyList(), a.policyAdd(), a.policyEdit(), a.policyRemove(), a.policySign(), a.policyUnsign())
 	return cmd
@@ -33,9 +37,22 @@ func (a *App) policySign() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, err := config.Load(a.Dir)
 			if err != nil {
-				return exitcode.New(exitcode.Usage, "%s", err.Error())
+				if !errors.Is(err, policyhmac.ErrNeedsResign) {
+					return exitcode.New(exitcode.Usage, "%s", err.Error())
+				}
+				cfg, err = config.ReadUnverified(a.Dir)
+				if err != nil {
+					return exitcode.New(exitcode.Usage, "%s", err.Error())
+				}
 			}
 			if err := policyhmac.SignNew(a.Dir, cfg); err != nil {
+				return exitcode.New(exitcode.Usage, "%s", err.Error())
+			}
+			err = config.Update(a.Dir, func(cur *config.Config) error {
+				cur.PolicySigned = true
+				return nil
+			})
+			if err != nil {
 				return exitcode.New(exitcode.Usage, "%s", err.Error())
 			}
 			fmt.Fprintln(a.Out, "policy signed")

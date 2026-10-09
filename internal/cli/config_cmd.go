@@ -24,7 +24,9 @@ paths. It never contains plaintext passwords, secret bytes, or the master key.
 Import does not change secrets.json. Built-in envs keep their locked fields and
 carry noDataOutflow and breakGlass. Import uses the same confirmation phrase as
 group set-env and policy widen when a change leaves prod, widens permissions,
-or points a host at a different target.`,
+or points a host at a different target. Deleting a host and adding it again, in
+one bundle or across two imports, is the same gate when the new host reuses
+that passwordRef or identity file at a different address.`,
 	}
 	cmd.AddCommand(a.configExport(), a.configImport())
 	return cmd
@@ -71,18 +73,20 @@ func (a *App) configImport() *cobra.Command {
 			}
 			return a.withConfirm(func(phrase string) error {
 				var needs []confirmgate.Need
+				summary := ""
 				err := config.Update(a.Dir, func(cfg *config.Config) error {
-					n, err := bundle.ApplyConfirmed(a.Dir, audit.Actor(), phrase, cfg, data)
+					n, sum, err := bundle.ApplyConfirmed(a.Dir, audit.Actor(), phrase, cfg, data)
 					if err != nil {
 						return err
 					}
 					needs = n
+					summary = sum
 					return nil
 				})
 				if err != nil {
 					return err
 				}
-				confirmgate.RecordImport(a.Dir, audit.Actor(), needs)
+				confirmgate.RecordImport(a.Dir, audit.Actor(), needs, summary)
 				fmt.Fprintln(a.Out, "imported config bundle")
 				return nil
 			})

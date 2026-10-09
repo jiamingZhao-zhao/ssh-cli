@@ -242,15 +242,26 @@ type Config struct {
 	Groups   map[string]*Group  `yaml:"groups,omitempty"`
 	Tasks    map[string]any     `yaml:"tasks,omitempty"`
 	Session  *SessionDefaults   `yaml:"session,omitempty"`
+	// PolicySigned is set once a master key has been used to write policy.mac.
+	// Load then refuses a missing sidecar instead of treating the file as unsigned.
+	PolicySigned bool `yaml:"policySigned,omitempty"`
 }
 
 // VerifyPolicy checks policy integrity after parse and prepare. The default
 // accepts every config. cli and ui install an HMAC verifier. It must not call Load.
 var VerifyPolicy = func(dir string, cfg *Config) error { return nil }
 
+// BeforeSave runs after prepare and before hosts.yaml is written.
+// policyhmac sets PolicySigned when a master key already exists.
+var BeforeSave = func(dir string, cfg *Config) error { return nil }
+
 // SignOnSave writes a policy integrity sidecar after a successful prepare.
 // The default does nothing. A missing master key should skip signing.
 var SignOnSave = func(dir string, cfg *Config) error { return nil }
+
+// AfterSave runs after hosts.yaml and the policy sidecar are written.
+// confirmgate records credential-to-address bindings there.
+var AfterSave = func(dir string, cfg *Config) error { return nil }
 
 // ResolvedHost is a host plus the group and env it inherits.
 type ResolvedHost struct {
@@ -278,10 +289,23 @@ func (s Selector) empty() bool {
 // ValidName reports whether name can be an alias, group, env, or policy.
 func ValidName(name string) bool { return nameRe.MatchString(name) }
 
-// Load reads hosts.yaml. A missing or empty file is a version-1 config with
-// the four built-in env labels. Those labels are reset to their canonical
-// fields on every load.
+// Load reads hosts.yaml and checks the policy sidecar. A missing or empty file
+// is a version-1 config with the four built-in env labels. Those labels are
+// reset to their canonical fields on every load.
 func Load(dir string) (*Config, error) {
+	cfg, err := ReadUnverified(dir)
+	if err != nil {
+		return nil, err
+	}
+	if err := VerifyPolicy(dir, cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// ReadUnverified parses hosts.yaml without checking policy.mac.
+// policy sign uses it only after Verify reports that an older sidecar must be rewritten.
+func ReadUnverified(dir string) (*Config, error) {
 	path := filepath.Join(dir, FileName)
 	data, err := os.ReadFile(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -311,9 +335,6 @@ func Load(dir string) (*Config, error) {
 	if err := cfg.prepare(); err != nil {
 		return nil, err
 	}
-	if err := VerifyPolicy(dir, &cfg); err != nil {
-		return nil, err
-	}
 	return &cfg, nil
 }
 
@@ -338,6 +359,9 @@ func Save(dir string, cfg *Config) error {
 	if err := cfg.prepare(); err != nil {
 		return err
 	}
+	if err := BeforeSave(dir, cfg); err != nil {
+		return err
+	}
 	var buf bytes.Buffer
 	enc := yaml.NewEncoder(&buf)
 	enc.SetIndent(2)
@@ -348,7 +372,10 @@ func Save(dir string, cfg *Config) error {
 	if err := fsutil.WriteAtomic(filepath.Join(dir, FileName), buf.Bytes(), 0o600); err != nil {
 		return err
 	}
-	return SignOnSave(dir, cfg)
+	if err := SignOnSave(dir, cfg); err != nil {
+		return err
+	}
+	return AfterSave(dir, cfg)
 }
 
 // Update locks the config directory, reloads, applies fn, and saves when fn

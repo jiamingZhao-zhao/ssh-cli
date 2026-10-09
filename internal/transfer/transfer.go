@@ -34,8 +34,15 @@ func UploadChecked(client *ssh.Client, local, remote string, log LogFunc, check 
 		return err
 	}
 	defer sf.Close()
-	remote = RestoreRemotePath(remote)
-	info, err := os.Stat(local)
+	home, err := sf.RealPath(".")
+	if err != nil {
+		return fmt.Errorf("remote working directory: %w", err)
+	}
+	remote, err = AbsRemote(home, remote)
+	if err != nil {
+		return err
+	}
+	info, err := os.Lstat(local)
 	if err != nil {
 		return err
 	}

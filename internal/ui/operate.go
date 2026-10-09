@@ -43,10 +43,12 @@ func (s *service) hostPlan(alias string) (*config.Config, config.ResolvedHost, g
 
 func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		Alias   string `json:"alias"`
-		Command string `json:"command"`
-		Timeout string `json:"timeout"`
-		Confirm string `json:"confirm"`
+		Alias          string `json:"alias"`
+		Command        string `json:"command"`
+		Timeout        string `json:"timeout"`
+		Confirm        string `json:"confirm"`
+		AllowOutflow   bool   `json:"allowOutflow"`
+		OutflowConfirm string `json:"outflowConfirm"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		writeFail(w, err)
@@ -70,6 +72,14 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	suppress, needsOut := guard.ExecOutflow(eff.NoDataOut, body.AllowOutflow)
+	if needsOut && body.OutflowConfirm != guard.OutflowPhrase {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"ok": false, "needsConfirm": true, "confirm": guard.OutflowPhrase, "confirmField": "outflowConfirm",
+			"error": "type outflow to return command output",
+		})
+		return
+	}
 	timeout := 30 * time.Second
 	if strings.TrimSpace(body.Timeout) != "" {
 		d, err := time.ParseDuration(body.Timeout)
@@ -82,12 +92,19 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), timeout)
 	defer cancel()
 	var stdout, stderr limitBuf
+	var outW, errW io.Writer = &stdout, &stderr
 	stdout.n, stderr.n = execCaptureLimit, execCaptureLimit
+	if suppress {
+		outW, errW = io.Discard, io.Discard
+	}
 	s.reconcile()
-	code, err := s.pool.Exec(ctx, h.Alias, h.Host.ConnFingerprint(), body.Command, &stdout, &stderr)
+	code, err := s.pool.Exec(ctx, h.Alias, h.Host.ConnFingerprint(), body.Command, outW, errW)
 	summary := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
 	if stdout.cut || stderr.cut {
 		summary += "\n[truncated]"
+	}
+	if suppress {
+		summary = guard.OutflowDiscarded
 	}
 	if err != nil {
 		s.writeAudit(h, audit.OpExec, body.Command, "", "", audit.StatusError, code, summary, err.Error(), false, started)
@@ -99,9 +116,17 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 		status = audit.StatusError
 	}
 	s.writeAudit(h, audit.OpExec, body.Command, "", "", status, code, summary, "", false, started)
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"ok": true, "exitCode": code, "stdout": stdout.String(), "stderr": stderr.String(), "truncated": stdout.cut || stderr.cut,
-	})
+	}
+	if suppress {
+		resp["stdout"] = ""
+		resp["stderr"] = ""
+		resp["stdoutSuppressed"] = true
+		resp["notice"] = guard.OutflowDiscarded
+		resp["truncated"] = false
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
@@ -149,7 +174,7 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	defer os.RemoveAll(dir)
 	tmpName := filepath.Join(dir, name)
-	tmp, err := os.Create(tmpName)
+	tmp, err := os.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
 		writeFail(w, err)
 		return
@@ -397,19 +422,21 @@ func (s *service) configImportAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var needs []confirmgate.Need
+	summary := ""
 	err := config.Update(s.dir, func(cfg *config.Config) error {
-		n, err := bundle.ApplyConfirmed(s.dir, "ui", body.HumanConfirm, cfg, []byte(body.YAML))
+		n, sum, err := bundle.ApplyConfirmed(s.dir, "ui", body.HumanConfirm, cfg, []byte(body.YAML))
 		if err != nil {
 			return err
 		}
 		needs = n
+		summary = sum
 		return nil
 	})
 	if err != nil {
 		writeFail(w, err)
 		return
 	}
-	confirmgate.RecordImport(s.dir, "ui", needs)
+	confirmgate.RecordImport(s.dir, "ui", needs, summary)
 	s.reconcile()
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }

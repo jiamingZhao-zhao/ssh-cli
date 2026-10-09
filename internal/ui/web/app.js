@@ -47,27 +47,50 @@ async function readJSON(res) {
   return data;
 }
 
+function authHeaders(extra) {
+  const headers = Object.assign({}, extra || {});
+  const token = sessionStorage.getItem("sshCliBearer") || "";
+  if (token) headers.Authorization = "Bearer " + token;
+  if (csrfToken) headers["X-CSRF-Token"] = csrfToken;
+  return headers;
+}
+
+async function apiFetch(url, options) {
+  const opts = Object.assign({ credentials: "same-origin" }, options || {});
+  const baseHeaders = opts.headers;
+  opts.headers = authHeaders(baseHeaders);
+  let res = await fetch(url, opts);
+  if (res.status === 401) {
+    const typed = window.prompt("这个监听地址要求 Bearer token。请粘贴启动 ssh-cli ui 时打印的那一行。");
+    if (typed == null || !typed.trim()) throw new Error("需要 Bearer token");
+    sessionStorage.setItem("sshCliBearer", typed.trim());
+    opts.headers = authHeaders(baseHeaders);
+    res = await fetch(url, opts);
+  }
+  return res;
+}
+
 async function ensureSession() {
   if (csrfToken) return;
-  const data = await readJSON(await fetch("/api/session"));
+  const data = await readJSON(await apiFetch("/api/session"));
   csrfToken = data.csrf || "";
 }
 
 async function postJSON(url, body) {
   await ensureSession();
   const payload = Object.assign({}, body);
-  for (let attempt = 0; attempt < 2; attempt++) {
-    const res = await fetch(url, {
+  for (let attempt = 0; attempt < 4; attempt++) {
+    const res = await apiFetch(url, {
       method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload)
     });
     const data = await res.json();
-    if (res.status === 409 && data.needsConfirm && attempt === 0) {
+    if (res.status === 409 && data.needsConfirm) {
       const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + (data.confirm || ""));
       if (typed == null) throw new Error(data.error || "已取消");
-      if (Array.isArray(payload.confirm)) payload.humanConfirm = typed;
+      if (data.confirmField) payload[data.confirmField] = typed;
+      else if (Array.isArray(payload.confirm)) payload.humanConfirm = typed;
       else payload.confirm = typed;
       payload.humanConfirm = payload.humanConfirm || typed;
       continue;
@@ -168,7 +191,7 @@ function fillRules(formEl, row) {
 
 async function loadCatalog() {
   showError(catalogError, "");
-  catalog = await readJSON(await fetch("/api/catalog"));
+  catalog = await readJSON(await apiFetch("/api/catalog"));
   renderGroups();
   renderTags();
   renderPolicies();
@@ -701,7 +724,7 @@ function auditQuery() {
 
 async function loadAudit() {
   showError(auditError, "");
-  const data = await readJSON(await fetch("/api/audit?" + auditQuery().toString()));
+  const data = await readJSON(await apiFetch("/api/audit?" + auditQuery().toString()));
   auditBody.replaceChildren();
   for (const rec of data.records || []) {
     const tr = document.createElement("tr");
@@ -763,7 +786,7 @@ document.querySelector("#audit-cleanup").addEventListener("click", async () => {
 
 async function loadKnown() {
   showError(knownError, "");
-  const data = await readJSON(await fetch("/api/known-hosts"));
+  const data = await readJSON(await apiFetch("/api/known-hosts"));
   knownBody.replaceChildren();
   for (const entry of data.knownHosts || []) {
     const tr = document.createElement("tr");
@@ -1019,7 +1042,7 @@ const sessionError = document.querySelector("#session-error");
 
 async function loadSessions() {
   showError(sessionError, "");
-  const data = await readJSON(await fetch("/api/sessions"));
+  const data = await readJSON(await apiFetch("/api/sessions"));
   const body = document.querySelector("#session-rows");
   body.replaceChildren();
   for (const item of data.sessions || []) {
@@ -1059,11 +1082,16 @@ document.querySelector("#exec-form").addEventListener("submit", async (ev) => {
       alias: fd.get("alias"),
       command: fd.get("command"),
       timeout: fd.get("timeout") || "",
-      confirm: fd.get("confirm") || ""
+      confirm: fd.get("confirm") || "",
+      allowOutflow: fd.get("allowOutflow") === "on"
     });
     const out = document.querySelector("#operate-out");
     out.hidden = false;
-    out.textContent = "exit " + data.exitCode + "\n" + (data.stdout || "") + (data.stderr || "");
+    if (data.stdoutSuppressed) {
+      out.textContent = "exit " + data.exitCode + "\n" + (data.notice || "noDataOutflow: command output discarded");
+    } else {
+      out.textContent = "exit " + data.exitCode + "\n" + (data.stdout || "") + (data.stderr || "");
+    }
     ev.target.reset();
     await loadAudit();
   } catch (err) {
@@ -1077,10 +1105,8 @@ document.querySelector("#upload-form").addEventListener("submit", async (ev) => 
   await ensureSession();
   const fd = new FormData(ev.target);
   try {
-    const res = await fetch("/api/upload", {
+    const res = await apiFetch("/api/upload", {
       method: "POST",
-      credentials: "same-origin",
-      headers: { "X-CSRF-Token": csrfToken },
       body: fd
     });
     const data = await res.json();
@@ -1088,10 +1114,8 @@ document.querySelector("#upload-form").addEventListener("submit", async (ev) => 
       const typed = window.prompt(data.error + "\n请输入：" + data.confirm);
       if (typed == null) throw new Error(data.error);
       fd.set("confirm", typed);
-      const retry = await fetch("/api/upload", {
+      const retry = await apiFetch("/api/upload", {
         method: "POST",
-        credentials: "same-origin",
-        headers: { "X-CSRF-Token": csrfToken },
         body: fd
       });
       const again = await retry.json();
@@ -1112,10 +1136,9 @@ document.querySelector("#download-form").addEventListener("submit", async (ev) =
   await ensureSession();
   const fd = new FormData(ev.target);
   try {
-    const res = await fetch("/api/download", {
+    const res = await apiFetch("/api/download", {
       method: "POST",
-      credentials: "same-origin",
-      headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ alias: fd.get("alias"), path: fd.get("path") })
     });
     if (!res.ok) {
@@ -1164,7 +1187,7 @@ document.querySelector("#relay-form").addEventListener("submit", async (ev) => {
 document.querySelector("#bundle-export").addEventListener("click", async () => {
   showError(bundleError, "");
   try {
-    const data = await readJSON(await fetch("/api/config/export"));
+    const data = await readJSON(await apiFetch("/api/config/export"));
     document.querySelector("#bundle-yaml").value = data.yaml || "";
   } catch (err) {
     showError(bundleError, err.message);

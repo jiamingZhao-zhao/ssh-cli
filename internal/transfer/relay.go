@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 
 	"github.com/pkg/sftp"
@@ -102,11 +103,29 @@ func remoteSum(client *ssh.Client, bin, path string) (string, error) {
 		}
 		return "", fmt.Errorf("%s: %s", bin, msg)
 	}
-	fields := strings.Fields(stdout.String())
-	if len(fields) == 0 {
-		return "", fmt.Errorf("%s: empty output", bin)
+	sum, err := parseSumOutput(stdout.String())
+	if err != nil {
+		return "", fmt.Errorf("%s: %w", bin, err)
 	}
-	return fields[0], nil
+	return sum, nil
+}
+
+var (
+	sum64 = regexp.MustCompile(`(?i)[a-f0-9]{64}`)
+	sum32 = regexp.MustCompile(`(?i)[a-f0-9]{32}`)
+)
+
+// parseSumOutput pulls a sha256 or md5 hex digest out of checksum command output.
+// GNU sha256sum on MSYS may prefix the digest with a backslash, so the first
+// whitespace field is not always the digest.
+func parseSumOutput(out string) (string, error) {
+	if m := sum64.FindString(out); m != "" {
+		return strings.ToLower(m), nil
+	}
+	if m := sum32.FindString(out); m != "" {
+		return strings.ToLower(m), nil
+	}
+	return "", fmt.Errorf("empty output")
 }
 
 func shellQuote(s string) string {

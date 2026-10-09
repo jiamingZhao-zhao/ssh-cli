@@ -10,22 +10,23 @@ import (
 // phrase as group set-env and policy widen, then applies the bundle.
 // The caller saves cfg (which signs) only after this returns nil, then
 // records the audit line with confirmgate.RecordImport.
-func ApplyConfirmed(dir, actor, phrase string, cfg *config.Config, data []byte) ([]confirmgate.Need, error) {
+func ApplyConfirmed(dir, actor, phrase string, cfg *config.Config, data []byte) ([]confirmgate.Need, string, error) {
 	next, err := preview(cfg, data)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	needs, err := confirmgate.ConfigNeeds(cfg, next)
+	needs, err := confirmgate.ImportNeeds(dir, cfg, next)
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if err := confirmgate.Require(dir, actor, phrase, needs); err != nil {
-		return nil, err
+		return nil, "", err
 	}
+	summary := confirmgate.DiffSummary(cfg, next)
 	if err := Apply(cfg, data); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	return needs, nil
+	return needs, summary, nil
 }
 
 func preview(cfg *config.Config, data []byte) (*config.Config, error) {

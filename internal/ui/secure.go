@@ -42,12 +42,34 @@ func newToken() string {
 	return hex.EncodeToString(b[:])
 }
 
+// MintToken is a startup secret for --allow-non-loopback. The CLI prints it once.
+func MintToken() string { return newToken() }
+
+func bearerOK(r *http.Request, want string) bool {
+	h := r.Header.Get("Authorization")
+	const prefix = "Bearer "
+	if len(h) < len(prefix) || !strings.EqualFold(h[:len(prefix)], prefix) {
+		return false
+	}
+	got := strings.TrimSpace(h[len(prefix):])
+	if want == "" || len(got) != len(want) {
+		return false
+	}
+	return subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1
+}
+
 func (s *service) authorize(w http.ResponseWriter, r *http.Request) bool {
-	if !hostAllowed(r.Host) {
+	if s.allowRemote {
+		if strings.HasPrefix(r.URL.Path, "/api/") && !bearerOK(r, s.bearer) {
+			w.Header().Set("WWW-Authenticate", "Bearer")
+			http.Error(w, "bearer token required", http.StatusUnauthorized)
+			return false
+		}
+	} else if !hostAllowed(r.Host) {
 		http.Error(w, "localhost only", http.StatusForbidden)
 		return false
 	}
-	if !originAllowed(r) || !fetchSiteAllowed(r) {
+	if !originAllowed(r, s.allowRemote) || !fetchSiteAllowed(r) {
 		http.Error(w, "cross-origin request rejected", http.StatusForbidden)
 		return false
 	}
@@ -91,13 +113,16 @@ func hostAllowed(hostport string) bool {
 	}
 }
 
-func originAllowed(r *http.Request) bool {
+func originAllowed(r *http.Request, allowRemote bool) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		return true
 	}
 	u, err := url.Parse(origin)
-	if err != nil || u.Host == "" || !hostAllowed(u.Host) {
+	if err != nil || u.Host == "" {
+		return false
+	}
+	if !allowRemote && !hostAllowed(u.Host) {
 		return false
 	}
 	return strings.EqualFold(u.Host, r.Host)

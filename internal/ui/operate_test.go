@@ -118,7 +118,11 @@ func TestUIExecUploadDownload(t *testing.T) {
 		t.Fatalf("kept name %q %v entries %v", named, err, entries)
 	}
 
-	rr = post("/api/download", `{"alias":"box","path":"`+remote+`"}`)
+	body, err := json.Marshal(map[string]string{"alias": "box", "path": remote})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr = post("/api/download", string(body))
 	if rr.Code != 200 || !bytes.Contains(rr.Body.Bytes(), []byte("uploaded")) {
 		t.Fatalf("download %d %q", rr.Code, rr.Body.String())
 	}

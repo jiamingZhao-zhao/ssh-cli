@@ -400,6 +400,27 @@ func intersectStrings(a, b []string) []string {
 	return out
 }
 
+const (
+	// OutflowPhrase is typed to return exec stdout and stderr from a noDataOutflow env.
+	OutflowPhrase = "outflow"
+	// OutflowDiscarded is the local notice used when that output is dropped.
+	OutflowDiscarded = "noDataOutflow: command output discarded"
+)
+
+// ExecOutflow decides whether exec may show stdout and stderr.
+// noDataOutflow discards both streams and still returns the exit code.
+// allow asks for the output and requires the caller to accept OutflowPhrase.
+// Download and cross-env relay stay denied either way.
+func ExecOutflow(noDataOut, allow bool) (suppress, needsConfirm bool) {
+	if !noDataOut {
+		return false, false
+	}
+	if allow {
+		return false, true
+	}
+	return true, false
+}
+
 // Decide checks a shell command string against eff.
 func Decide(eff Effective, command string) Decision {
 	dec := Decision{Mode: string(eff.Mode), Allowed: true}

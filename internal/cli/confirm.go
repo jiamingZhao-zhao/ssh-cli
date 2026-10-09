@@ -12,6 +12,7 @@ import (
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
 
 // withConfirm runs op once. If it returns a confirmgate error, the phrase is
@@ -48,6 +49,24 @@ func (a *App) supplyPhrase(expect string) (string, error) {
 		return "", err
 	}
 	return expect, nil
+}
+
+func confirmOutflow(yes bool) error {
+	if yes {
+		if !ttyCheck() {
+			return exitcode.New(exitcode.Denied, "--yes is only valid on an interactive TTY")
+		}
+		return nil
+	}
+	if !ttyCheck() {
+		return exitcode.New(exitcode.Denied, "type %q to confirm; non-interactive callers are refused", guard.OutflowPhrase)
+	}
+	f, err := os.OpenFile(devTTY(), os.O_RDWR, 0)
+	if err != nil {
+		return exitcode.New(exitcode.Denied, "type %q to confirm; confirmation requires an interactive TTY", guard.OutflowPhrase)
+	}
+	defer f.Close()
+	return confirmTyped(guard.OutflowPhrase, "phrase", f, f)
 }
 
 func confirmAlias(alias string, yes bool) error {

@@ -268,6 +268,46 @@ func TestUILayout(t *testing.T) {
 	}
 }
 
+func TestAllowRemoteRequiresBearer(t *testing.T) {
+	dir := t.TempDir()
+	h := HandlerBearer(dir, true, "test-token")
+	spoof := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
+	spoof.Host = "localhost"
+	spoof.RemoteAddr = "192.0.2.10:9"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, spoof)
+	if rr.Code != http.StatusUnauthorized {
+		t.Fatalf("spoofed host %d %s", rr.Code, rr.Body.String())
+	}
+	page := httptest.NewRequest(http.MethodGet, "/", nil)
+	page.Host = "192.0.2.10:7788"
+	page.RemoteAddr = "192.0.2.10:9"
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, page)
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "ssh-cli") {
+		t.Fatalf("page %d %s", rr.Code, rr.Body.String())
+	}
+	ok := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
+	ok.Host = "192.0.2.10:7788"
+	ok.RemoteAddr = "192.0.2.10:9"
+	ok.Header.Set("Authorization", "Bearer test-token")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, ok)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("bearer %d %s", rr.Code, rr.Body.String())
+	}
+	cross := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
+	cross.Host = "192.0.2.10:7788"
+	cross.RemoteAddr = "192.0.2.10:9"
+	cross.Header.Set("Authorization", "Bearer test-token")
+	cross.Header.Set("Origin", "http://evil.example")
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, cross)
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("origin %d %s", rr.Code, rr.Body.String())
+	}
+}
+
 func seedEnvGroup(t *testing.T, dir string) {
 	t.Helper()
 	err := os.WriteFile(filepath.Join(dir, "hosts.yaml"), []byte(`

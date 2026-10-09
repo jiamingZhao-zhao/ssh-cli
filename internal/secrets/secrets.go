@@ -33,6 +33,19 @@ const (
 // ErrNoMasterKey is returned when a ciphertext must be opened and no master key exists.
 var ErrNoMasterKey = errors.New("no master key available to decrypt secrets")
 
+// testKeyring, when set, replaces the OS keyring for Open and MasterMaterial
+// unless the caller passes Options.Keyring. Tests use it so a developer keyring
+// cannot satisfy "no master key".
+var testKeyring Keyring
+
+// SetTestKeyring installs kr for callers that do not pass their own keyring.
+// The returned function restores the previous hook.
+func SetTestKeyring(kr Keyring) func() {
+	prev := testKeyring
+	testKeyring = kr
+	return func() { testKeyring = prev }
+}
+
 // Keyring is the OS keyring. Tests substitute a fake.
 type Keyring interface {
 	Get(service, user string) (string, error)
@@ -91,6 +104,9 @@ func Open(dir string, opt Options) (*Store, error) {
 		return nil, err
 	}
 	kr := opt.Keyring
+	if kr == nil {
+		kr = testKeyring
+	}
 	if kr == nil {
 		kr = realKeyring{}
 	}

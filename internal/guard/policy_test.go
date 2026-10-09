@@ -510,6 +510,38 @@ func TestWrapperAndOptionBypass(t *testing.T) {
 	if d := Decide(ro, "docker --host tcp://192.0.2.1:2375 ps -a"); !d.Allowed {
 		t.Fatalf("docker global option before ps: %+v", d)
 	}
+	wrapped := []string{
+		"xargs systemctl restart nginx",
+		"xargs -n 1 systemctl restart nginx",
+		"nohup systemctl restart nginx",
+		"timeout 30 systemctl restart nginx",
+		"nice -n 10 systemctl restart nginx",
+		"stdbuf -oL systemctl restart nginx",
+	}
+	for _, cmd := range wrapped {
+		if d := Decide(std, cmd); !d.Allowed || !d.NeedsConfirm {
+			t.Errorf("standard %s: %+v", cmd, d)
+		}
+		if d := Decide(ro, cmd); d.Allowed {
+			t.Errorf("readonly %s: %+v", cmd, d)
+		}
+	}
+	opaque := []string{
+		"flock /tmp/lock systemctl restart nginx",
+		"ionice -c3 systemctl restart nginx",
+		"find /tmp -exec systemctl restart nginx \\;",
+	}
+	for _, cmd := range opaque {
+		if d := Decide(std, cmd); !d.NeedsConfirm {
+			t.Errorf("standard opaque %s: %+v", cmd, d)
+		}
+		if d := Decide(ro, cmd); d.Allowed {
+			t.Errorf("readonly opaque %s: %+v", cmd, d)
+		}
+	}
+	if d := Decide(std, "find /tmp -name '*.log'"); d.NeedsConfirm && len(d.Findings) > 0 && d.Findings[0].Detail == "find -exec cannot be expanded safely" {
+		t.Fatalf("plain find: %+v", d)
+	}
 }
 
 func hasKind(d Decision, kind string) bool {

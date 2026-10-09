@@ -20,6 +20,7 @@ func (a *App) execCmd() *cobra.Command {
 	var timeout string
 	var script string
 	var fromStdin bool
+	var allowOutflow bool
 	cmd := &cobra.Command{
 		Use:   "exec [--] <command>",
 		Short: "Run a remote command",
@@ -83,31 +84,41 @@ func (a *App) execCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return a.runAll(meta, plan, remote, scriptBody, dur)
+			return a.runAll(meta, plan, remote, scriptBody, dur, allowOutflow)
 		},
 	}
 	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds); also bounds SSH connect")
 	cmd.Flags().StringVar(&script, "script", "", "read the remote script from a file")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read the remote script from stdin")
+	cmd.Flags().BoolVar(&allowOutflow, "allow-outflow", false, "return stdout and stderr from a noDataOutflow env; requires typing outflow")
 	return cmd
 }
 
 type execResult struct {
-	Host     string `json:"host"`
-	Group    string `json:"group"`
-	Env      string `json:"env"`
-	ExitCode int    `json:"exitCode"`
-	Stdout   string `json:"stdout,omitempty"`
-	Stderr   string `json:"stderr,omitempty"`
-	Error    string `json:"error,omitempty"`
+	Host             string `json:"host"`
+	Group            string `json:"group"`
+	Env              string `json:"env"`
+	ExitCode         int    `json:"exitCode"`
+	Stdout           string `json:"stdout,omitempty"`
+	Stderr           string `json:"stderr,omitempty"`
+	StdoutSuppressed bool   `json:"stdoutSuppressed,omitempty"`
+	Notice           string `json:"notice,omitempty"`
+	Error            string `json:"error,omitempty"`
 }
 
-func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration) error {
+func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool) error {
 	var results []execResult
 	final := 0
 	for _, p := range plan {
 		if p.dec.NeedsConfirm {
 			if err := confirmAlias(p.host.Alias, a.Yes); err != nil {
+				a.logDenial(meta, p.host, &p.dec, err.Error())
+				return err
+			}
+		}
+		suppress, needsOut := guard.ExecOutflow(p.eff.NoDataOut, allowOutflow)
+		if needsOut {
+			if err := confirmOutflow(a.Yes); err != nil {
 				a.logDenial(meta, p.host, &p.dec, err.Error())
 				return err
 			}
@@ -118,7 +129,13 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 		errCap := &capWriter{max: 4 << 10}
 		var stdout, stderr io.Writer
 		var outBuf, errBuf bytes.Buffer
-		if a.JSON {
+		if suppress {
+			stdout = io.Discard
+			stderr = io.Discard
+			res.StdoutSuppressed = true
+			res.Notice = guard.OutflowDiscarded
+			fmt.Fprintln(a.Err, guard.OutflowDiscarded)
+		} else if a.JSON {
 			stdout = io.MultiWriter(&outBuf, outCap)
 			stderr = io.MultiWriter(&errBuf, errCap)
 		} else {
@@ -146,6 +163,12 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 			extra = runErr.Error()
 		}
 		summary := summarizeOutputs(outCap.buf.String(), errCap.buf.String(), outCap.cut || errCap.cut, extra)
+		if suppress {
+			summary = guard.OutflowDiscarded
+			if extra != "" {
+				summary = guard.OutflowDiscarded + "; " + extra
+			}
+		}
 		if err := a.logRemote(hostMeta, p.host, p.dec, st, exitCode, summary, ""); err != nil {
 			return err
 		}
