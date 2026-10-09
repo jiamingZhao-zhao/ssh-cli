@@ -1,7 +1,7 @@
 # ssh-cli 设计提纲（草案 v0.1）
 
 > 目标：用 Go 重写本地 `ssh-ops`（Python + paramiko），产出**零依赖的单文件 CLI**，在没装 Python 的 Windows / macOS / Linux 上拷过去就能用；同时补上凭据加密、危险命令硬拦截、对 agent 友好的输出。
-> 状态：M0/M1、策略引擎、安装/`update`、强制审计日志、可选本机 UI，以及 0.3.x 的配置面已实现。0.4.0 增加进程内会话（空闲默认 5 分钟，最长 60 分钟，无守护进程）、审计分页和仅删除 30 天以前的记录、不含明文的配置导入导出、本机 UI 的执行与上传下载、轻量 `relay`、策略 HMAC。`elevate`、GoReleaser、SKILL.md 仍未做。下面正文仍是设计草案；用法见 README。版本号仍由发布 tag 经 ldflags 注入，源码里的 `Version` 保持 `dev`。
+> 状态：M0/M1、策略引擎、安装/`update`、强制审计日志、可选本机 UI，以及 0.3.x 的配置面已实现。0.4.0 增加进程内会话（空闲默认 5 分钟，最长 60 分钟，无守护进程）、审计分页和仅删除 30 天以前的记录、不含明文的配置导入导出、本机 UI 的执行与上传下载、轻量 `relay`、策略 HMAC。0.5.0 把本机 UI 换成内嵌的 Tabler 组件和 Alpine.js CSP（无 npm、无 `unsafe-eval`），并加上概览、主机详情、会话倒计时、策略表单、审计筛选与 CSV、运维向导、深色与紧凑表格、批量并行执行和设置页。`elevate`、GoReleaser、SKILL.md 仍未做。下面正文仍是设计草案；用法见 README。版本号仍由发布 tag 经 ldflags 注入，源码里的 `Version` 保持 `dev`。
 > 仓库：<https://github.com/jiamingZhao-zhao/ssh-cli>
 
 ---
