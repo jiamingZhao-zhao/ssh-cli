@@ -1,0 +1,11 @@
+Vendored so the localhost UI works offline. No npm build.
+
+alpine-csp.min.js
+  Package: @alpinejs/csp 3.17.4
+  License: MIT
+  https://github.com/alpinejs/alpine
+
+tabler.min.css
+  Package: @tabler/core 1.6.1
+  License: MIT
+  https://github.com/tabler/tabler

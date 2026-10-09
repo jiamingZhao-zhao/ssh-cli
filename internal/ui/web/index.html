@@ -1,403 +1,1056 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="zh-CN" data-bs-theme="light" data-theme="light">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ssh-cli</title>
+  <link rel="stylesheet" href="/tabler.min.css">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
-  <div class="shell">
-    <aside class="sidebar">
-      <div class="brand">
-        <strong>ssh-cli</strong>
-        <p>本地配置与审计。不启动这个页面时，命令行照常工作。</p>
+  <div class="page" x-data="sshui" x-cloak>
+    <aside class="navbar navbar-vertical navbar-expand-lg">
+      <div class="container-fluid">
+        <button class="navbar-toggler" type="button" @click="navOpen = !navOpen" aria-label="打开导航">
+          <span class="navbar-toggler-icon"></span>
+        </button>
+        <h1 class="navbar-brand">
+          <a href="#home" @click.prevent="show('home')">ssh-cli</a>
+        </h1>
+        <div class="collapse navbar-collapse" :class="{ show: navOpen }">
+          <p class="text-secondary small px-3">本地配置与审计。不启动这个页面时，命令行照常工作。</p>
+          <ul class="navbar-nav">
+            <li class="nav-item"><a class="nav-link" href="#home" data-view="home" :class="{ active: is('home') }" @click.prevent="show('home')"><span class="nav-link-title">概览</span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#hosts" data-view="hosts" :class="{ active: is('hosts') }" @click.prevent="show('hosts')"><span class="nav-link-title">主机</span><span class="badge bg-blue-lt ms-auto" x-text="catalog.hosts.length"></span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#groups" data-view="groups" :class="{ active: is('groups') }" @click.prevent="show('groups')"><span class="nav-link-title">分组</span><span class="badge bg-blue-lt ms-auto" x-text="catalog.groups.length"></span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#tags" data-view="tags" :class="{ active: is('tags') }" @click.prevent="show('tags')"><span class="nav-link-title">标签</span><span class="badge bg-blue-lt ms-auto" x-text="taggedCount()"></span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#envs" data-view="envs" :class="{ active: is('envs') }" @click.prevent="show('envs')"><span class="nav-link-title">环境</span><span class="badge bg-blue-lt ms-auto" x-text="catalog.envs.length"></span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#policy" data-view="policy" :class="{ active: is('policy') }" @click.prevent="show('policy')"><span class="nav-link-title">危险命令</span><span class="badge bg-blue-lt ms-auto" x-text="catalog.policies.length"></span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#known" data-view="known" :class="{ active: is('known') }" @click.prevent="show('known')"><span class="nav-link-title">已知主机密钥</span><span class="badge bg-blue-lt ms-auto" x-text="known.length"></span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#audit" data-view="audit" :class="{ active: is('audit') }" @click.prevent="show('audit')"><span class="nav-link-title">审计</span><span class="badge bg-blue-lt ms-auto" x-text="audit.stats.entries || 0"></span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#sessions" data-view="sessions" :class="{ active: is('sessions') }" @click.prevent="show('sessions')"><span class="nav-link-title">会话</span><span class="badge bg-blue-lt ms-auto" x-text="sessions.length"></span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#operate" data-view="operate" :class="{ active: is('operate') }" @click.prevent="show('operate')"><span class="nav-link-title">执行</span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#relay" data-view="relay" :class="{ active: is('relay') }" @click.prevent="show('relay')"><span class="nav-link-title">中继</span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#bundle" data-view="bundle" :class="{ active: is('bundle') }" @click.prevent="show('bundle')"><span class="nav-link-title">运维</span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#settings" data-view="settings" :class="{ active: is('settings') }" @click.prevent="show('settings')"><span class="nav-link-title">设置</span></a></li>
+          </ul>
+          <div class="mt-auto px-3 pb-3 d-flex gap-2">
+            <button class="btn btn-outline-secondary w-100" type="button" @click="toggleTheme()" x-text="themeLabel()"></button>
+            <button class="btn btn-outline-secondary w-100" type="button" @click="toggleDensity()" x-text="densityLabel()"></button>
+          </div>
+        </div>
       </div>
-      <nav>
-        <button type="button" data-view="hosts" class="active">主机 <span class="badge" id="badge-hosts">0</span></button>
-        <button type="button" data-view="groups">分组 <span class="badge" id="badge-groups">0</span></button>
-        <button type="button" data-view="tags">标签 <span class="badge" id="badge-tags">0</span></button>
-        <button type="button" data-view="envs">环境 <span class="badge" id="badge-envs">0</span></button>
-        <button type="button" data-view="policy">危险命令 <span class="badge" id="badge-policy">0</span></button>
-        <button type="button" data-view="known">已知主机密钥 <span class="badge" id="badge-known">0</span></button>
-        <button type="button" data-view="audit">审计 <span class="badge" id="badge-audit">0</span></button>
-        <button type="button" data-view="sessions">会话</button>
-        <button type="button" data-view="operate">执行</button>
-        <button type="button" data-view="relay">中继</button>
-        <button type="button" data-view="bundle">导入导出</button>
-      </nav>
     </aside>
-    <div class="workspace">
-      <h1 id="page-title">主机</h1>
-
-      <section id="hosts-panel" class="view" data-view="hosts" data-title="主机">
-        <div class="sheet">
-          <p class="lead">密码只通过主机表单提交，不会出现在审计记录里。从清单导入仍用命令行 <code>ssh-cli import ssh-ops</code>。</p>
-          <div class="sheet-tools">
-            <label>搜索 <input data-filter="#hosts" placeholder="别名、分组、地址、标签" autocomplete="off"></label>
-            <div class="actions"><button type="button" id="host-new">添加主机</button></div>
-          </div>
-          <p class="summary" id="summary-hosts"></p>
-          <p id="catalog-error" class="error" hidden></p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>别名</th><th>分组</th><th>环境</th><th>地址</th><th>端口</th><th>用户</th><th>认证</th><th>标签</th><th></th></tr>
-              </thead>
-              <tbody id="hosts"></tbody>
-            </table>
-          </div>
-          <div class="pager" data-pager="#hosts"></div>
-        </div>
-        <dialog id="host-dialog">
-          <h2 id="form-title">添加主机</h2>
-          <form id="host-form">
-            <label>别名 <input name="alias" required autocomplete="off"></label>
-            <label>分组
-              <select name="group" id="group" required></select>
-            </label>
-            <label>地址 <input name="host" required placeholder="192.0.2.10" autocomplete="off"></label>
-            <label>端口 <input name="port" type="number" min="0" max="65535" placeholder="22"></label>
-            <label>用户 <input name="user" required autocomplete="off"></label>
-            <label>密码 <input name="password" type="password" autocomplete="new-password"></label>
-            <label>私钥路径 <input name="identity" placeholder="~/.ssh/id_ed25519" autocomplete="off"></label>
-            <p class="muted">密码和私钥路径二选一。密码只用于加密存储，列表和审计都不会显示。标签只用于 <code>-t</code> 选择。</p>
-            <label>命名策略 <select name="policy" id="host-policy"></select></label>
-            <label>标签 <input name="tags" placeholder="app,web" autocomplete="off"></label>
-            <label>本机允许
-              <select name="allowMode">
-                <option value="all">不限制（全集）</option>
-                <option value="list">只允许下面这些</option>
-              </select>
-            </label>
-            <label class="wide">本机允许的命令，一行一条 <textarea name="allow"></textarea></label>
-            <label class="wide">本机拒绝，一行一条 <textarea name="deny"></textarea></label>
-            <label class="wide">本机需确认，一行一条 <textarea name="confirm"></textarea></label>
-            <label class="check"><input name="setDefault" type="checkbox"> 设为默认主机</label>
-            <div class="row">
-              <button type="submit" id="save">保存</button>
-              <button type="button" id="clear-form" class="secondary">清空</button>
+    <div class="page-wrapper">
+      <div class="page-header d-print-none">
+        <div class="container-xl">
+          <div class="row g-2 align-items-center">
+            <div class="col">
+              <h2 class="page-title" x-text="pageTitle()"></h2>
             </div>
-            <p id="form-error" class="error" hidden></p>
-          </form>
-        </dialog>
-      </section>
-
-      <section id="groups" class="view" data-view="groups" data-title="分组" hidden>
-        <div class="sheet">
-          <p class="lead">一台主机只能属于一个分组，环境从分组继承。分组上的命名策略和允许 / 拒绝 / 确认会参与该组主机的规则合并。有主机时不能删除，和 <code>group remove</code> 一样。</p>
-          <div class="sheet-tools">
-            <label>搜索 <input data-filter="#group-rows" placeholder="名称、显示名、环境" autocomplete="off"></label>
-            <div class="actions"><button type="button" id="group-new">添加分组</button></div>
           </div>
-          <p class="summary" id="summary-groups"></p>
-          <p id="group-error" class="error" hidden></p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>名称</th><th>显示名</th><th>环境</th><th>策略</th><th>允许</th><th>拒绝</th><th>确认</th><th>主机</th><th></th></tr>
-              </thead>
-              <tbody id="group-rows"></tbody>
-            </table>
-          </div>
-          <div class="pager" data-pager="#group-rows"></div>
         </div>
-        <dialog id="group-dialog">
-          <h2 id="group-form-title">添加分组</h2>
-          <form id="group-form">
-            <label>名称 <input name="name" required autocomplete="off"></label>
-            <label>显示名 <input name="label" autocomplete="off" placeholder="湖南组测试主机组"></label>
-            <label>环境 <select name="env" id="group-env" required></select></label>
-            <label>命名策略 <select name="policy" id="group-policy"></select></label>
-            <label>允许
-              <select name="allowMode">
-                <option value="all">不限制（全集）</option>
-                <option value="list">只允许下面这些</option>
-              </select>
-            </label>
-            <label class="wide">允许的命令，一行一条
-              <textarea name="allow" placeholder="ls&#10;docker ps"></textarea>
-            </label>
-            <label class="wide">拒绝，一行一条
-              <textarea name="deny" placeholder="wget"></textarea>
-            </label>
-            <label class="wide">需确认，一行一条
-              <textarea name="confirm" placeholder="systemctl restart"></textarea>
-            </label>
-            <label class="wide">受保护路径，一行一条
-              <textarea name="protectedPaths" placeholder="/root/app"></textarea>
-            </label>
-            <p class="muted">空的允许列表会让这一层把命令都交空。名称创建后不能改。分组没有标签。</p>
-            <div class="row">
-              <button type="submit">保存分组</button>
-              <button type="button" id="group-clear" class="secondary">清空</button>
+      </div>
+      <div class="page-body">
+        <div class="container-xl">
+
+          <div x-show="is('home')" data-view="home">
+            <div class="alert alert-danger" role="alert" x-show="errors.home" x-text="errors.home"></div>
+            <div class="row row-deck row-cards mb-3">
+              <div class="col-sm-6 col-lg-3">
+                <div class="card"><div class="card-body"><div class="subheader">主机</div><div class="h1 mb-2" x-text="dash.hosts || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('hosts')">打开主机列表</button></div></div>
+              </div>
+              <div class="col-sm-6 col-lg-3">
+                <div class="card"><div class="card-body"><div class="subheader">分组</div><div class="h1 mb-2" x-text="dash.groups || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('groups')">打开分组</button></div></div>
+              </div>
+              <div class="col-sm-6 col-lg-3">
+                <div class="card"><div class="card-body"><div class="subheader">会话</div><div class="h1 mb-2" x-text="dash.sessions || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('sessions')">打开会话</button></div></div>
+              </div>
+              <div class="col-sm-6 col-lg-3">
+                <div class="card"><div class="card-body"><div class="subheader">审计</div><div class="h1 mb-2" x-text="dashEntries()"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('audit')">打开审计</button></div></div>
+              </div>
             </div>
-          </form>
-        </dialog>
-      </section>
-
-      <section id="tags" class="view" data-view="tags" data-title="标签" hidden>
-        <div class="sheet">
-          <p class="lead">标签只写在主机上，用来配合 <code>ssh-cli -t</code> 选择主机，不表示权限。分组没有 tags 字段。把标签加到某个分组，实际是写到该分组里的每一台主机上。</p>
-          <div class="sheet-tools">
-            <label>搜索 <input data-filter="#tag-rows" placeholder="分组、主机、标签" autocomplete="off"></label>
-          </div>
-          <p class="summary" id="summary-tags"></p>
-          <p id="tag-error" class="error" hidden></p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>分组</th><th>环境</th><th>主机</th><th>全组标签</th><th></th></tr>
-              </thead>
-              <tbody id="tag-rows"></tbody>
-            </table>
-          </div>
-          <div class="pager" data-pager="#tag-rows"></div>
-        </div>
-      </section>
-
-      <section id="envs" class="view" data-view="envs" data-title="环境" hidden>
-        <div class="sheet">
-          <p class="lead">maxMode 是天花板。defaultPolicy 是环境这一层引用的命名策略。环境本身没有行内 allow / deny。dev、test、preprod、prod 是内置环境，不能改也不能删。可以另加自定义环境。</p>
-          <div class="sheet-tools">
-            <label>搜索 <input data-filter="#env-rows" placeholder="名称、显示名" autocomplete="off"></label>
-            <div class="actions"><button type="button" id="env-new">添加环境</button></div>
-          </div>
-          <p class="summary" id="summary-envs"></p>
-          <p id="env-error" class="error" hidden></p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>环境</th><th>显示名</th><th>颜色</th><th>天花板</th><th>默认策略</th><th></th></tr>
-              </thead>
-              <tbody id="env-rows"></tbody>
-            </table>
-          </div>
-          <div class="pager" data-pager="#env-rows"></div>
-        </div>
-        <dialog id="env-dialog">
-          <h2>添加环境</h2>
-          <form id="env-form">
-            <label>名称 <input name="name" required autocomplete="off" placeholder="lab"></label>
-            <label>显示名 <input name="label" autocomplete="off"></label>
-            <label>颜色 <input name="color" autocomplete="off" placeholder="green"></label>
-            <label>天花板
-              <select name="maxMode" required>
-                <option value="readonly">readonly</option>
-                <option value="standard">standard</option>
-                <option value="admin">admin</option>
-              </select>
-            </label>
-            <label>默认策略 <select name="defaultPolicy" id="env-policy"></select></label>
-            <div class="row">
-              <button type="submit">添加环境</button>
-              <button type="button" id="env-clear" class="secondary">清空</button>
+            <div class="card mb-3"><div class="card-body"><div :class="hmacClass()" role="alert" x-text="hmacText()"></div><button class="btn btn-outline-secondary btn-sm" type="button" @click="show('bundle')">打开运维</button></div></div>
+            <div class="row row-cards">
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title">最近命令</h3></div>
+                  <div class="empty" x-show="dash.recent.length === 0"><p class="empty-title">还没有命令记录</p><p class="empty-subtitle text-secondary">执行、上传或命令行操作会写到这里。</p></div>
+                  <div class="table-responsive" x-show="dash.recent.length > 0">
+                    <table :class="tableClass()">
+                      <thead><tr><th>时间</th><th>状态</th><th>主机</th><th>命令 / 路径</th></tr></thead>
+                      <tbody>
+                        <template x-for="rec in dash.recent" :key="rec.id || rec.time + rec.host + subject(rec)">
+                          <tr :class="auditRowClass(rec)" @click="openAuditHost(rec)">
+                            <td class="text-secondary" x-text="rec.time"></td>
+                            <td><span :class="statusBadge(rec.status)" x-text="rec.status"></span></td>
+                            <td x-text="rec.host"></td>
+                            <td x-text="subject(rec)"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+              <div class="col-lg-6">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title">最近失败</h3></div>
+                  <div class="empty" x-show="dash.failures.length === 0"><p class="empty-title">最近没有失败</p><p class="empty-subtitle text-secondary">策略拒绝、连接失败和认证失败会列在这里。</p></div>
+                  <div class="table-responsive" x-show="dash.failures.length > 0">
+                    <table :class="tableClass()">
+                      <thead><tr><th>时间</th><th>状态</th><th>主机</th><th>原因</th></tr></thead>
+                      <tbody>
+                        <template x-for="rec in dash.failures" :key="(rec.id || '') + rec.time">
+                          <tr :class="auditRowClass(rec)" @click="openAuditHost(rec)">
+                            <td class="text-secondary" x-text="rec.time"></td>
+                            <td><span :class="statusBadge(rec.status)" x-text="rec.status"></span></td>
+                            <td x-text="rec.host"></td>
+                            <td x-text="rec.reason || subject(rec)"></td>
+                          </tr>
+                        </template>
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
             </div>
-          </form>
-        </dialog>
-      </section>
+          </div>
 
-      <section id="policy" class="view" data-view="policy" data-title="危险命令" hidden>
-        <div class="sheet">
-          <p class="lead">规则写在命名策略上，或挂到环境、分组、主机。某一层不写允许列表，这一层就是全集；写成空列表则会把这一层交空。拒绝和确认在各层取并集。内置硬拒绝（删除根目录、mkfs、把 dd 或重定向写到磁盘、修改根目录属主、fork bomb）不能在这里关掉。策略 HMAC 不代替人工确认。elevate 不在这个版本里。</p>
-          <div class="sheet-tools">
-            <label>搜索 <input data-filter="#policy-rows" placeholder="策略名" autocomplete="off"></label>
-            <div class="actions"><button type="button" id="policy-new">添加命名策略</button></div>
+          <div x-show="is('hosts')" data-view="hosts">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">主机</h3>
+                  <p class="text-secondary m-0">密码只通过主机表单提交，不会出现在审计记录里。从清单导入仍用命令行 ssh-cli import ssh-ops。</p>
+                </div>
+                <div class="card-actions">
+                  <button class="btn btn-outline-primary" type="button" @click="openBatch()">批量执行</button>
+                  <button class="btn btn-primary" type="button" @click="openHostForm()">添加主机</button>
+                </div>
+              </div>
+              <div class="card-body border-bottom">
+                <label class="form-label" for="host-search">搜索</label>
+                <input id="host-search" class="form-control" x-model="q.hosts" @input="resetPage('hosts')" placeholder="别名、分组、地址、标签（按 / 聚焦）" autocomplete="off">
+                <div class="alert alert-danger mt-3" role="alert" x-show="errors.hosts" x-text="errors.hosts"></div>
+              </div>
+              <div class="empty" x-show="catalog.hosts.length === 0">
+                <p class="empty-title">还没有主机</p>
+                <p class="empty-subtitle text-secondary">点「添加主机」，或在命令行运行 ssh-cli host add。密码只通过表单进入加密存储。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="openHostForm()">添加主机</button></div>
+              </div>
+              <div class="empty" x-show="catalog.hosts.length > 0 && hostTotal() === 0">
+                <p class="empty-title">没有匹配的主机</p>
+                <p class="empty-subtitle text-secondary">换个关键词，或清空搜索。</p>
+              </div>
+              <div class="table-responsive" x-show="hostTotal() > 0">
+                <table :class="tableClass()">
+                  <thead>
+                    <tr>
+                      <th class="w-1"><input class="form-check-input" type="checkbox" aria-label="全选当前页" @change="togglePage($event.target.checked)"></th>
+                      <th>别名</th><th>分组</th><th>环境</th><th>地址</th><th>端口</th><th>用户</th><th>认证</th><th>标签</th><th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="hosts">
+                    <template x-for="h in filteredHosts()" :key="h.alias">
+                      <tr>
+                        <td><input class="form-check-input" type="checkbox" :checked="!!selected[h.alias]" @change="toggleHost(h.alias, $event.target.checked)" :aria-label="'选择 ' + h.alias"></td>
+                        <td><span x-text="h.alias"></span> <span class="badge bg-blue-lt" x-show="h.default">默认</span></td>
+                        <td x-text="groupCaption(groupByName(h.group)) || h.group"></td>
+                        <td x-text="h.env"></td>
+                        <td x-text="h.host"></td>
+                        <td x-text="h.port"></td>
+                        <td x-text="h.user"></td>
+                        <td><span class="badge bg-secondary-lt" x-text="h.auth"></span></td>
+                        <td x-text="(h.tags || []).join(', ')"></td>
+                        <td class="text-end">
+                          <button class="btn btn-outline-secondary btn-sm" type="button" @click="openHost(h.alias)">详情</button>
+                          <button class="btn btn-outline-secondary btn-sm" type="button" @click="openHostForm(h)">编辑</button>
+                          <button class="btn btn-outline-danger btn-sm" type="button" @click="removeHost(h.alias)">删除</button>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card-footer" data-pager="#hosts" x-show="hostTotal() > 0">
+                <span class="text-secondary" x-text="pageMeta('hosts')"></span>
+                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.hosts.size" @change="setPageSize('hosts')">
+                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                </select>
+                <ul class="pagination m-0 ms-auto">
+                  <li class="page-item" :class="{ disabled: pages.hosts.page <= 1 }"><button class="page-link" type="button" @click="prevPage('hosts')">上一页</button></li>
+                  <li class="page-item active"><span class="page-link" x-text="pageFrac('hosts')"></span></li>
+                  <li class="page-item" :class="{ disabled: pages.hosts.page >= pageCount('hosts') }"><button class="page-link" type="button" @click="nextPage('hosts')">下一页</button></li>
+                </ul>
+              </div>
+            </div>
           </div>
-          <p class="summary" id="summary-policy"></p>
-          <p id="policy-error" class="error" hidden></p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>名称</th><th>来源</th><th>模式</th><th>允许</th><th>拒绝</th><th>确认</th><th></th></tr>
-              </thead>
-              <tbody id="policy-rows"></tbody>
-            </table>
+
+          <div x-show="is('host')" data-view="host">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">主机详情</h3>
+                  <p class="text-secondary m-0">一台主机的分组、环境、有效策略、当前会话和最近审计。策略仍由各层交集计算，这里只展示结果。</p>
+                </div>
+                <div class="card-actions">
+                  <button class="btn btn-outline-secondary" type="button" @click="show('hosts')">返回主机</button>
+                  <button class="btn btn-primary" type="button" @click="openSession(currentHost)">打开会话</button>
+                </div>
+              </div>
+              <div class="card-body">
+                <div class="alert alert-danger" role="alert" x-show="errors.host" x-text="errors.host"></div>
+                <div class="datagrid">
+                  <div><div class="datagrid-title">别名</div><div x-text="detail.host.alias"></div></div>
+                  <div><div class="datagrid-title">分组</div><div x-text="(detail.host.group || '') + (detail.host.groupLabel ? ' / ' + detail.host.groupLabel : '')"></div></div>
+                  <div><div class="datagrid-title">环境</div><div x-text="(detail.host.env || '') + (detail.host.envLabel ? ' / ' + detail.host.envLabel : '') + (detail.host.maxMode ? ' / 天花板 ' + detail.host.maxMode : '')"></div></div>
+                  <div><div class="datagrid-title">地址</div><div x-text="(detail.host.host || '') + ':' + (detail.host.port || '')"></div></div>
+                  <div><div class="datagrid-title">用户</div><div x-text="detail.host.user"></div></div>
+                  <div><div class="datagrid-title">认证</div><div x-text="detail.host.auth"></div></div>
+                  <div><div class="datagrid-title">标签</div><div x-text="(detail.host.tags || []).join(', ') || '无'"></div></div>
+                  <div><div class="datagrid-title">有效模式</div><div x-text="detail.policy.mode"></div></div>
+                  <div><div class="datagrid-title">允许</div><div x-text="policySummary(detail.policy)"></div></div>
+                  <div><div class="datagrid-title">拒绝</div><div x-text="joinList(detail.policy.deny, '无额外拒绝')"></div></div>
+                  <div><div class="datagrid-title">需确认</div><div x-text="joinList(detail.policy.confirm, '无')"></div></div>
+                  <div><div class="datagrid-title">中继</div><div x-text="relayCap(detail.policy)"></div></div>
+                  <div><div class="datagrid-title">上传 / 下载</div><div x-text="capText(detail.policy)"></div></div>
+                  <div><div class="datagrid-title">数据外流</div><div x-text="outflowText(detail.policy)"></div></div>
+                </div>
+                <div class="alert alert-warning mt-3" role="alert" x-show="warnText(detail.policy)" x-text="warnText(detail.policy)"></div>
+                <p class="text-secondary" x-text="sessionLine()"></p>
+                <h3 class="card-title">最近审计</h3>
+                <div class="empty" x-show="(detail.audit || []).length === 0"><p class="empty-title">这台主机还没有审计</p><p class="empty-subtitle text-secondary">在执行页对它跑一条命令，或用 ssh-cli exec。</p></div>
+                <div class="table-responsive" x-show="(detail.audit || []).length > 0">
+                  <table :class="tableClass()">
+                    <thead><tr><th>时间</th><th>状态</th><th>命令 / 路径</th></tr></thead>
+                    <tbody>
+                      <template x-for="rec in detail.audit" :key="(rec.id || '') + rec.time">
+                        <tr :class="auditRowClass(rec)">
+                          <td x-text="rec.time"></td>
+                          <td><span :class="statusBadge(rec.status)" x-text="rec.status"></span></td>
+                          <td x-text="subject(rec) || rec.reason"></td>
+                        </tr>
+                      </template>
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
           </div>
-          <div class="pager" data-pager="#policy-rows"></div>
+
+          <div x-show="is('groups')" data-view="groups">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">分组</h3>
+                  <p class="text-secondary m-0">一台主机只能属于一个分组，环境从分组继承。有主机时不能删除，和 group remove 一样。</p>
+                </div>
+                <div class="card-actions"><button class="btn btn-primary" type="button" @click="openGroupForm()">添加分组</button></div>
+              </div>
+              <div class="card-body border-bottom">
+                <label class="form-label">搜索</label>
+                <input class="form-control" x-model="q.groups" @input="resetPage('groups')" placeholder="名称、显示名、环境" autocomplete="off">
+                <div class="alert alert-danger mt-3" role="alert" x-show="errors.groups" x-text="errors.groups"></div>
+              </div>
+              <div class="empty" x-show="catalog.groups.length === 0">
+                <p class="empty-title">还没有分组</p>
+                <p class="empty-subtitle text-secondary">点「添加分组」。一台主机只能属于一个分组，环境从分组继承。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="openGroupForm()">添加分组</button></div>
+              </div>
+              <div class="table-responsive" x-show="groupTotal() > 0">
+                <table :class="tableClass()">
+                  <thead><tr><th>名称</th><th>显示名</th><th>环境</th><th>策略</th><th>允许</th><th>拒绝</th><th>确认</th><th>主机</th><th></th></tr></thead>
+                  <tbody id="group-rows">
+                    <template x-for="g in filteredGroups()" :key="g.name">
+                      <tr>
+                        <td x-text="g.name"></td>
+                        <td x-text="g.label"></td>
+                        <td x-text="g.env"></td>
+                        <td x-text="g.policy"></td>
+                        <td x-text="allowLabel(g)"></td>
+                        <td x-text="listLabel(g.deny)"></td>
+                        <td x-text="listLabel(g.confirm)"></td>
+                        <td x-text="g.hosts"></td>
+                        <td class="text-end">
+                          <button class="btn btn-outline-secondary btn-sm" type="button" @click="openGroupForm(g)">编辑</button>
+                          <button class="btn btn-outline-danger btn-sm" type="button" x-show="!g.hosts" @click="removeGroup(g.name)">删除</button>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card-footer" data-pager="#group-rows" x-show="groupTotal() > 0">
+                <span class="text-secondary" x-text="pageMeta('groups')"></span>
+                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.groups.size" @change="setPageSize('groups')">
+                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                </select>
+                <ul class="pagination m-0 ms-auto">
+                  <li class="page-item" :class="{ disabled: pages.groups.page <= 1 }"><button class="page-link" type="button" @click="prevPage('groups')">上一页</button></li>
+                  <li class="page-item active"><span class="page-link" x-text="pageFrac('groups')"></span></li>
+                  <li class="page-item" :class="{ disabled: pages.groups.page >= pageCount('groups') }"><button class="page-link" type="button" @click="nextPage('groups')">下一页</button></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="is('tags')" data-view="tags">
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">标签</h3>
+                <p class="text-secondary m-0">标签只写在主机上，用来配合 ssh-cli -t 选择主机，不表示权限。分组没有 tags 字段。</p>
+              </div>
+              <div class="card-body border-bottom">
+                <label class="form-label">搜索</label>
+                <input class="form-control" x-model="q.tags" @input="resetPage('tags')" placeholder="分组、主机、标签" autocomplete="off">
+                <div class="alert alert-danger mt-3" role="alert" x-show="errors.tags" x-text="errors.tags"></div>
+              </div>
+              <div class="empty" x-show="catalog.groups.length === 0">
+                <p class="empty-title">还没有分组</p>
+                <p class="empty-subtitle text-secondary">先添加分组和主机。标签只写在主机上，用来配合 ssh-cli -t 选择。</p>
+              </div>
+              <div class="table-responsive" x-show="tagTotal() > 0">
+                <table :class="tableClass()">
+                  <thead><tr><th>分组</th><th>环境</th><th>主机</th><th>全组标签</th><th></th></tr></thead>
+                  <tbody id="tag-rows">
+                    <template x-for="g in filteredTagGroups()" :key="g.name">
+                      <tr>
+                        <td x-text="groupCaption(g)"></td>
+                        <td x-text="g.env"></td>
+                        <td>
+                          <div class="text-secondary" x-show="hostsIn(g.name).length === 0">还没有主机。标签不能写在分组上。</div>
+                          <template x-for="h in hostsIn(g.name)" :key="h.alias">
+                            <div class="input-group input-group-sm mb-1">
+                              <span class="input-group-text" x-text="h.alias"></span>
+                              <input class="form-control" x-model="tagDraft[h.alias]" :aria-label="h.alias + ' 的标签'">
+                              <button class="btn btn-outline-secondary" type="button" @click="saveHostTags(h.alias)">保存</button>
+                            </div>
+                          </template>
+                        </td>
+                        <td><input class="form-control form-control-sm" x-model="tagBulk[g.name]" placeholder="app" :aria-label="g.name + ' 全组标签'"></td>
+                        <td class="text-end">
+                          <button class="btn btn-primary btn-sm" type="button" :disabled="hostsIn(g.name).length === 0" @click="applyGroupTags(g.name, 'add')">加到全组</button>
+                          <button class="btn btn-outline-secondary btn-sm" type="button" :disabled="hostsIn(g.name).length === 0" @click="applyGroupTags(g.name, 'remove')">从全组去掉</button>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card-footer" data-pager="#tag-rows" x-show="tagTotal() > 0">
+                <span class="text-secondary" x-text="pageMeta('tags')"></span>
+                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.tags.size" @change="setPageSize('tags')">
+                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                </select>
+                <ul class="pagination m-0 ms-auto">
+                  <li class="page-item" :class="{ disabled: pages.tags.page <= 1 }"><button class="page-link" type="button" @click="prevPage('tags')">上一页</button></li>
+                  <li class="page-item active"><span class="page-link" x-text="pageFrac('tags')"></span></li>
+                  <li class="page-item" :class="{ disabled: pages.tags.page >= pageCount('tags') }"><button class="page-link" type="button" @click="nextPage('tags')">下一页</button></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="is('envs')" data-view="envs">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">环境</h3>
+                  <p class="text-secondary m-0">maxMode 是天花板。dev、test、preprod、prod 是内置环境，不能改也不能删。可以另加自定义环境。</p>
+                </div>
+                <div class="card-actions"><button class="btn btn-primary" type="button" @click="openEnvForm()">添加环境</button></div>
+              </div>
+              <div class="card-body border-bottom">
+                <label class="form-label">搜索</label>
+                <input class="form-control" x-model="q.envs" @input="resetPage('envs')" placeholder="名称、显示名" autocomplete="off">
+                <div class="alert alert-danger mt-3" role="alert" x-show="errors.envs" x-text="errors.envs"></div>
+              </div>
+              <div class="table-responsive">
+                <table :class="tableClass()">
+                  <thead><tr><th>环境</th><th>显示名</th><th>颜色</th><th>天花板</th><th>默认策略</th><th></th></tr></thead>
+                  <tbody id="env-rows">
+                    <template x-for="e in filteredEnvs()" :key="e.name">
+                      <tr>
+                        <td x-text="e.name"></td>
+                        <td x-text="e.label"></td>
+                        <td><span :class="envBadge(e.color)" x-text="e.color || e.name"></span></td>
+                        <td x-text="e.maxMode"></td>
+                        <td x-text="e.defaultPolicy"></td>
+                        <td class="text-end">
+                          <span class="badge bg-secondary-lt" x-show="e.builtin">内置，不可改</span>
+                          <button class="btn btn-outline-secondary btn-sm" type="button" x-show="!e.builtin" @click="openEnvForm(e)">编辑</button>
+                          <button class="btn btn-outline-danger btn-sm" type="button" x-show="!e.builtin" @click="removeEnv(e.name)">删除</button>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card-footer" data-pager="#env-rows">
+                <span class="text-secondary" x-text="pageMeta('envs')"></span>
+                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.envs.size" @change="setPageSize('envs')">
+                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                </select>
+                <ul class="pagination m-0 ms-auto">
+                  <li class="page-item" :class="{ disabled: pages.envs.page <= 1 }"><button class="page-link" type="button" @click="prevPage('envs')">上一页</button></li>
+                  <li class="page-item active"><span class="page-link" x-text="pageFrac('envs')"></span></li>
+                  <li class="page-item" :class="{ disabled: pages.envs.page >= pageCount('envs') }"><button class="page-link" type="button" @click="nextPage('envs')">下一页</button></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="is('policy')" data-view="policy">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">危险命令</h3>
+                  <p class="text-secondary m-0">某一层不写允许列表就是全集；写成空列表则会把这一层交空。内置硬拒绝不能关掉。HMAC 不代替人工确认。</p>
+                </div>
+                <div class="card-actions"><button class="btn btn-primary" type="button" @click="openPolicyForm()">添加命名策略</button></div>
+              </div>
+              <div class="card-body border-bottom">
+                <div :class="hmacClass()" role="alert" x-text="hmacText()"></div>
+                <label class="form-label">搜索</label>
+                <input class="form-control" x-model="q.policy" @input="resetPage('policy')" placeholder="策略名" autocomplete="off">
+                <div class="alert alert-danger mt-3" role="alert" x-show="errors.policy" x-text="errors.policy"></div>
+              </div>
+              <div class="table-responsive">
+                <table :class="tableClass()">
+                  <thead><tr><th>名称</th><th>来源</th><th>模式</th><th>允许</th><th>拒绝</th><th>确认</th><th></th></tr></thead>
+                  <tbody id="policy-rows">
+                    <template x-for="p in filteredPolicies()" :key="p.name">
+                      <tr>
+                        <td x-text="p.name"></td>
+                        <td><span class="badge bg-secondary-lt" x-text="sourceLabel(p)"></span></td>
+                        <td x-text="p.mode"></td>
+                        <td x-text="allowLabel(p)"></td>
+                        <td x-text="listLabel(p.deny)"></td>
+                        <td x-text="listLabel(p.confirm)"></td>
+                        <td class="text-end">
+                          <button class="btn btn-outline-secondary btn-sm" type="button" @click="openPolicyForm(p)" x-text="p.builtin && !p.overridden ? '覆盖' : '编辑'"></button>
+                          <button class="btn btn-outline-danger btn-sm" type="button" x-show="p.overridden || !p.builtin" @click="removePolicy(p)" x-text="p.overridden ? '恢复内置' : '删除'"></button>
+                        </td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card-footer" data-pager="#policy-rows">
+                <span class="text-secondary" x-text="pageMeta('policy')"></span>
+                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.policy.size" @change="setPageSize('policy')">
+                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                </select>
+                <ul class="pagination m-0 ms-auto">
+                  <li class="page-item" :class="{ disabled: pages.policy.page <= 1 }"><button class="page-link" type="button" @click="prevPage('policy')">上一页</button></li>
+                  <li class="page-item active"><span class="page-link" x-text="pageFrac('policy')"></span></li>
+                  <li class="page-item" :class="{ disabled: pages.policy.page >= pageCount('policy') }"><button class="page-link" type="button" @click="nextPage('policy')">下一页</button></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="is('known')" data-view="known">
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">已知主机密钥</h3>
+                <p class="text-secondary m-0">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙。</p>
+              </div>
+              <div class="card-body border-bottom">
+                <label class="form-label">搜索</label>
+                <input class="form-control" x-model="q.known" @input="resetPage('known')" placeholder="标记、指纹" autocomplete="off">
+                <div class="alert alert-danger mt-3" role="alert" x-show="errors.known" x-text="errors.known"></div>
+              </div>
+              <div class="empty" x-show="known.length === 0">
+                <p class="empty-title">还没有已知主机密钥</p>
+                <p class="empty-subtitle text-secondary">第一次成功连接会记下看到的钥匙。删掉一条后，下次连接重新记录第一把。</p>
+              </div>
+              <div class="empty" x-show="known.length > 0 && knownTotal() === 0">
+                <p class="empty-title">没有匹配的记录</p>
+                <p class="empty-subtitle text-secondary">换个关键词。</p>
+              </div>
+              <div class="table-responsive" x-show="knownTotal() > 0">
+                <table :class="tableClass()">
+                  <thead><tr><th>标记</th><th>类型</th><th>指纹</th><th></th></tr></thead>
+                  <tbody id="known">
+                    <template x-for="entry in filteredKnown()" :key="entry.marker">
+                      <tr>
+                        <td x-text="entry.marker"></td>
+                        <td x-text="entry.keyType"></td>
+                        <td class="text-secondary" x-text="entry.fingerprint"></td>
+                        <td class="text-end"><button class="btn btn-outline-danger btn-sm" type="button" @click="removeKnown(entry.marker)">删除</button></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card-footer" data-pager="#known" x-show="knownTotal() > 0">
+                <span class="text-secondary" x-text="pageMeta('known')"></span>
+                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.known.size" @change="setPageSize('known')">
+                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                </select>
+                <ul class="pagination m-0 ms-auto">
+                  <li class="page-item" :class="{ disabled: pages.known.page <= 1 }"><button class="page-link" type="button" @click="prevPage('known')">上一页</button></li>
+                  <li class="page-item active"><span class="page-link" x-text="pageFrac('known')"></span></li>
+                  <li class="page-item" :class="{ disabled: pages.known.page >= pageCount('known') }"><button class="page-link" type="button" @click="nextPage('known')">下一页</button></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="is('audit')" data-view="audit">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">审计</h3>
+                  <p class="text-secondary m-0">读取和命令行 ssh-cli audit list 同一份日志。筛选条件发给本机接口，不会改配置。</p>
+                </div>
+                <div class="card-actions">
+                  <button class="btn btn-outline-secondary" type="button" @click="exportAudit()">导出 CSV</button>
+                  <button class="btn btn-outline-danger" type="button" @click="cleanupAudit()">清理 30 天前</button>
+                </div>
+              </div>
+              <div class="card-body border-bottom">
+                <form class="row g-2" @submit.prevent="searchAudit()">
+                  <div class="col-md-2"><label class="form-label">操作</label>
+                    <select class="form-select" x-model="auditFilter.op"><option value="">全部</option><option>exec</option><option>upload</option><option>download</option><option>relay</option><option>policy_check</option><option>session</option><option>config_change</option><option>status</option><option>service</option><option>keys</option></select>
+                  </div>
+                  <div class="col-md-2"><label class="form-label">主机</label>
+                    <select class="form-select" x-model="auditFilter.host"><option value="">全部</option><template x-for="h in sortedHosts()" :key="h.alias"><option :value="h.alias" x-text="h.alias"></option></template></select>
+                  </div>
+                  <div class="col-md-2"><label class="form-label">分组</label>
+                    <select class="form-select" x-model="auditFilter.group"><option value="">全部</option><template x-for="g in sortedGroups()" :key="g.name"><option :value="g.name" x-text="g.name"></option></template></select>
+                  </div>
+                  <div class="col-md-2"><label class="form-label">环境</label>
+                    <select class="form-select" x-model="auditFilter.env"><option value="">全部</option><template x-for="e in sortedEnvs()" :key="e.name"><option :value="e.name" x-text="e.name"></option></template></select>
+                  </div>
+                  <div class="col-md-2"><label class="form-label">状态</label>
+                    <select class="form-select" x-model="auditFilter.status"><option value="">全部</option><option>ok</option><option>denied</option><option>timeout</option><option>auth</option><option>connect</option><option>error</option></select>
+                  </div>
+                  <div class="col-md-2"><label class="form-label">自从</label><input class="form-control" x-model="auditFilter.since" placeholder="24h 或 2026-01-02" autocomplete="off"></div>
+                  <div class="col-md-2"><label class="form-label">直到</label><input class="form-control" x-model="auditFilter.until" placeholder="YYYY-MM-DD" autocomplete="off"></div>
+                  <div class="col-md-10 d-flex align-items-end gap-2 flex-wrap">
+                    <button class="btn btn-outline-secondary" type="button" @click="setRange('1h')">1 小时</button>
+                    <button class="btn btn-outline-secondary" type="button" @click="setRange('24h')">24 小时</button>
+                    <button class="btn btn-outline-secondary" type="button" @click="setRange('168h')">7 天</button>
+                    <button class="btn btn-outline-secondary" type="button" @click="setRange('720h')">30 天</button>
+                    <button class="btn btn-primary" type="submit">筛选</button>
+                  </div>
+                </form>
+                <p class="text-secondary mt-2 mb-0" x-text="auditSummary()"></p>
+                <p class="text-secondary mb-0" x-show="cleanupNote" x-text="cleanupNote"></p>
+                <div class="alert alert-danger mt-3" role="alert" x-show="errors.audit" x-text="errors.audit"></div>
+              </div>
+              <div class="empty" x-show="audit.records.length === 0">
+                <p class="empty-title">这个筛选下没有记录</p>
+                <p class="empty-subtitle text-secondary">放宽时间或状态，或先在「执行」里跑一条命令。命令行写入的是同一份日志。</p>
+              </div>
+              <div class="table-responsive" x-show="audit.records.length > 0">
+                <table :class="tableClass()">
+                  <thead>
+                    <tr><th>时间</th><th>状态</th><th>操作</th><th>主机</th><th>环境</th><th>退出</th><th>高风险</th><th>命令 / 路径</th><th>原因</th></tr>
+                    <tr>
+                      <th><input class="form-control form-control-sm" x-model="col.time" placeholder="时间" aria-label="按时间过滤" autocomplete="off"></th>
+                      <th><input class="form-control form-control-sm" x-model="col.status" placeholder="状态" aria-label="按状态过滤" autocomplete="off"></th>
+                      <th><input class="form-control form-control-sm" x-model="col.op" placeholder="操作" aria-label="按操作过滤" autocomplete="off"></th>
+                      <th><input class="form-control form-control-sm" x-model="col.host" placeholder="主机" aria-label="按主机过滤" autocomplete="off"></th>
+                      <th><input class="form-control form-control-sm" x-model="col.env" placeholder="环境" aria-label="按环境过滤" autocomplete="off"></th>
+                      <th></th><th></th>
+                      <th><input class="form-control form-control-sm" x-model="col.command" placeholder="命令" aria-label="按命令过滤" autocomplete="off"></th>
+                      <th><input class="form-control form-control-sm" x-model="col.reason" placeholder="原因" aria-label="按原因过滤" autocomplete="off"></th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    <template x-for="rec in shownAudit()" :key="(rec.id || '') + rec.time + subject(rec)">
+                      <tr :class="auditRowClass(rec)" @click="openAuditHost(rec)">
+                        <td class="text-secondary" x-text="rec.time"></td>
+                        <td><span :class="statusBadge(rec.status)" x-text="rec.status"></span></td>
+                        <td x-text="rec.op"></td>
+                        <td x-text="rec.host"></td>
+                        <td x-text="rec.env"></td>
+                        <td x-text="rec.exit_code == null ? '' : rec.exit_code"></td>
+                        <td x-text="rec.high_risk ? 'yes' : ''"></td>
+                        <td x-text="subject(rec)"></td>
+                        <td x-text="rec.reason"></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="empty" x-show="audit.records.length > 0 && shownAudit().length === 0">
+                <p class="empty-title">这一页没有匹配的列</p>
+                <p class="empty-subtitle text-secondary">清空表头里的过滤，或翻到别的页。</p>
+              </div>
+              <div class="card-footer" id="audit-pager">
+                <span class="text-secondary" x-text="'共 ' + (audit.total || 0) + ' 条'"></span>
+                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="audit.pageSize" @change="setAuditSize()">
+                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                </select>
+                <ul class="pagination m-0 ms-auto">
+                  <li class="page-item" :class="{ disabled: audit.page <= 1 }"><button class="page-link" type="button" @click="auditPrev()">上一页</button></li>
+                  <li class="page-item active"><span class="page-link" x-text="audit.page + ' / ' + auditPages()"></span></li>
+                  <li class="page-item" :class="{ disabled: audit.page >= auditPages() }"><button class="page-link" type="button" @click="auditNext()">下一页</button></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="is('sessions')" data-view="sessions">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">会话</h3>
+                  <p class="text-secondary m-0">会话只活在这个 UI 进程里。空闲默认 5 分钟，最长 60 分钟。命令行 session list 看不到这里的会话。</p>
+                </div>
+                <div class="card-actions btn-list">
+                  <select class="form-select w-auto" id="session-host" x-model="exec.alias">
+                    <template x-for="h in sortedHosts()" :key="h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
+                  </select>
+                  <button class="btn btn-primary" type="button" @click="openSession(exec.alias)">打开</button>
+                  <button class="btn btn-outline-secondary" type="button" @click="loadSessions()">刷新</button>
+                </div>
+              </div>
+              <div class="card-body" x-show="errors.sessions">
+                <div class="alert alert-danger" role="alert" x-text="errors.sessions"></div>
+              </div>
+              <div class="empty" x-show="sessions.length === 0">
+                <p class="empty-title">这个进程里没有会话</p>
+                <p class="empty-subtitle text-secondary">选一台主机后点「打开」。命令行 session list 看不到这里的会话，它们只活在这个 UI 进程里。</p>
+              </div>
+              <div class="table-responsive" x-show="sessionTotal() > 0">
+                <table :class="tableClass()">
+                  <thead><tr><th>主机</th><th>状态</th><th>空闲剩余</th><th>最长剩余</th><th>打开</th><th>最近使用</th><th></th></tr></thead>
+                  <tbody id="session-rows">
+                    <template x-for="item in filteredSessions()" :key="item.alias">
+                      <tr :class="item.status === 'busy' ? 'table-warning' : ''">
+                        <td x-text="item.alias"></td>
+                        <td><span :class="item.status === 'busy' ? 'badge bg-yellow-lt' : 'badge bg-green-lt'" x-text="item.status === 'busy' ? '忙碌' : '空闲'"></span></td>
+                        <td x-text="idleText(item)"></td>
+                        <td x-text="formatLeft(item.lifeLeftSec)"></td>
+                        <td class="text-secondary" x-text="item.opened"></td>
+                        <td class="text-secondary" x-text="item.used"></td>
+                        <td class="text-end"><button class="btn btn-outline-danger btn-sm" type="button" @click="closeSession(item.alias)">关闭</button></td>
+                      </tr>
+                    </template>
+                  </tbody>
+                </table>
+              </div>
+              <div class="card-footer" data-pager="#session-rows" x-show="sessionTotal() > 0">
+                <span class="text-secondary" x-text="pageMeta('sessions')"></span>
+                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.sessions.size" @change="setPageSize('sessions')">
+                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                </select>
+                <ul class="pagination m-0 ms-auto">
+                  <li class="page-item" :class="{ disabled: pages.sessions.page <= 1 }"><button class="page-link" type="button" @click="prevPage('sessions')">上一页</button></li>
+                  <li class="page-item active"><span class="page-link" x-text="pageFrac('sessions')"></span></li>
+                  <li class="page-item" :class="{ disabled: pages.sessions.page >= pageCount('sessions') }"><button class="page-link" type="button" @click="nextPage('sessions')">下一页</button></li>
+                </ul>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="is('operate')" data-view="operate">
+            <div class="alert alert-danger" role="alert" x-show="errors.operate" x-text="errors.operate"></div>
+            <div class="row row-cards">
+              <div class="col-lg-12">
+                <form class="card" @submit.prevent="runExec()">
+                  <div class="card-header"><h3 class="card-title">执行命令</h3></div>
+                  <div class="card-body">
+                    <p class="text-secondary">执行、上传、下载走和命令行同一套策略与审计。需要确认时输入主机别名。</p>
+                    <div class="row g-3">
+                      <div class="col-md-4"><label class="form-label">主机</label>
+                        <select class="form-select" x-model="exec.alias" required>
+                          <template x-for="h in sortedHosts()" :key="h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
+                        </select>
+                      </div>
+                      <div class="col-md-4"><label class="form-label">超时</label><input class="form-control" x-model="exec.timeout" placeholder="30s" autocomplete="off"></div>
+                      <div class="col-md-12"><label class="form-label">命令</label><input class="form-control" x-model="exec.command" required autocomplete="off"></div>
+                      <div class="col-md-6"><label class="form-label">确认短语</label><input class="form-control" x-model="exec.confirm" placeholder="需要时填写主机别名" autocomplete="off"></div>
+                      <div class="col-md-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="exec.allowOutflow"><span class="form-check-label">允许带回命令输出（noDataOutflow 需再确认 outflow）</span></label></div>
+                    </div>
+                  </div>
+                  <div class="card-footer"><button class="btn btn-primary" type="submit">执行</button></div>
+                </form>
+              </div>
+              <div class="col-lg-6">
+                <form class="card" @submit.prevent="upload($event)">
+                  <div class="card-header"><h3 class="card-title">上传</h3></div>
+                  <div class="card-body">
+                    <div class="mb-3"><label class="form-label">主机</label>
+                      <select class="form-select" name="alias" x-model="exec.alias" required>
+                        <template x-for="h in sortedHosts()" :key="'u-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
+                      </select>
+                    </div>
+                    <div class="mb-3"><label class="form-label">远端路径</label><input class="form-control" name="remote" required autocomplete="off"></div>
+                    <div class="mb-3"><label class="form-label">文件</label><input class="form-control" name="file" type="file" required></div>
+                    <div class="mb-3"><label class="form-label">确认短语</label><input class="form-control" name="confirm" autocomplete="off"></div>
+                  </div>
+                  <div class="card-footer"><button class="btn btn-primary" type="submit">上传</button></div>
+                </form>
+              </div>
+              <div class="col-lg-6">
+                <form class="card" @submit.prevent="download($event)">
+                  <div class="card-header"><h3 class="card-title">下载</h3></div>
+                  <div class="card-body">
+                    <div class="mb-3"><label class="form-label">主机</label>
+                      <select class="form-select" name="alias" x-model="exec.alias" required>
+                        <template x-for="h in sortedHosts()" :key="'d-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
+                      </select>
+                    </div>
+                    <div class="mb-3"><label class="form-label">远端路径</label><input class="form-control" name="path" required autocomplete="off"></div>
+                  </div>
+                  <div class="card-footer"><button class="btn btn-primary" type="submit">下载</button></div>
+                </form>
+              </div>
+            </div>
+            <div class="card mt-3" x-show="operateOut">
+              <div class="card-header"><h3 class="card-title">输出</h3></div>
+              <div class="card-body"><pre class="mb-0" x-text="operateOut"></pre></div>
+            </div>
+          </div>
+
+          <div x-show="is('relay')" data-view="relay">
+            <form class="card" @submit.prevent="runRelay()">
+              <div class="card-header"><h3 class="card-title">中继</h3></div>
+              <div class="card-body">
+                <p class="text-secondary">把一个远端文件经本机流转到另一台主机，并核对 sha256，没有 sha256sum 时改对 md5。不保存明文副本。</p>
+                <div class="alert alert-danger" role="alert" x-show="errors.relay" x-text="errors.relay"></div>
+                <div class="row g-3">
+                  <div class="col-md-6"><label class="form-label">来源主机</label>
+                    <select class="form-select" x-model="relay.from" required><template x-for="h in sortedHosts()" :key="'rf-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template></select>
+                  </div>
+                  <div class="col-md-6"><label class="form-label">来源路径</label><input class="form-control" x-model="relay.fromPath" required autocomplete="off"></div>
+                  <div class="col-md-6"><label class="form-label">目标主机</label>
+                    <select class="form-select" x-model="relay.to" required><template x-for="h in sortedHosts()" :key="'rt-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template></select>
+                  </div>
+                  <div class="col-md-6"><label class="form-label">目标路径</label><input class="form-control" x-model="relay.toPath" required autocomplete="off"></div>
+                  <div class="col-md-6"><label class="form-label">确认短语</label><input class="form-control" x-model="relay.confirm" autocomplete="off"></div>
+                  <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="relay.allowCrossEnv"><span class="form-check-label">允许跨环境</span></label></div>
+                </div>
+              </div>
+              <div class="card-footer"><button class="btn btn-primary" type="submit">中继</button></div>
+            </form>
+            <div class="card mt-3" x-show="operateOut"><div class="card-body"><pre class="mb-0" x-text="operateOut"></pre></div></div>
+          </div>
+
+          <div x-show="is('bundle')" data-view="bundle">
+            <div class="card">
+              <div class="card-header">
+                <h3 class="card-title">运维</h3>
+                <p class="text-secondary m-0">导出和导入配置包，查看策略 HMAC，清理早于 30 天的审计。配置包不含明文密码。更近的审计不能从这里删除。</p>
+              </div>
+              <div class="card-body">
+                <div class="steps steps-counter mb-4">
+                  <a href="#bundle" class="step-item" :class="{ active: wizard === 'export' }" @click.prevent="wizard = 'export'">导出</a>
+                  <a href="#bundle" class="step-item" :class="{ active: wizard === 'import' }" @click.prevent="wizard = 'import'">导入</a>
+                  <a href="#bundle" class="step-item" :class="{ active: wizard === 'hmac' }" @click.prevent="wizard = 'hmac'">HMAC</a>
+                  <a href="#bundle" class="step-item" :class="{ active: wizard === 'cleanup' }" @click.prevent="wizard = 'cleanup'">清理审计</a>
+                </div>
+                <div class="alert alert-danger" role="alert" x-show="errors.bundle" x-text="errors.bundle"></div>
+                <div x-show="wizard === 'export'">
+                  <p class="text-secondary">导出主机、策略和密钥引用。页面会拒绝看起来含有 password、secret 或 masterKey 字段的文本。</p>
+                  <button class="btn btn-primary mb-3" type="button" @click="exportBundle()">生成导出</button>
+                  <label class="form-label">预览</label>
+                  <textarea class="form-control" rows="12" readonly x-model="bundleYaml"></textarea>
+                </div>
+                <form x-show="wizard === 'import'" @submit.prevent="importBundle()">
+                  <p class="text-secondary">粘贴导出的 YAML。含明文口令字段会被拒绝。若策略变更需要确认，按提示输入短语。</p>
+                  <label class="form-label">配置 YAML</label>
+                  <textarea class="form-control mb-3" rows="12" x-model="bundleImport"></textarea>
+                  <button class="btn btn-primary" type="submit">导入</button>
+                </form>
+                <div x-show="wizard === 'hmac'">
+                  <div :class="hmacClass()" role="alert" x-text="hmacText()"></div>
+                  <div class="datagrid">
+                    <div><div class="datagrid-title">状态</div><div x-text="(ops.hmac && ops.hmac.status) || ''"></div></div>
+                    <div><div class="datagrid-title">已签名标记</div><div x-text="ops.hmac && ops.hmac.policySigned ? '是' : '否'"></div></div>
+                    <div><div class="datagrid-title">policy.mac</div><div x-text="ops.hmac && ops.hmac.macPresent ? '存在' : '不存在'"></div></div>
+                    <div><div class="datagrid-title">审计</div><div x-text="opsEntries() + ' 条'"></div></div>
+                  </div>
+                  <p class="text-secondary mt-3">签名覆盖策略，也覆盖每台主机的地址、端口、用户和认证方式。重新签名仍用命令行 ssh-cli policy sign。</p>
+                </div>
+                <div x-show="wizard === 'cleanup'">
+                  <div class="alert alert-warning" role="alert">只删除早于 30 天的审计记录。30 天以内的会留下，和 ssh-cli audit cleanup 一样。</div>
+                  <button class="btn btn-outline-danger" type="button" @click="cleanupOps()">清理 30 天前</button>
+                  <p class="text-secondary mt-3" x-show="cleanupNote" x-text="cleanupNote"></p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div x-show="is('settings')" data-view="settings">
+            <form class="card" @submit.prevent="saveSettings()">
+              <div class="card-header">
+                <h3 class="card-title">设置</h3>
+                <p class="text-secondary m-0">超时、分页、主题和中继默认值保存在这台浏览器里。会话空闲和最长寿命写入 hosts.yaml，和命令行 session 用的是同一组字段。不保存密码。</p>
+              </div>
+              <div class="card-body">
+                <div class="alert alert-danger" role="alert" x-show="errors.settings" x-text="errors.settings"></div>
+                <div class="row g-3">
+                  <div class="col-md-4"><label class="form-label">默认命令超时</label><input class="form-control" x-model="draft.commandTimeout" placeholder="30s" autocomplete="off"></div>
+                  <div class="col-md-4"><label class="form-label">每页条数</label>
+                    <select class="form-select" x-model.number="draft.pageSize"><option value="10">10</option><option value="20">20</option><option value="50">50</option></select>
+                  </div>
+                  <div class="col-md-4"><label class="form-label">主题</label>
+                    <select class="form-select" x-model="draft.theme"><option value="light">浅色</option><option value="dark">深色</option></select>
+                  </div>
+                  <div class="col-md-4"><label class="form-label">密度</label>
+                    <select class="form-select" x-model="draft.density"><option value="comfortable">标准</option><option value="compact">紧凑</option></select>
+                  </div>
+                  <div class="col-md-4"><label class="form-label">会话空闲关闭</label><input class="form-control" x-model="draft.idle" placeholder="5m" autocomplete="off"></div>
+                  <div class="col-md-4"><label class="form-label">会话最长寿命</label><input class="form-control" x-model="draft.maxLife" placeholder="60m" autocomplete="off"></div>
+                  <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="draft.relayCrossEnv"><span class="form-check-label">中继表单默认允许跨环境</span></label></div>
+                </div>
+                <p class="text-secondary mt-3 mb-0" x-text="settingsNote"></p>
+              </div>
+              <div class="card-footer"><button class="btn btn-primary" type="submit">保存设置</button></div>
+            </form>
+          </div>
+
         </div>
-        <dialog id="policy-dialog">
-          <h2 id="policy-form-title">添加命名策略</h2>
-          <form id="policy-form">
-            <label>名称 <input name="name" required autocomplete="off"></label>
-            <label>模式
-              <select name="mode">
+      </div>
+    </div>
+
+    <div class="modal-backdrop fade show" x-show="anyDialog()" @click="closeDialogs()"></div>
+
+    <div class="modal modal-blur" tabindex="-1" role="dialog" x-show="dialog.host" :class="{ show: dialog.host, 'd-block': dialog.host }">
+      <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <form class="modal-content" @submit.prevent="saveHost()">
+          <div class="modal-header">
+            <h5 class="modal-title" x-text="hostForm.editing ? ('编辑 ' + hostForm.alias) : '添加主机'"></h5>
+            <button type="button" class="btn-close" @click="closeDialogs()" aria-label="关闭"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-danger" role="alert" x-show="errors.hostForm" x-text="errors.hostForm"></div>
+            <div class="row g-3">
+              <div class="col-md-6"><label class="form-label">别名</label><input class="form-control" x-model="hostForm.alias" :readonly="hostForm.editing" required autocomplete="off"></div>
+              <div class="col-md-6"><label class="form-label">分组</label>
+                <select class="form-select" x-model="hostForm.group" required>
+                  <template x-for="g in sortedGroups()" :key="g.name"><option :value="g.name" x-text="groupCaption(g) + ' (' + g.env + ')'"></option></template>
+                </select>
+              </div>
+              <div class="col-md-8"><label class="form-label">地址</label><input class="form-control" x-model="hostForm.host" required placeholder="192.0.2.10" autocomplete="off"></div>
+              <div class="col-md-4"><label class="form-label">端口</label><input class="form-control" type="number" min="0" max="65535" x-model="hostForm.port" placeholder="22"></div>
+              <div class="col-md-6"><label class="form-label">用户</label><input class="form-control" x-model="hostForm.user" required autocomplete="off"></div>
+              <div class="col-md-6"><label class="form-label">密码</label><input class="form-control" type="password" x-model="hostForm.password" autocomplete="new-password"></div>
+              <div class="col-md-6"><label class="form-label">私钥路径</label><input class="form-control" x-model="hostForm.identity" placeholder="~/.ssh/id_ed25519" autocomplete="off"></div>
+              <div class="col-md-6"><label class="form-label">命名策略</label>
+                <select class="form-select" x-model="hostForm.policy">
+                  <option value="">不引用</option>
+                  <template x-for="p in catalog.policies" :key="'hp-' + p.name"><option :value="p.name" x-text="policyOption(p)"></option></template>
+                </select>
+              </div>
+              <div class="col-12"><label class="form-label">标签</label><input class="form-control" x-model="hostForm.tags" placeholder="app,web" autocomplete="off"></div>
+              <div class="col-12"><p class="form-hint">密码和私钥路径二选一。密码只用于加密存储。标签只用于 -t 选择。</p></div>
+              <div class="col-12"><label class="form-label">本机允许</label>
+                <select class="form-select" x-model="hostForm.allowMode"><option value="all">不限制（全集）</option><option value="list">只允许下面这些</option></select>
+              </div>
+              <div class="col-12" x-show="hostForm.allowMode === 'list'">
+                <template x-for="rule in hostForm.allow" :key="rule.id">
+                  <div class="input-group mb-2"><input class="form-control" x-model="rule.text" autocomplete="off" aria-label="允许的命令"><button class="btn btn-outline-secondary" type="button" @click="removeRule(hostForm.allow, rule.id)">移除</button></div>
+                </template>
+                <button class="btn btn-outline-primary btn-sm" type="button" @click="addRule(hostForm.allow)">添加一条</button>
+                <p class="form-hint" x-show="hostForm.allow.length === 0">还没有允许项。空列表会把这一层交空。</p>
+              </div>
+              <div class="col-12">
+                <label class="form-label">本机拒绝</label>
+                <template x-for="rule in hostForm.deny" :key="rule.id">
+                  <div class="input-group mb-2"><input class="form-control" x-model="rule.text" autocomplete="off" aria-label="拒绝的命令"><button class="btn btn-outline-secondary" type="button" @click="removeRule(hostForm.deny, rule.id)">移除</button></div>
+                </template>
+                <button class="btn btn-outline-primary btn-sm" type="button" @click="addRule(hostForm.deny)">添加一条</button>
+              </div>
+              <div class="col-12">
+                <label class="form-label">本机需确认</label>
+                <template x-for="rule in hostForm.confirm" :key="rule.id">
+                  <div class="input-group mb-2"><input class="form-control" x-model="rule.text" autocomplete="off" aria-label="需确认的命令"><button class="btn btn-outline-secondary" type="button" @click="removeRule(hostForm.confirm, rule.id)">移除</button></div>
+                </template>
+                <button class="btn btn-outline-primary btn-sm" type="button" @click="addRule(hostForm.confirm)">添加一条</button>
+              </div>
+              <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="hostForm.setDefault"><span class="form-check-label">设为默认主机</span></label></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary" @click="closeDialogs()">取消</button>
+            <button type="submit" class="btn btn-primary">保存</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal modal-blur" tabindex="-1" role="dialog" x-show="dialog.group" :class="{ show: dialog.group, 'd-block': dialog.group }">
+      <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <form class="modal-content" @submit.prevent="saveGroup()">
+          <div class="modal-header">
+            <h5 class="modal-title" x-text="groupForm.editing ? ('编辑 ' + groupForm.name) : '添加分组'"></h5>
+            <button type="button" class="btn-close" @click="closeDialogs()" aria-label="关闭"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-danger" role="alert" x-show="errors.groupForm" x-text="errors.groupForm"></div>
+            <div class="row g-3">
+              <div class="col-md-6"><label class="form-label">名称</label><input class="form-control" x-model="groupForm.name" :readonly="groupForm.editing" required autocomplete="off"></div>
+              <div class="col-md-6"><label class="form-label">显示名</label><input class="form-control" x-model="groupForm.label" placeholder="湖南组测试主机组" autocomplete="off"></div>
+              <div class="col-md-6"><label class="form-label">环境</label>
+                <select class="form-select" x-model="groupForm.env" required>
+                  <template x-for="e in sortedEnvs()" :key="e.name"><option :value="e.name" x-text="e.name + (e.label ? ' / ' + e.label : '') + ' / ' + e.maxMode"></option></template>
+                </select>
+              </div>
+              <div class="col-md-6"><label class="form-label">命名策略</label>
+                <select class="form-select" x-model="groupForm.policy">
+                  <option value="">不引用</option>
+                  <template x-for="p in catalog.policies" :key="'gp-' + p.name"><option :value="p.name" x-text="policyOption(p)"></option></template>
+                </select>
+              </div>
+              <div class="col-12"><label class="form-label">允许</label>
+                <select class="form-select" x-model="groupForm.allowMode"><option value="all">不限制（全集）</option><option value="list">只允许下面这些</option></select>
+              </div>
+              <div class="col-12" x-show="groupForm.allowMode === 'list'">
+                <template x-for="rule in groupForm.allow" :key="rule.id">
+                  <div class="input-group mb-2"><input class="form-control" x-model="rule.text" autocomplete="off"><button class="btn btn-outline-secondary" type="button" @click="removeRule(groupForm.allow, rule.id)">移除</button></div>
+                </template>
+                <button class="btn btn-outline-primary btn-sm" type="button" @click="addRule(groupForm.allow)">添加一条</button>
+              </div>
+              <div class="col-12">
+                <label class="form-label">拒绝</label>
+                <template x-for="rule in groupForm.deny" :key="rule.id">
+                  <div class="input-group mb-2"><input class="form-control" x-model="rule.text" autocomplete="off"><button class="btn btn-outline-secondary" type="button" @click="removeRule(groupForm.deny, rule.id)">移除</button></div>
+                </template>
+                <button class="btn btn-outline-primary btn-sm" type="button" @click="addRule(groupForm.deny)">添加一条</button>
+              </div>
+              <div class="col-12">
+                <label class="form-label">需确认</label>
+                <template x-for="rule in groupForm.confirm" :key="rule.id">
+                  <div class="input-group mb-2"><input class="form-control" x-model="rule.text" autocomplete="off"><button class="btn btn-outline-secondary" type="button" @click="removeRule(groupForm.confirm, rule.id)">移除</button></div>
+                </template>
+                <button class="btn btn-outline-primary btn-sm" type="button" @click="addRule(groupForm.confirm)">添加一条</button>
+              </div>
+              <div class="col-12"><label class="form-label">受保护路径</label><textarea class="form-control" rows="3" x-model="groupForm.protected" placeholder="/root/app"></textarea></div>
+              <div class="col-12"><p class="form-hint">空的允许列表会让这一层把命令都交空。名称创建后不能改。分组没有标签。</p></div>
+            </div>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary" @click="closeDialogs()">取消</button>
+            <button type="submit" class="btn btn-primary">保存分组</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal modal-blur" tabindex="-1" role="dialog" x-show="dialog.policy" :class="{ show: dialog.policy, 'd-block': dialog.policy }">
+      <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <form class="modal-content" @submit.prevent="savePolicy()">
+          <div class="modal-header">
+            <h5 class="modal-title" x-text="policyForm.title"></h5>
+            <button type="button" class="btn-close" @click="closeDialogs()" aria-label="关闭"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-danger" role="alert" x-show="errors.policyForm" x-text="errors.policyForm"></div>
+            <div class="mb-3"><label class="form-label">名称</label><input class="form-control" x-model="policyForm.name" :readonly="policyForm.editing" required autocomplete="off"></div>
+            <div class="mb-3"><label class="form-label">模式</label>
+              <select class="form-select" x-model="policyForm.mode">
                 <option value="">不设置</option>
                 <option value="readonly">readonly</option>
                 <option value="standard">standard</option>
                 <option value="admin">admin</option>
               </select>
-            </label>
-            <label>允许
-              <select name="allowMode">
-                <option value="all">不限制（全集）</option>
-                <option value="list">只允许下面这些</option>
-              </select>
-            </label>
-            <label class="wide">允许的命令，一行一条 <textarea name="allow" placeholder="ls&#10;df"></textarea></label>
-            <label class="wide">拒绝，一行一条 <textarea name="deny" placeholder="docker system prune -a"></textarea></label>
-            <label class="wide">需确认，一行一条 <textarea name="confirm" placeholder="systemctl restart"></textarea></label>
-            <p class="muted">覆盖内置 readonly / standard / admin 时，会先复制内置定义再写入 hosts.yaml，能力开关会留下来。删掉这条覆盖会恢复内置。仍被引用的自定义策略不能删除。</p>
-            <div class="row">
-              <button type="submit">保存策略</button>
-              <button type="button" id="policy-clear" class="secondary">清空</button>
             </div>
-          </form>
-        </dialog>
-      </section>
-
-      <section id="known-panel" class="view" data-view="known" data-title="已知主机密钥" hidden>
-        <div class="sheet">
-          <p class="lead">这是本机 known_hosts 里的 TOFU 记录。删除一条后，下次连接会记下看到的第一把钥匙；已经记下的钥匙如果变了，仍然会拒绝。</p>
-          <div class="sheet-tools">
-            <label>搜索 <input data-filter="#known" placeholder="标记、指纹" autocomplete="off"></label>
-          </div>
-          <p class="summary" id="summary-known"></p>
-          <p id="known-error" class="error" hidden></p>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>标记</th><th>类型</th><th>指纹</th><th></th></tr></thead>
-              <tbody id="known"></tbody>
-            </table>
-          </div>
-          <div class="pager" data-pager="#known"></div>
-        </div>
-      </section>
-
-      <section id="audit-panel" class="view" data-view="audit" data-title="审计" hidden>
-        <div class="sheet">
-          <p class="lead">读取和命令行 <code>ssh-cli audit list</code> 同一份日志。筛选条件发给本机接口，不会改配置。</p>
-          <form id="audit-filter" class="sheet-tools">
-            <label>操作
-              <select name="op" id="audit-op">
-                <option value="">全部</option>
-                <option>exec</option>
-                <option>upload</option>
-                <option>download</option>
-                <option>relay</option>
-                <option>policy_check</option>
-                <option>session</option>
-                <option>config_change</option>
-                <option>status</option>
-                <option>service</option>
-                <option>keys</option>
-              </select>
-            </label>
-            <label>主机 <select name="host" id="audit-host"><option value="">全部</option></select></label>
-            <label>分组 <select name="group" id="audit-group"><option value="">全部</option></select></label>
-            <label>环境 <select name="env" id="audit-env"><option value="">全部</option></select></label>
-            <label>状态
-              <select name="status">
-                <option value="">全部</option>
-                <option>ok</option>
-                <option>denied</option>
-                <option>timeout</option>
-                <option>auth</option>
-                <option>connect</option>
-                <option>error</option>
-              </select>
-            </label>
-            <label>自从 <input name="since" placeholder="24h 或 2026-01-02" autocomplete="off"></label>
-            <label>直到 <input name="until" placeholder="YYYY-MM-DD" autocomplete="off"></label>
-            <div class="actions">
-              <button type="submit">筛选</button>
-              <button type="button" id="audit-cleanup" class="secondary">清理 30 天前</button>
+            <div class="mb-3"><label class="form-label">允许</label>
+              <select class="form-select" x-model="policyForm.allowMode"><option value="all">不限制（全集）</option><option value="list">只允许下面这些</option></select>
             </div>
-          </form>
-          <p class="summary" id="summary-audit"></p>
-          <p id="audit-error" class="error" hidden></p>
-          <div class="table-wrap">
-            <table>
-              <thead>
-                <tr><th>时间</th><th>状态</th><th>操作</th><th>主机</th><th>环境</th><th>退出</th><th>高风险</th><th>命令 / 路径</th><th>原因</th></tr>
-              </thead>
-              <tbody id="audit"></tbody>
-            </table>
+            <div class="mb-3" x-show="policyForm.allowMode === 'list'">
+              <template x-for="rule in policyForm.allow" :key="rule.id">
+                <div class="input-group mb-2"><input class="form-control" x-model="rule.text" autocomplete="off" aria-label="允许的命令"><button class="btn btn-outline-secondary" type="button" @click="removeRule(policyForm.allow, rule.id)">移除</button></div>
+              </template>
+              <button class="btn btn-outline-primary btn-sm" type="button" @click="addRule(policyForm.allow)">添加一条</button>
+              <p class="form-hint" x-show="policyForm.allow.length === 0">还没有允许项。保持「不限制」就是全集；选「只允许」后再添加。</p>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">拒绝</label>
+              <template x-for="rule in policyForm.deny" :key="rule.id">
+                <div class="input-group mb-2"><input class="form-control" x-model="rule.text" autocomplete="off" aria-label="拒绝的命令"><button class="btn btn-outline-secondary" type="button" @click="removeRule(policyForm.deny, rule.id)">移除</button></div>
+              </template>
+              <button class="btn btn-outline-primary btn-sm" type="button" @click="addRule(policyForm.deny)">添加一条</button>
+            </div>
+            <div class="mb-3">
+              <label class="form-label">需确认</label>
+              <template x-for="rule in policyForm.confirm" :key="rule.id">
+                <div class="input-group mb-2"><input class="form-control" x-model="rule.text" autocomplete="off" aria-label="需确认的命令"><button class="btn btn-outline-secondary" type="button" @click="removeRule(policyForm.confirm, rule.id)">移除</button></div>
+              </template>
+              <button class="btn btn-outline-primary btn-sm" type="button" @click="addRule(policyForm.confirm)">添加一条</button>
+            </div>
+            <p class="form-hint">覆盖内置 readonly / standard / admin 时，会先复制内置定义再写入 hosts.yaml。删掉这条覆盖会恢复内置。仍被引用的自定义策略不能删除。</p>
           </div>
-          <div class="pager" id="audit-pager"></div>
-        </div>
-      </section>
-
-      <section id="sessions-panel" class="view" data-view="sessions" data-title="会话" hidden>
-        <div class="sheet">
-          <p class="lead">会话只活在这个 UI 进程里。空闲默认 5 分钟，最长 60 分钟，进程退出会关掉。没有后台守护进程。</p>
-          <div class="sheet-tools">
-            <div class="actions"><button type="button" id="session-refresh">刷新</button></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary" @click="closeDialogs()">取消</button>
+            <button type="submit" class="btn btn-primary">保存策略</button>
           </div>
-          <p class="summary" id="summary-sessions"></p>
-          <p id="session-error" class="error" hidden></p>
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>主机</th><th>打开</th><th>最近使用</th><th>忙</th><th></th></tr></thead>
-              <tbody id="session-rows"></tbody>
-            </table>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal modal-blur" tabindex="-1" role="dialog" x-show="dialog.env" :class="{ show: dialog.env, 'd-block': dialog.env }">
+      <div class="modal-dialog modal-dialog-centered" role="document">
+        <form class="modal-content" @submit.prevent="saveEnv()">
+          <div class="modal-header">
+            <h5 class="modal-title" x-text="envForm.editing ? ('编辑 ' + envForm.name) : '添加环境'"></h5>
+            <button type="button" class="btn-close" @click="closeDialogs()" aria-label="关闭"></button>
           </div>
-          <div class="pager" data-pager="#session-rows"></div>
-        </div>
-      </section>
-
-      <section id="operate-panel" class="view" data-view="operate" data-title="执行" hidden>
-        <div class="sheet">
-          <p class="lead">执行、上传、下载走和命令行同一套策略与审计。需要确认时输入主机别名。</p>
-          <p id="operate-error" class="error" hidden></p>
-          <form id="exec-form" class="block">
-            <h2>执行命令</h2>
-            <label>主机 <select name="alias" id="op-host" required></select></label>
-            <label>超时 <input name="timeout" placeholder="30s" autocomplete="off"></label>
-            <label class="wide">命令 <input name="command" required autocomplete="off"></label>
-            <label>确认短语 <input name="confirm" autocomplete="off" placeholder="需要时填写主机别名"></label>
-            <label class="check"><input name="allowOutflow" type="checkbox"> 允许带回命令输出（noDataOutflow 需再确认 outflow）</label>
-            <div class="row"><button type="submit">执行</button></div>
-          </form>
-          <form id="upload-form" class="block">
-            <h2>上传</h2>
-            <label>主机 <select name="alias" class="op-host" required></select></label>
-            <label>远端路径 <input name="remote" required autocomplete="off"></label>
-            <label>文件 <input name="file" type="file" required></label>
-            <label>确认短语 <input name="confirm" autocomplete="off"></label>
-            <div class="row"><button type="submit">上传</button></div>
-          </form>
-          <form id="download-form" class="block">
-            <h2>下载</h2>
-            <label>主机 <select name="alias" class="op-host" required></select></label>
-            <label>远端路径 <input name="path" required autocomplete="off"></label>
-            <div class="row"><button type="submit">下载</button></div>
-          </form>
-          <pre id="operate-out" class="out" hidden></pre>
-        </div>
-      </section>
-
-      <section id="relay-panel" class="view" data-view="relay" data-title="中继" hidden>
-        <div class="sheet">
-          <p class="lead">把一个远端文件经本机流转到另一台主机，并核对 sha256，没有 sha256sum 时改对 md5。不保存明文副本。</p>
-          <p id="relay-error" class="error" hidden></p>
-          <form id="relay-form" class="block">
-            <label>来源主机 <select name="from" class="op-host" required></select></label>
-            <label>来源路径 <input name="fromPath" required autocomplete="off"></label>
-            <label>目标主机 <select name="to" class="op-host" required></select></label>
-            <label>目标路径 <input name="toPath" required autocomplete="off"></label>
-            <label>确认短语 <input name="confirm" autocomplete="off"></label>
-            <label class="check"><input name="allowCrossEnv" type="checkbox"> 允许跨环境</label>
-            <div class="row"><button type="submit">中继</button></div>
-          </form>
-        </div>
-      </section>
-
-      <section id="bundle-panel" class="view" data-view="bundle" data-title="导入导出" hidden>
-        <div class="sheet">
-          <p class="lead">导出主机、策略和密钥引用。不包含明文密码。导入不改 secrets.json。</p>
-          <p id="bundle-error" class="error" hidden></p>
-          <div class="sheet-tools">
-            <div class="actions"><button type="button" id="bundle-export">导出</button></div>
+          <div class="modal-body">
+            <div class="alert alert-danger" role="alert" x-show="errors.envForm" x-text="errors.envForm"></div>
+            <div class="mb-3"><label class="form-label">名称</label><input class="form-control" x-model="envForm.name" :readonly="envForm.editing" required placeholder="lab" autocomplete="off"></div>
+            <div class="mb-3"><label class="form-label">显示名</label><input class="form-control" x-model="envForm.label" autocomplete="off"></div>
+            <div class="mb-3"><label class="form-label">颜色</label><input class="form-control" x-model="envForm.color" placeholder="green" autocomplete="off"></div>
+            <div class="mb-3"><label class="form-label">天花板</label>
+              <select class="form-select" x-model="envForm.maxMode" required>
+                <option value="readonly">readonly</option>
+                <option value="standard">standard</option>
+                <option value="admin">admin</option>
+              </select>
+            </div>
+            <div class="mb-3"><label class="form-label">默认策略</label>
+              <select class="form-select" x-model="envForm.defaultPolicy">
+                <option value="">不引用</option>
+                <template x-for="p in catalog.policies" :key="'ep-' + p.name"><option :value="p.name" x-text="policyOption(p)"></option></template>
+              </select>
+            </div>
           </div>
-          <form id="bundle-form" class="block">
-            <label class="wide">配置 YAML <textarea name="yaml" id="bundle-yaml"></textarea></label>
-            <div class="row"><button type="submit">导入</button></div>
-          </form>
-        </div>
-      </section>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary" @click="closeDialogs()">取消</button>
+            <button type="submit" class="btn btn-primary">保存环境</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <div class="modal modal-blur" tabindex="-1" role="dialog" x-show="dialog.batch" :class="{ show: dialog.batch, 'd-block': dialog.batch }">
+      <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <form class="modal-content" @submit.prevent="submitBatch()">
+          <div class="modal-header">
+            <h5 class="modal-title">批量执行</h5>
+            <button type="button" class="btn-close" @click="closeDialogs()" aria-label="关闭"></button>
+          </div>
+          <div class="modal-body">
+            <div class="alert alert-info" role="alert" x-text="selectedText()"></div>
+            <div class="mb-3"><label class="form-label">命令</label><input class="form-control" x-model="batchCommand" required autocomplete="off"></div>
+            <div class="row g-3">
+              <div class="col-md-6"><label class="form-label">超时</label><input class="form-control" x-model="exec.timeout" placeholder="30s" autocomplete="off"></div>
+              <div class="col-md-6"><label class="form-label">并行</label><input class="form-control" type="number" min="1" max="4" x-model.number="batchParallel"></div>
+            </div>
+            <label class="form-check mt-3"><input class="form-check-input" type="checkbox" x-model="batchSkip"><span class="form-check-label">跳过被策略拒绝的主机</span></label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" x-model="batchCross"><span class="form-check-label">允许跨环境</span></label>
+            <label class="form-check"><input class="form-check-input" type="checkbox" x-model="exec.allowOutflow"><span class="form-check-label">允许带回命令输出</span></label>
+            <p class="form-hint">一次最多 16 台，并行最多 4。命令行是 exec --parallel，上限相同。包含 prod 且多于一台时，整批按只读策略检查。需要确认时逐台输入主机别名。</p>
+            <pre class="mt-3 mb-0" x-show="batchOut" x-text="batchOut"></pre>
+          </div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-link link-secondary" @click="closeDialogs()">关闭</button>
+            <button type="submit" class="btn btn-primary">执行所选</button>
+          </div>
+        </form>
+      </div>
     </div>
   </div>
   <script src="/app.js"></script>
+  <script src="/alpine-csp.min.js"></script>
 </body>
 </html>

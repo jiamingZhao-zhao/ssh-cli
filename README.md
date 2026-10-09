@@ -2,7 +2,7 @@
 
 零依赖的单文件 SSH 运维 CLI（Go）。远程命令、文件上传下载；凭据加密存储，危险命令拦截，对 agent 友好的输出。
 
-当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。0.3.1 让 `--timeout` 限制 SSH 建连，并为分组增加可选显示名。0.3.2 让 `update --yes` 在没有交互终端时也能安装。0.3.3 起，不带参数的 `ssh-cli update` 在没有交互终端时也会安装。0.4.0 增加进程内会话、审计分页与 30 天清理、不含明文的配置导入导出、本机 UI 执行和上传下载、轻量 relay，以及策略 HMAC。破窗提权（elevate）、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
+当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。0.3.1 让 `--timeout` 限制 SSH 建连，并为分组增加可选显示名。0.3.2 让 `update --yes` 在没有交互终端时也能安装。0.3.3 起，不带参数的 `ssh-cli update` 在没有交互终端时也会安装。0.4.0 增加进程内会话、审计分页与 30 天清理、不含明文的配置导入导出、本机 UI 执行和上传下载、轻量 relay，以及策略 HMAC。0.5.0 用内嵌的 Tabler 组件和 Alpine.js CSP 重排本机界面，并加上概览、主机详情、会话倒计时、审计筛选与 CSV、运维向导、深色与紧凑表格、批量并行执行和设置页。破窗提权（elevate）、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
 
 ## 构建
 
@@ -75,6 +75,7 @@ ssh-cli host add main --group app-prod --host 192.0.2.10 --user viewer --passwor
 ssh-cli host list
 
 ssh-cli exec -H main --timeout 30s -- "df -h /"
+ssh-cli exec -H a -H b --parallel 2 -- "uptime"
 ssh-cli exec -H main --script ./status.sh
 ssh-cli upload -H main ./dist //root/app/dist
 ssh-cli download -H main /var/log/app.log ./app.log
@@ -98,7 +99,7 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 - `confirm` 取并集。确认必须在交互终端里输入主机别名。没有 TTY（包括 agent）直接拒绝，退出码 253。`--yes` 只在有 TTY 时有效。
 - 只读 / 标准模式下，解析不了的命令：只读拒绝，标准视为需确认。`curl|bash`、`base64 -d|sh`、`eval`、`source <(...)` 在这两种模式下拒绝。
 - 命令用 `mvdan.cc/sh` 解析，`;`、`&&`、管道、`$( )`、`sudo`、`bash -c`、`xargs`、`nohup`、`timeout`、`nice`、`stdbuf` 都会展开后再检查。`flock`、`ionice`、`chrt`、`taskset`、`setsid`、`watch` 以及带 `-exec` 的 `find` 展不开：只读拒绝，标准和 admin 需要确认。
-- 多台主机先整体预检，有一台被拒绝就整批取消；`--skip-denied` 改为跳过被拒绝的主机。
+- 多台主机先整体预检，有一台被拒绝就整批取消；`--skip-denied` 改为跳过被拒绝的主机。`exec --parallel N` 同时跑 N 台（1 到 4，默认 1）。大于 1 时最多 16 台，和本机页面的批量执行一样。包含 `prod` 且多于一台时仍整批只读。
 - 一次选择跨了多个环境，必须加 `--allow-cross-env`。选择里包含 `prod` 且多于一台时，整批强制只读。
 
 主机必须属于且只属于一个分组，环境从分组继承，主机上不能写 `env`。`tags` 只用于 `-t` 选择，分组没有 `tags` 字段。
@@ -184,7 +185,9 @@ ssh-cli audit tail --follow
 
 ## 本地界面（可选）
 
-只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，并查看审计日志。页面只靠左侧栏切换：主机、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继和导入导出。列表默认每页 10 条，可改成 20 或 50。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用对话框，保存或关闭后清空；编辑时才回填。审计按页从服务端读取，可按操作、主机、分组、环境和结果一起筛选。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。
+0.5.0 的页面用内嵌的 Tabler 和 Alpine.js CSP 版。样式和脚本打进二进制，不跑 npm，断网也能打开。内容安全策略仍是 `default-src 'self'`，没有 `unsafe-eval`。Alpine 只把按钮、表单和表格接到原来的 JSON 接口。导航、卡片、表格、对话框、表单、徽章、提示、分页和空状态都用 Tabler 自带的组件。
+
+左侧栏切换：概览、主机、主机详情、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继、运维、设置。列表默认每页 10 条，可改成 20 或 50。在主机页按 `/` 聚焦搜索。深色用 `data-bs-theme`，紧凑表格用 Tabler 的 `table-sm`。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用居中对话框。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。批量执行在页面上对应 `POST /api/exec/batch`，在命令行上对应 `exec --parallel`。
 
 ```bash
 ssh-cli ui
@@ -193,10 +196,17 @@ ssh-cli ui --addr 127.0.0.1:7788
 
 打开 <http://127.0.0.1:7788> 之后：
 
+- **概览**：主机数、最近命令、最近失败，以及策略 HMAC 是否有效。
+- **主机**和**主机详情**：勾选多台后可以批量执行，一次最多 16 台，并行最多 4。包含 `prod` 且多于一台时，整批按只读策略检查。详情页给出分组、环境、标签、有效策略、当前会话和这台主机最近的审计。
 - **分组**：新建、修改环境、命名策略、行内 allow/deny/confirm 和受保护路径。有主机的分组不能删，和 `group remove` 一样。
 - **标签**：标签只在主机上，给 `ssh-cli -t` 选择用，分组没有 `tags` 字段。可以把一个标签加到该分组下的每台主机，或从全组去掉。
-- **危险命令**：内置环境只读；自定义环境可以改 `maxMode` 和 `defaultPolicy`。命名策略的 mode / allow / deny / confirm 可以新建或覆盖。分组和主机的行内规则在对应表单里改。某一层不写 allow 就是全集，写成空列表则会把这一层交空。内置硬拒绝不能关。
-- **主机**、**执行**、**中继**和**审计**：密码只通过主机表单 POST 进加密存储，不会回显，也不会写入审计。执行和传输与命令行使用同一套策略。审计页显示日志大小和条数，清理只删 30 天前的记录。
+- **危险命令**：用表单编辑 allow / deny / confirm，不手改 JSON。内置环境只读；自定义环境可以改 `maxMode` 和 `defaultPolicy`。某一层不写 allow 就是全集，写成空列表则会把这一层交空。内置硬拒绝不能关。HMAC 仍由 `policy sign` 维护。
+- **审计**：按操作、主机、分组、环境、状态和时间筛选，表头可以再过滤当前页，失败行用危险色和警告色。可以导出 CSV。清理只删 30 天前的记录。
+- **会话**：列出状态、空闲倒计时和最长寿命，可以打开或关闭。会话只活在这个 UI 进程里。
+- **执行**、**中继**和**运维**：密码只通过主机表单 POST 进加密存储，不会回显，也不会写入审计。运维页分步导出、导入、查看 HMAC、清理审计。配置包不含明文。
+- **设置**：默认命令超时、每页条数、主题、密度，以及中继是否默认允许跨环境，保存在这台浏览器。会话空闲和最长寿命写入 `hosts.yaml`，和命令行共用。
+
+连接失败、策略拒绝和空列表会写出下一步该做什么。
 
 执行、上传、下载、中继、会话、审计清理和配置导入导出都在本机页面里，策略和审计与命令行相同。elevate 仍不做。
 
