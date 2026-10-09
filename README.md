@@ -179,7 +179,7 @@ ssh-cli audit tail --follow
 
 ## 本地界面（可选）
 
-只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，并查看审计日志。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。执行命令仍走 `exec` / `upload` / `download`。
+只给人类改同一份 `hosts.yaml`（分组、主机标签、危险命令规则、自定义环境、主机）和本机 `known_hosts`，并查看审计日志。页面按侧栏分成主机、分组、标签、环境、危险命令、已知主机密钥和审计。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程，也不影响 CLI 和审计。执行命令仍走 `exec` / `upload` / `download`。导入清单仍用 `import ssh-ops`。
 
 ```bash
 ssh-cli ui
