@@ -36,9 +36,11 @@ redirect to /releases/tag/<tag>). Archives and checksums.txt are downloaded
 from /releases/download/<tag>/, not the GitHub REST API, so anonymous API
 rate limits do not block an update. GITHUB_TOKEN is optional: it is sent to
 api.github.com only when that direct lookup fails.
---check prints current and latest without installing.
-Installing asks you to type the release version on a TTY. --yes skips that
-prompt and is rejected when there is no TTY.`,
+--check prints current and latest without installing and does not require a TTY.
+Installing asks you to type the release version on an interactive TTY.
+Without --yes, update refuses to install when there is no TTY; use --check
+to query only. --yes skips that prompt and installs without a TTY, so
+agents and non-interactive shells can run: ssh-cli update --yes`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if repo == "" {
 				repo = os.Getenv("SSH_CLI_REPO")
@@ -86,11 +88,19 @@ prompt and is rejected when there is no TTY.`,
 	return cmd
 }
 
+// nonInteractiveYesOK is true only for update, where --yes means
+// "install without a confirmation prompt", including when there is no TTY.
+func nonInteractiveYesOK(cmd *cobra.Command) bool {
+	for c := cmd; c != nil; c = c.Parent() {
+		if c.Name() == "update" {
+			return true
+		}
+	}
+	return false
+}
+
 func confirmRelease(latest string, yes bool) error {
 	if yes {
-		if !ttyCheck() {
-			return exitcode.New(exitcode.Denied, "--yes is only valid on an interactive TTY")
-		}
 		return nil
 	}
 	if !ttyCheck() {
