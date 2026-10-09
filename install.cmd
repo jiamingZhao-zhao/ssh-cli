@@ -120,8 +120,12 @@ if "%ZIPSIZE%"=="0" (
 
 "%CURL%" -fsSL --retry 3 --retry-delay 1 -A ssh-cli-install -o "checksums.txt" "%SUMURL%" 2>nul
 if errorlevel 1 (
-  echo(warning: release has no checksums.txt; the download was not verified 1>&2
-  goto :ExtractZip
+  if "%SSH_CLI_ALLOW_MISSING_CHECKSUM%"=="1" (
+    echo(warning: release has no checksums.txt; the download was not verified 1>&2
+    goto :ExtractZip
+  )
+  echo(refusing to install without checksums.txt. Set SSH_CLI_ALLOW_MISSING_CHECKSUM=1 to override. 1>&2
+  goto :fail
 )
 call :VerifySum
 if errorlevel 1 goto :fail

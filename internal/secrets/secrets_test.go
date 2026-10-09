@@ -170,4 +170,27 @@ func TestFileFallbackWarnsAndIsPrivate(t *testing.T) {
 	}
 }
 
+func TestDecryptRejectsShortNonce(t *testing.T) {
+	key := make([]byte, chacha20poly1305.KeySize)
+	_, err := decrypt(key, "ref", entry{
+		Nonce:      base64.StdEncoding.EncodeToString([]byte("short")),
+		Ciphertext: base64.StdEncoding.EncodeToString([]byte("cipher")),
+	})
+	if err == nil || !strings.Contains(err.Error(), "nonce") {
+		t.Fatal(err)
+	}
+}
+
+func TestNoMasterKeySentinel(t *testing.T) {
+	dir := t.TempDir()
+	st, err := Open(dir, Options{Keyring: &fakeRing{}, Warn: ioDiscard()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = st.masterKey(false)
+	if err == nil || !errors.Is(err, ErrNoMasterKey) || !strings.Contains(err.Error(), "no master key available to decrypt secrets") {
+		t.Fatal(err)
+	}
+}
+
 func ioDiscard() *bytes.Buffer { return &bytes.Buffer{} }

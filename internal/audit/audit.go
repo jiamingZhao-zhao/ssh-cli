@@ -24,13 +24,14 @@ const (
 	// DirName is the audit directory inside the config directory.
 	DirName = "audit"
 
-	OpExec        = "exec"
-	OpUpload      = "upload"
-	OpDownload    = "download"
-	OpPolicyCheck = "policy_check"
-	OpStatus      = "status"
-	OpService     = "service"
-	OpKeys        = "keys"
+	OpExec         = "exec"
+	OpUpload       = "upload"
+	OpDownload     = "download"
+	OpPolicyCheck  = "policy_check"
+	OpStatus       = "status"
+	OpService      = "service"
+	OpKeys         = "keys"
+	OpConfigChange = "config_change"
 
 	StatusOK      = "ok"
 	StatusDenied  = "denied"
@@ -215,8 +216,8 @@ func scrubRecord(rec *Record) {
 
 var (
 	pemRE  = regexp.MustCompile(`(?i)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----`)
-	kvRE   = regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key|authorization|ssh_cli_master_key)\b(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|\S+)`)
-	flagRE = regexp.MustCompile(`(?i)(--password|--pass|--master-key)(\s+)\S+`)
+	kvRE   = regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key|authorization|ssh_cli_master_key)\b(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|(?:bearer|basic)\s+\S+|\S+)`)
+	flagRE = regexp.MustCompile(`(?i)(--(?:password|pass|master-key|token|secret|api-key|access-token|auth-token|bearer))(\s+|=)(?:"[^"]*"|'[^']*'|\S+)`)
 	urlRE  = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@`)
 )
 

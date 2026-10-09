@@ -67,7 +67,10 @@ func (a *App) policyEdit() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			return catalogErr(catalog.EditPolicy(a.Dir, draft))
+			return a.withConfirm(func(phrase string) error {
+				draft.HumanConfirm = phrase
+				return catalog.EditPolicy(a.Dir, draft)
+			})
 		},
 	}
 	d.bind(cmd)

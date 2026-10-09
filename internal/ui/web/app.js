@@ -18,6 +18,7 @@ const knownBody = document.querySelector("#known");
 const knownError = document.querySelector("#known-error");
 
 let catalog = { envs: [], groups: [], hosts: [], policies: [] };
+let csrfToken = "";
 let editing = false;
 let editingGroup = false;
 let editingPolicy = "";
@@ -41,10 +42,18 @@ async function readJSON(res) {
   return data;
 }
 
+async function ensureSession() {
+  if (csrfToken) return;
+  const data = await readJSON(await fetch("/api/session"));
+  csrfToken = data.csrf || "";
+}
+
 async function postJSON(url, body) {
+  await ensureSession();
   return readJSON(await fetch(url, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    credentials: "same-origin",
+    headers: { "Content-Type": "application/json", "X-CSRF-Token": csrfToken },
     body: JSON.stringify(body)
   }));
 }

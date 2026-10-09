@@ -2,8 +2,10 @@ package transfer
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -52,5 +54,48 @@ func TestUploadDownloadDirectory(t *testing.T) {
 	got, err = os.ReadFile(filepath.Join(back, "sub", "a.txt"))
 	if err != nil || string(got) != "hello" {
 		t.Fatalf("downloaded %q err %v", got, err)
+	}
+}
+
+func TestUploadCheckedStopsBeforeWrite(t *testing.T) {
+	srv, err := sshtest.Start("tester", "test-pass", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	client, err := sshclient.Dial(ctx, srv.Addr, "tester", sshclient.PasswordAuth("test-pass"), sshclient.HostKeyCallback(filepath.Join(t.TempDir(), "known_hosts"), true), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	local := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(local, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(local, "a.txt"), []byte("a"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(local, "sub", "b.txt"), []byte("b"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	remote := filepath.Join(t.TempDir(), "blocked")
+	var seen []string
+	err = UploadChecked(client.Raw(), local, remote, nil, func(path string) error {
+		seen = append(seen, path)
+		if strings.HasSuffix(path, "b.txt") {
+			return fmt.Errorf("denied %s", path)
+		}
+		return nil
+	})
+	if err == nil || !strings.Contains(err.Error(), "b.txt") {
+		t.Fatal(err)
+	}
+	if len(seen) < 2 {
+		t.Fatalf("planned %v", seen)
+	}
+	if _, statErr := os.Stat(remote); !os.IsNotExist(statErr) {
+		t.Fatalf("remote was written: %v", statErr)
 	}
 }

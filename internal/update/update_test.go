@@ -211,7 +211,7 @@ func TestRunCheckAndInstall(t *testing.T) {
 	}
 }
 
-func TestRunMissingChecksumWarns(t *testing.T) {
+func TestRunMissingChecksumRefuses(t *testing.T) {
 	srv, _ := releaseServer(t, "1.2.3", "linux", "amd64", []byte("bin"), false, false, 0)
 	useReleaseBase(t, srv.URL)
 	dest := filepath.Join(t.TempDir(), "ssh-cli")
@@ -222,13 +222,24 @@ func TestRunMissingChecksumWarns(t *testing.T) {
 		Repo: "example/ssh-cli", Current: "0.1.0", GOOS: "linux", GOARCH: "amd64",
 		Client: srv.Client(), ExePath: dest,
 	})
+	if err == nil || !strings.Contains(err.Error(), "checksums.txt") {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || string(got) != "old" {
+		t.Fatalf("binary changed to %q %v", got, err)
+	}
+	res, err = Run(context.Background(), Options{
+		Repo: "example/ssh-cli", Current: "0.1.0", GOOS: "linux", GOARCH: "amd64",
+		Client: srv.Client(), ExePath: dest, AllowMissingChecksum: true,
+	})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if res.Warning == "" || !strings.Contains(res.Warning, "checksums.txt") || res.ChecksumVerified {
+	if res.Warning == "" || !strings.Contains(res.Warning, "checksums.txt") || res.ChecksumVerified || !res.Installed {
 		t.Fatalf("%+v", res)
 	}
-	got, err := os.ReadFile(dest)
+	got, err = os.ReadFile(dest)
 	if err != nil || string(got) != "bin" {
 		t.Fatalf("installed %q %v", got, err)
 	}

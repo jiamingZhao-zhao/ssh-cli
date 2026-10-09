@@ -12,7 +12,7 @@ import (
 func (s *service) setGroupEnv(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	name, err := nameFromMap(raw)
@@ -22,15 +22,16 @@ func (s *service) setGroupEnv(w http.ResponseWriter, r *http.Request) {
 	}
 	envName, ok, err := rawString(raw, "env")
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if !ok || envName == "" {
 		writeErr(w, http.StatusBadRequest, "env is required")
 		return
 	}
-	if _, err := catalog.SetGroupEnv(s.dir, name, envName); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+	phrase, _, _ := rawString(raw, "humanConfirm")
+	if _, err := catalog.SetGroupEnvConfirmed(s.dir, name, envName, phrase, "ui"); err != nil {
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -39,7 +40,7 @@ func (s *service) setGroupEnv(w http.ResponseWriter, r *http.Request) {
 func (s *service) knownHosts(w http.ResponseWriter, r *http.Request) {
 	entries, err := sshclient.ListKnownHosts(filepath.Join(s.dir, config.KnownHostsName))
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"knownHosts": entries})
@@ -48,12 +49,12 @@ func (s *service) knownHosts(w http.ResponseWriter, r *http.Request) {
 func (s *service) removeKnownHost(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	marker, ok, err := rawString(raw, "marker")
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if !ok || marker == "" {
@@ -62,7 +63,7 @@ func (s *service) removeKnownHost(w http.ResponseWriter, r *http.Request) {
 	}
 	n, err := sshclient.RemoveKnownHost(filepath.Join(s.dir, config.KnownHostsName), marker)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "removed": n})

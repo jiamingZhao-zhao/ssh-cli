@@ -6,7 +6,7 @@
 
 ## 构建
 
-需要 Go 1.22+。六个目标平台都用 `CGO_ENABLED=0`：
+需要 Go 1.26+。发布和 CI 使用 Go 1.27。六个目标平台都用 `CGO_ENABLED=0`：
 
 ```bash
 CGO_ENABLED=0 go build -o ssh-cli ./cmd/ssh-cli

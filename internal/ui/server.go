@@ -14,10 +14,12 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
 
@@ -29,6 +31,7 @@ var webFS embed.FS
 func Handler(dir string, allowRemote bool) http.Handler {
 	s := &service{dir: dir, allowRemote: allowRemote}
 	mux := http.NewServeMux()
+	mux.HandleFunc("GET /api/session", s.apiSession)
 	mux.HandleFunc("GET /api/catalog", s.catalog)
 	mux.HandleFunc("GET /api/audit", s.auditList)
 	mux.HandleFunc("POST /api/hosts", s.addHost)
@@ -86,6 +89,8 @@ func Serve(ctx context.Context, addr, dir string, allowRemote bool) error {
 type service struct {
 	dir         string
 	allowRemote bool
+	mu          sync.Mutex
+	sessions    map[string]string
 }
 
 func (s *service) guard(next http.Handler) http.Handler {
@@ -96,6 +101,9 @@ func (s *service) guard(next http.Handler) http.Handler {
 		w.Header().Set("Content-Security-Policy", "default-src 'self'")
 		if !s.allowRemote && !remoteLoopback(r.RemoteAddr) {
 			http.Error(w, "localhost only", http.StatusForbidden)
+			return
+		}
+		if !s.authorize(w, r) {
 			return
 		}
 		next.ServeHTTP(w, r)
@@ -114,7 +122,7 @@ func remoteLoopback(addr string) bool {
 func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 	cfg, err := config.Load(s.dir)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	type envView struct {
@@ -270,12 +278,12 @@ func policyViewFrom(name string, p *config.Policy, builtin, overridden bool) pol
 func (s *service) auditList(w http.ResponseWriter, r *http.Request) {
 	f, err := filterFromQuery(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	recs, err := audit.ListNewest(s.dir, f, 200)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if recs == nil {
@@ -287,11 +295,11 @@ func (s *service) auditList(w http.ResponseWriter, r *http.Request) {
 func (s *service) addHost(w http.ResponseWriter, r *http.Request) {
 	draft, err := draftFromRequest(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := AddHost(s.dir, draft); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -300,11 +308,11 @@ func (s *service) addHost(w http.ResponseWriter, r *http.Request) {
 func (s *service) updateHost(w http.ResponseWriter, r *http.Request) {
 	draft, err := draftFromRequest(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := UpdateHost(s.dir, draft); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -313,11 +321,11 @@ func (s *service) updateHost(w http.ResponseWriter, r *http.Request) {
 func (s *service) removeHost(w http.ResponseWriter, r *http.Request) {
 	draft, err := draftFromRequest(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := RemoveHost(s.dir, draft.Alias); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -422,6 +430,12 @@ func draftFromMap(raw map[string]json.RawMessage) (HostDraft, error) {
 	if err := fillRuleFields(raw, &d.Allow, &d.Deny, &d.Confirm, &d.HasAllow, &d.HasDeny, &d.HasConfirm); err != nil {
 		return HostDraft{}, err
 	}
+	d.Actor = "ui"
+	if s, ok, err := rawString(raw, "humanConfirm"); err != nil {
+		return HostDraft{}, err
+	} else if ok {
+		d.HumanConfirm = s
+	}
 	if v, ok := raw["setDefault"]; ok {
 		d.SetDefault = truthy(v)
 	}
@@ -476,16 +490,16 @@ func authOf(h *config.Host) string {
 func (s *service) addGroup(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	draft, err := groupFromMap(raw)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := AddGroup(s.dir, draft); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -494,16 +508,16 @@ func (s *service) addGroup(w http.ResponseWriter, r *http.Request) {
 func (s *service) updateGroup(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	draft, err := groupFromMap(raw)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := UpdateGroup(s.dir, draft); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -512,16 +526,16 @@ func (s *service) updateGroup(w http.ResponseWriter, r *http.Request) {
 func (s *service) removeGroup(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	name, err := nameFromMap(raw)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := RemoveGroup(s.dir, name); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -530,16 +544,16 @@ func (s *service) removeGroup(w http.ResponseWriter, r *http.Request) {
 func (s *service) groupTags(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	group, add, remove, err := tagEditFromMap(raw)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := ApplyGroupTags(s.dir, group, add, remove); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -556,16 +570,16 @@ func (s *service) updatePolicy(w http.ResponseWriter, r *http.Request) {
 func (s *service) writePolicy(w http.ResponseWriter, r *http.Request, fn func(string, PolicyDraft) error) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	draft, err := policyFromMap(raw)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := fn(s.dir, draft); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -574,16 +588,16 @@ func (s *service) writePolicy(w http.ResponseWriter, r *http.Request, fn func(st
 func (s *service) removePolicy(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	name, err := nameFromMap(raw)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := RemovePolicy(s.dir, name); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -592,12 +606,12 @@ func (s *service) removePolicy(w http.ResponseWriter, r *http.Request) {
 func (s *service) addEnv(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	draft, err := envFromMap(raw)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if !draft.HasMaxMode {
@@ -605,7 +619,7 @@ func (s *service) addEnv(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := AddEnv(s.dir, draft); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -614,16 +628,16 @@ func (s *service) addEnv(w http.ResponseWriter, r *http.Request) {
 func (s *service) updateEnv(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	draft, err := envFromMap(raw)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := UpdateEnv(s.dir, draft); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -632,16 +646,16 @@ func (s *service) updateEnv(w http.ResponseWriter, r *http.Request) {
 func (s *service) removeEnv(w http.ResponseWriter, r *http.Request) {
 	raw, err := readRaw(r)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	name, err := nameFromMap(raw)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	if err := RemoveEnv(s.dir, name); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeFail(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
@@ -649,6 +663,17 @@ func (s *service) removeEnv(w http.ResponseWriter, r *http.Request) {
 
 func writeErr(w http.ResponseWriter, code int, msg string) {
 	writeJSON(w, code, map[string]any{"ok": false, "error": msg})
+}
+
+func writeFail(w http.ResponseWriter, err error) {
+	var ce *confirmgate.Error
+	if errors.As(err, &ce) {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"ok": false, "needsConfirm": true, "confirm": ce.Phrase, "error": ce.Error(),
+		})
+		return
+	}
+	writeErr(w, http.StatusBadRequest, err.Error())
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {

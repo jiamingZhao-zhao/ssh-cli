@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
 
@@ -28,6 +29,9 @@ type GroupDraft struct {
 	HasDeny      bool
 	HasConfirm   bool
 	HasProtected bool
+
+	HumanConfirm string
+	Actor        string
 }
 
 // AddGroup creates an empty group. The group must name an existing env.
@@ -91,11 +95,20 @@ func UpdateGroup(dir string, in GroupDraft) error {
 	if !in.HasEnv && !in.HasLabel && !in.HasPolicy && !in.HasAllow && !in.HasDeny && !in.HasConfirm && !in.HasProtected {
 		return fmt.Errorf("no changes given")
 	}
-	return config.Update(dir, func(cfg *config.Config) error {
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
 		g, ok := cfg.Groups[name]
 		if !ok || g == nil {
 			return fmt.Errorf("group %q not found", name)
 		}
+		n, err := uiGroupNeeds(cfg, g, in)
+		if err != nil {
+			return err
+		}
+		if err := confirmgate.Require(dir, in.Actor, in.HumanConfirm, n); err != nil {
+			return err
+		}
+		needs = n
 		if in.HasEnv {
 			envName := strings.TrimSpace(in.Env)
 			if envName == "" {
@@ -134,6 +147,44 @@ func UpdateGroup(dir string, in GroupDraft) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, in.Actor, needs)
+	return nil
+}
+
+func uiGroupNeeds(cfg *config.Config, g *config.Group, in GroupDraft) ([]confirmgate.Need, error) {
+	name := strings.TrimSpace(in.Name)
+	var needs []confirmgate.Need
+	if in.HasEnv {
+		envName := strings.TrimSpace(in.Env)
+		if g.Env == "prod" && envName != "prod" {
+			needs = append(needs, confirmgate.ProdLeaveNeed(name, envName))
+		}
+	}
+	if in.HasPolicy {
+		next := strings.TrimSpace(in.Policy)
+		if next != "" && !guard.KnownPolicy(cfg, next) {
+			return nil, fmt.Errorf("unknown policy %q", next)
+		}
+		if confirmgate.NamedWider(cfg, g.Policy, next) {
+			needs = append(needs, confirmgate.WidenNeed(name, "group "+name+" policy would widen"))
+		}
+	}
+	if in.HasAllow && confirmgate.AllowWidens(g.Allow, in.Allow) {
+		needs = append(needs, confirmgate.WidenNeed(name, "group "+name+" allow-list would widen"))
+	}
+	if in.HasDeny && confirmgate.ListShrinks(g.Deny, in.Deny) {
+		needs = append(needs, confirmgate.WidenNeed(name, "group "+name+" deny-list would shrink"))
+	}
+	if in.HasConfirm && confirmgate.ListShrinks(g.Confirm, in.Confirm) {
+		needs = append(needs, confirmgate.WidenNeed(name, "group "+name+" confirm-list would shrink"))
+	}
+	if in.HasProtected && confirmgate.ListShrinks(g.ProtectedPaths, in.Protected) {
+		needs = append(needs, confirmgate.WidenNeed(name, "group "+name+" protected paths would shrink"))
+	}
+	return needs, nil
 }
 
 // RemoveGroup deletes a group that has no hosts, matching `group remove`.

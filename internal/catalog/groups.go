@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
 
@@ -19,6 +20,9 @@ type GroupDraft struct {
 	HasPolicy      bool
 	ClearPolicy    bool
 	HasPaths       bool
+
+	HumanConfirm string
+	Actor        string
 }
 
 // AddGroup creates an empty group. env must already exist.
@@ -66,43 +70,70 @@ func addGroup(cfg *config.Config, in GroupDraft) error {
 
 // EditGroup changes policy and protected paths on an existing group.
 func EditGroup(dir string, in GroupDraft) error {
-	return config.Update(dir, func(cfg *config.Config) error {
-		return editGroup(cfg, in)
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
+		n, err := editGroup(dir, cfg, in)
+		needs = n
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, in.Actor, needs)
+	return nil
 }
 
-func editGroup(cfg *config.Config, in GroupDraft) error {
+func editGroup(dir string, cfg *config.Config, in GroupDraft) ([]confirmgate.Need, error) {
 	name := strings.TrimSpace(in.Name)
 	g, ok := cfg.Groups[name]
 	if !ok || g == nil {
-		return fmt.Errorf("group %q not found", name)
+		return nil, fmt.Errorf("group %q not found", name)
 	}
 	if !in.HasLabel && !in.HasPolicy && !in.ClearPolicy && !in.HasPaths {
-		return fmt.Errorf("no changes given")
+		return nil, fmt.Errorf("no changes given")
+	}
+	if in.ClearPolicy && in.HasPolicy && strings.TrimSpace(in.Policy) != "" {
+		return nil, fmt.Errorf("use only one of policy and clear-policy")
+	}
+	var needs []confirmgate.Need
+	if in.ClearPolicy || in.HasPolicy {
+		next := ""
+		if in.HasPolicy && !in.ClearPolicy {
+			next = strings.TrimSpace(in.Policy)
+		}
+		if next != "" && !guard.KnownPolicy(cfg, next) {
+			return nil, fmt.Errorf("unknown policy %q", next)
+		}
+		if confirmgate.NamedWider(cfg, g.Policy, next) {
+			needs = append(needs, confirmgate.WidenNeed(name, "group "+name+" policy would widen"))
+		}
+	}
+	nextPaths := g.ProtectedPaths
+	if in.HasPaths {
+		nextPaths = cleanList(in.ProtectedPaths)
+		if confirmgate.ListShrinks(g.ProtectedPaths, nextPaths) {
+			needs = append(needs, confirmgate.WidenNeed(name, "group "+name+" protected paths would shrink"))
+		}
+	}
+	if err := confirmgate.Require(dir, in.Actor, in.HumanConfirm, needs); err != nil {
+		return nil, err
 	}
 	if in.HasLabel {
 		label, err := config.CleanLabel(in.Label)
 		if err != nil {
-			return err
+			return nil, err
 		}
 		g.Label = label
-	}
-	if in.ClearPolicy && in.HasPolicy && strings.TrimSpace(in.Policy) != "" {
-		return fmt.Errorf("use only one of policy and clear-policy")
 	}
 	if in.ClearPolicy || (in.HasPolicy && strings.TrimSpace(in.Policy) == "") {
 		g.Policy = ""
 	} else if in.HasPolicy {
-		policy := strings.TrimSpace(in.Policy)
-		if !guard.KnownPolicy(cfg, policy) {
-			return fmt.Errorf("unknown policy %q", policy)
-		}
-		g.Policy = policy
+		g.Policy = strings.TrimSpace(in.Policy)
 	}
 	if in.HasPaths {
-		g.ProtectedPaths = cleanList(in.ProtectedPaths)
+		g.ProtectedPaths = nextPaths
 	}
-	return nil
+	return needs, nil
 }
 
 // RemoveGroup deletes an empty group.
@@ -126,28 +157,46 @@ func removeGroup(cfg *config.Config, name string) error {
 }
 
 // SetGroupEnv changes a group's env label and returns the previous env.
-// Leaving prod is allowed here; signing that change is a later milestone.
+// Leaving prod requires the phrase "prod" via SetGroupEnvConfirmed.
 func SetGroupEnv(dir, name, envName string) (string, error) {
-	var previous string
-	err := config.Update(dir, func(cfg *config.Config) error {
-		prev, err := setGroupEnv(cfg, name, envName)
-		previous = prev
-		return err
-	})
-	return previous, err
+	return SetGroupEnvConfirmed(dir, name, envName, "", "")
 }
 
-func setGroupEnv(cfg *config.Config, name, envName string) (string, error) {
+// SetGroupEnvConfirmed is SetGroupEnv with the human phrase and audit actor.
+func SetGroupEnvConfirmed(dir, name, envName, phrase, actor string) (string, error) {
+	var previous string
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
+		prev, n, err := setGroupEnv(dir, cfg, name, envName, phrase, actor)
+		previous = prev
+		needs = n
+		return err
+	})
+	if err != nil {
+		return previous, err
+	}
+	confirmgate.RecordOK(dir, actor, needs)
+	return previous, nil
+}
+
+func setGroupEnv(dir string, cfg *config.Config, name, envName, phrase, actor string) (string, []confirmgate.Need, error) {
 	name = strings.TrimSpace(name)
 	envName = strings.TrimSpace(envName)
 	g, ok := cfg.Groups[name]
 	if !ok || g == nil {
-		return "", fmt.Errorf("group %q not found", name)
+		return "", nil, fmt.Errorf("group %q not found", name)
 	}
 	if _, ok := cfg.Envs[envName]; !ok {
-		return "", fmt.Errorf("unknown env %q", envName)
+		return "", nil, fmt.Errorf("unknown env %q", envName)
 	}
 	previous := g.Env
+	var needs []confirmgate.Need
+	if previous == "prod" && envName != "prod" {
+		needs = []confirmgate.Need{confirmgate.ProdLeaveNeed(name, envName)}
+	}
+	if err := confirmgate.Require(dir, actor, phrase, needs); err != nil {
+		return previous, nil, err
+	}
 	g.Env = envName
-	return previous, nil
+	return previous, needs, nil
 }

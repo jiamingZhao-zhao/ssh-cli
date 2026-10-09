@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -9,8 +10,45 @@ import (
 
 	"golang.org/x/term"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 )
+
+// withConfirm runs op once. If it returns a confirmgate error, the phrase is
+// collected (--yes on a TTY, or a typed prompt) and op runs again.
+func (a *App) withConfirm(op func(phrase string) error) error {
+	err := op("")
+	var ce *confirmgate.Error
+	if !errors.As(err, &ce) {
+		return catalogErr(err)
+	}
+	phrase, cerr := a.supplyPhrase(ce.Phrase)
+	if cerr != nil {
+		return cerr
+	}
+	return catalogErr(op(phrase))
+}
+
+func (a *App) supplyPhrase(expect string) (string, error) {
+	if a.Yes {
+		if !ttyCheck() {
+			return "", exitcode.New(exitcode.Denied, "--yes is only valid on an interactive TTY")
+		}
+		return expect, nil
+	}
+	if !ttyCheck() {
+		return "", exitcode.New(exitcode.Denied, "type %q to confirm; non-interactive callers are refused", expect)
+	}
+	f, err := os.OpenFile(devTTY(), os.O_RDWR, 0)
+	if err != nil {
+		return "", exitcode.New(exitcode.Denied, "confirmation requires an interactive TTY")
+	}
+	defer f.Close()
+	if err := confirmTyped(expect, "confirmation", f, f); err != nil {
+		return "", err
+	}
+	return expect, nil
+}
 
 func confirmAlias(alias string, yes bool) error {
 	if yes {

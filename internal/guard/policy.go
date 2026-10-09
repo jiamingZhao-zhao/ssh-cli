@@ -43,6 +43,7 @@ type Effective struct {
 	Service    []string    `json:"-"`
 	ServiceAll bool        `json:"-"`
 	Protected  []string    `json:"protectedPaths,omitempty"`
+	NoDataOut  bool        `json:"-"`
 	Warnings   []string    `json:"warnings,omitempty"`
 	layers     []layer
 	// fallback is an extra allow-list used when readonly mode had no configured
@@ -191,6 +192,7 @@ func Resolve(cfg *config.Config, h config.ResolvedHost, forceReadonly bool) (Eff
 		Service:    service,
 		ServiceAll: serviceAll,
 		Protected:  paths,
+		NoDataOut:  h.Env.NoDataOutflow,
 		Warnings:   warnings,
 		layers:     layers,
 		fallback:   fallback,
@@ -435,6 +437,9 @@ func Decide(eff Effective, command string) Decision {
 			if why := builtinDeny(c.args); why != "" {
 				dec.Allowed = false
 				dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
+			} else if eff.Mode == config.ModeReadonly {
+				dec.Allowed = false
+				dec.Findings = append(dec.Findings, Finding{Layer: "mode", Kind: "deny", Detail: "readonly mode refuses write redirects"})
 			}
 			continue
 		}
@@ -452,6 +457,11 @@ func Decide(eff Effective, command string) Decision {
 			continue
 		}
 		if why := builtinDeny(c.args); why != "" {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
+			continue
+		}
+		if why := semanticDeny(eff.Mode, c.args); why != "" {
 			dec.Allowed = false
 			dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
 			continue
@@ -584,6 +594,10 @@ func DecideCapability(eff Effective, capability, remotePath string) Decision {
 		if !eff.Download {
 			dec.Allowed = false
 			dec.Findings = append(dec.Findings, Finding{Layer: "capability", Kind: "deny", Detail: "download is disabled"})
+		}
+		if eff.NoDataOut {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "env", Kind: "deny", Detail: "noDataOutflow forbids download"})
 		}
 	default:
 		dec.Allowed = false

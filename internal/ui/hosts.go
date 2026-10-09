@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/secrets"
 )
@@ -29,17 +30,19 @@ type HostDraft struct {
 	SetDefault bool
 	ClearTags  bool
 
-	HasGroup    bool
-	HasAddress  bool
-	HasPort     bool
-	HasUser     bool
-	HasPassword bool
-	HasIdentity bool
-	HasPolicy   bool
-	HasTags     bool
-	HasAllow    bool
-	HasDeny     bool
-	HasConfirm  bool
+	HasGroup     bool
+	HasAddress   bool
+	HasPort      bool
+	HasUser      bool
+	HasPassword  bool
+	HasIdentity  bool
+	HasPolicy    bool
+	HasTags      bool
+	HasAllow     bool
+	HumanConfirm string
+	Actor        string
+	HasDeny      bool
+	HasConfirm   bool
 }
 
 // AddHost creates one host. A password is stored through secrets.Store.
@@ -130,12 +133,21 @@ func UpdateHost(dir string, in HostDraft) error {
 	}
 	password := in.Password
 	in.Password = ""
-	return config.Update(dir, func(cfg *config.Config) error {
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
 		found, ok := cfg.Find(alias)
 		if !ok {
 			return fmt.Errorf("host %q not found", alias)
 		}
 		h := found.Host
+		n, err := uiHostNeeds(cfg, found, h, in)
+		if err != nil {
+			return err
+		}
+		if err := confirmgate.Require(dir, in.Actor, in.HumanConfirm, n); err != nil {
+			return err
+		}
+		needs = n
 		oldRef := h.PasswordRef
 		if in.HasGroup {
 			group := strings.TrimSpace(in.Group)
@@ -220,6 +232,47 @@ func UpdateHost(dir string, in HostDraft) error {
 		}
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, in.Actor, needs)
+	return nil
+}
+
+func uiHostNeeds(cfg *config.Config, found config.ResolvedHost, h *config.Host, in HostDraft) ([]confirmgate.Need, error) {
+	alias := strings.TrimSpace(in.Alias)
+	newGroup := found.Group
+	newEnv := found.EnvName
+	groupChanged := false
+	if in.HasGroup {
+		newGroup = strings.TrimSpace(in.Group)
+		g, ok := cfg.Groups[newGroup]
+		if !ok || g == nil {
+			return nil, fmt.Errorf("group %q not found", newGroup)
+		}
+		groupChanged = newGroup != found.Group
+		newEnv = g.Env
+	}
+	newAddr := h.Host
+	addrChanged := false
+	if in.HasAddress {
+		newAddr = strings.TrimSpace(in.Address)
+		addrChanged = newAddr != strings.TrimSpace(h.Host)
+	}
+	needs := confirmgate.HostNeeds(alias, found.Group, newGroup, found.EnvName, newEnv, h.Host, newAddr, groupChanged, addrChanged)
+	if in.HasPolicy && confirmgate.NamedWider(cfg, h.Policy, in.Policy) {
+		needs = append(needs, confirmgate.WidenNeed(alias, "host "+alias+" policy would widen"))
+	}
+	if in.HasAllow && confirmgate.AllowWidens(h.Allow, in.Allow) {
+		needs = append(needs, confirmgate.WidenNeed(alias, "host "+alias+" allow-list would widen"))
+	}
+	if in.HasDeny && confirmgate.ListShrinks(h.Deny, in.Deny) {
+		needs = append(needs, confirmgate.WidenNeed(alias, "host "+alias+" deny-list would shrink"))
+	}
+	if in.HasConfirm && confirmgate.ListShrinks(h.Confirm, in.Confirm) {
+		needs = append(needs, confirmgate.WidenNeed(alias, "host "+alias+" confirm-list would shrink"))
+	}
+	return needs, nil
 }
 
 // RemoveHost deletes one host and its secret when nothing else references it.

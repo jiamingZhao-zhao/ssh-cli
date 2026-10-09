@@ -80,7 +80,11 @@ try {
         $code = 0
         if ($_.Exception.Response) { $code = [int]$_.Exception.Response.StatusCode }
         if ($code -ne 404) { throw }
-        Write-Warning 'release has no checksums.txt; the download was not verified'
+        if ($env:SSH_CLI_ALLOW_MISSING_CHECKSUM -eq '1') {
+            Write-Warning 'release has no checksums.txt; the download was not verified'
+        } else {
+            throw 'refusing to install without checksums.txt (set SSH_CLI_ALLOW_MISSING_CHECKSUM=1 to override)'
+        }
     }
     if ($haveSums) {
         $want = $null

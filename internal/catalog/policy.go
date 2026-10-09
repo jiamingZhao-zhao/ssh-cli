@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
 
@@ -45,6 +46,9 @@ type PolicyDraft struct {
 	HasService   bool
 	ServiceEmpty bool
 	UnsetService bool
+
+	HumanConfirm string
+	Actor        string
 }
 
 // PolicyView is the list form shared by the CLI and the localhost UI.
@@ -179,40 +183,55 @@ func addPolicy(cfg *config.Config, in PolicyDraft) error {
 // EditPolicy updates a file policy, or writes an override of a built-in.
 // Replace stores the draft as the whole policy. Otherwise only Has* fields change.
 func EditPolicy(dir string, in PolicyDraft) error {
-	return config.Update(dir, func(cfg *config.Config) error {
-		return editPolicy(cfg, in)
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
+		n, err := editPolicy(dir, cfg, in)
+		needs = n
+		return err
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, in.Actor, needs)
+	return nil
 }
 
-func editPolicy(cfg *config.Config, in PolicyDraft) error {
+func editPolicy(dir string, cfg *config.Config, in PolicyDraft) ([]confirmgate.Need, error) {
 	name := strings.TrimSpace(in.Name)
 	if !config.ValidName(name) {
-		return fmt.Errorf("invalid policy name %q", name)
+		return nil, fmt.Errorf("invalid policy name %q", name)
 	}
 	current, inFile := filePolicy(cfg, name)
 	builtin, isBuiltin := guard.BuiltinPolicy(name)
 	if !inFile && !isBuiltin {
-		return fmt.Errorf("policy %q not found", name)
+		return nil, fmt.Errorf("policy %q not found", name)
+	}
+	base := current
+	if base == nil {
+		base = builtin
 	}
 	var pol *config.Policy
 	var err error
 	if in.Replace {
 		pol, err = in.materialize()
 	} else {
-		base := current
-		if base == nil {
-			base = builtin
-		}
 		pol, err = overlayPolicy(base, in)
 	}
 	if err != nil {
-		return err
+		return nil, err
+	}
+	var needs []confirmgate.Need
+	if confirmgate.PolicyWider(base, pol) {
+		needs = []confirmgate.Need{confirmgate.WidenNeed(name, "policy "+name+" would widen")}
+		if err := confirmgate.Require(dir, in.Actor, in.HumanConfirm, needs); err != nil {
+			return nil, err
+		}
 	}
 	if cfg.Policies == nil {
 		cfg.Policies = map[string]*config.Policy{}
 	}
 	cfg.Policies[name] = pol
-	return nil
+	return needs, nil
 }
 
 // RemovePolicy deletes a file entry. A built-in that was overridden becomes the

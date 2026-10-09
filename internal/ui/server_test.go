@@ -76,6 +76,7 @@ func TestUISmoke(t *testing.T) {
 		`{"alias":"main","group":"app-prod","host":"192.0.2.10","user":"viewer","password":"`+password+`","tags":["app"],"setDefault":true}`))
 	add.RemoteAddr = "127.0.0.1:9"
 	add.Header.Set("Content-Type", "application/json")
+	attachCSRF(t, h, add)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, add)
 	if rr.Code != 200 || strings.Contains(rr.Body.String(), password) {
@@ -85,6 +86,7 @@ func TestUISmoke(t *testing.T) {
 	q := httptest.NewRequest(http.MethodPost, "/api/hosts?password="+password, strings.NewReader(`{"alias":"x"}`))
 	q.RemoteAddr = "127.0.0.1:9"
 	q.Header.Set("Content-Type", "application/json")
+	attachCSRF(t, h, q)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, q)
 	if rr.Code != http.StatusBadRequest || strings.Contains(rr.Body.String(), password) {
@@ -114,6 +116,7 @@ func TestUISmoke(t *testing.T) {
 	edit := httptest.NewRequest(http.MethodPost, "/api/hosts/update", strings.NewReader(`{"alias":"main","port":2222}`))
 	edit.RemoteAddr = "127.0.0.1:9"
 	edit.Header.Set("Content-Type", "application/json")
+	attachCSRF(t, h, edit)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, edit)
 	if rr.Code != 200 {
@@ -147,6 +150,7 @@ func TestUISmoke(t *testing.T) {
 	rm := httptest.NewRequest(http.MethodPost, "/api/hosts/remove", strings.NewReader(`{"alias":"main"}`))
 	rm.RemoteAddr = "127.0.0.1:9"
 	rm.Header.Set("Content-Type", "application/json")
+	attachCSRF(t, h, rm)
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, rm)
 	if rr.Code != 200 {
@@ -166,6 +170,7 @@ func TestUIConfigParity(t *testing.T) {
 	dir := t.TempDir()
 	h := Handler(dir, false)
 	index := httptest.NewRequest(http.MethodGet, "/", nil)
+	index.Host = "127.0.0.1"
 	index.RemoteAddr = "127.0.0.1:9"
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, index)
@@ -177,6 +182,7 @@ func TestUIConfigParity(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
 		req.RemoteAddr = "127.0.0.1:9"
 		req.Header.Set("Content-Type", "application/json")
+		attachCSRF(t, h, req)
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, req)
 		return w
@@ -190,16 +196,17 @@ func TestUIConfigParity(t *testing.T) {
 	if w := post("/api/policies", `{"name":"tight","mode":"readonly","deny":["shutdown"],"confirm":["systemctl restart"]}`); w.Code != 200 {
 		t.Fatalf("policy %d %s", w.Code, w.Body.String())
 	}
-	if w := post("/api/policies/update", `{"name":"tight","mode":"standard","deny":["shutdown","poweroff"],"confirm":["systemctl restart"]}`); w.Code != 200 {
+	if w := post("/api/policies/update", `{"name":"tight","mode":"standard","deny":["shutdown","poweroff"],"confirm":["systemctl restart"],"humanConfirm":"tight"}`); w.Code != 200 {
 		t.Fatalf("policy update %d %s", w.Code, w.Body.String())
 	}
-	if w := post("/api/envs/update", `{"name":"lab","label":"实验","maxMode":"standard","defaultPolicy":"tight"}`); w.Code != 200 {
+	if w := post("/api/envs/update", `{"name":"lab","label":"实验","maxMode":"standard","defaultPolicy":"tight","humanConfirm":"lab"}`); w.Code != 200 {
 		t.Fatalf("env update %d %s", w.Code, w.Body.String())
 	}
 	if w := post("/api/groups/set-env", `{"name":"sandbox","env":"lab"}`); w.Code != 200 {
 		t.Fatalf("set-env %d %s", w.Code, w.Body.String())
 	}
 	req := httptest.NewRequest(http.MethodGet, "/api/catalog", nil)
+	req.Host = "127.0.0.1"
 	req.RemoteAddr = "127.0.0.1:9"
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, req)

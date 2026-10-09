@@ -30,6 +30,9 @@ const (
 	version     = 1
 )
 
+// ErrNoMasterKey is returned when a ciphertext must be opened and no master key exists.
+var ErrNoMasterKey = errors.New("no master key available to decrypt secrets")
+
 // Keyring is the OS keyring. Tests substitute a fake.
 type Keyring interface {
 	Get(service, user string) (string, error)
@@ -206,7 +209,7 @@ func (s *Store) masterKey(create bool) ([]byte, error) {
 		return nil, err
 	}
 	if !create {
-		return nil, fmt.Errorf("no master key available to decrypt secrets")
+		return nil, fmt.Errorf("%w", ErrNoMasterKey)
 	}
 	key := make([]byte, chacha20poly1305.KeySize)
 	if _, err := rand.Read(key); err != nil {
@@ -297,6 +300,9 @@ func decrypt(key []byte, ref string, e entry) ([]byte, error) {
 	nonce, err := base64.StdEncoding.DecodeString(e.Nonce)
 	if err != nil {
 		return nil, err
+	}
+	if len(nonce) != aead.NonceSize() {
+		return nil, fmt.Errorf("secret %s: nonce length %d, want %d", ref, len(nonce), aead.NonceSize())
 	}
 	ct, err := base64.StdEncoding.DecodeString(e.Ciphertext)
 	if err != nil {

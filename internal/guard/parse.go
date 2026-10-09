@@ -93,12 +93,12 @@ func (p *parsed) stmt(s *syntax.Stmt) {
 		if r.Hdoc != nil {
 			p.word(r.Hdoc)
 		}
-		if r.Op == syntax.RdrOut || r.Op == syntax.AppOut || r.Op == syntax.RdrAll || r.Op == syntax.AppAll {
+		if isWriteRedirect(r.Op) {
+			arg := Arg{}
 			if r.Word != nil {
-				if arg, _ := p.evalOnly(r.Word); arg.Static {
-					p.commands = append(p.commands, command{args: []Arg{{Static: true, Value: "redirect"}, arg}})
-				}
+				arg, _ = p.evalOnly(r.Word)
 			}
+			p.commands = append(p.commands, command{args: []Arg{{Static: true, Value: "redirect"}, arg}})
 		}
 	}
 }
@@ -244,7 +244,7 @@ func (p *parsed) call(call *syntax.CallExpr) {
 	}
 	rest, ok := unwrapWrappers(args)
 	if !ok {
-		p.noteDynamic("could not unwrap sudo/command/exec because an argument is dynamic")
+		p.noteDynamic("could not unwrap sudo/command/exec/env because an argument is dynamic")
 		return
 	}
 	if len(rest) == 0 {
@@ -392,6 +392,12 @@ func unwrapWrappers(args []Arg) ([]Arg, bool) {
 				return nil, false
 			}
 			rest = next
+		case "env":
+			next, ok := stripEnv(rest)
+			if !ok {
+				return nil, false
+			}
+			rest = next
 		default:
 			return rest, true
 		}
@@ -480,6 +486,80 @@ func stripCommand(args []Arg) ([]Arg, bool) {
 			continue
 		}
 		break
+	}
+	return args[i:], true
+}
+
+func isWriteRedirect(op syntax.RedirOperator) bool {
+	switch op {
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.RdrInOut, syntax.ClbOut:
+		return true
+	default:
+		return false
+	}
+}
+
+func stripEnv(args []Arg) ([]Arg, bool) {
+	i := 1
+	for i < len(args) {
+		a := args[i]
+		if !a.Static {
+			return nil, false
+		}
+		v := a.Value
+		switch {
+		case v == "--":
+			return args[i+1:], true
+		case v == "-":
+			i++
+		case !strings.HasPrefix(v, "-"):
+			if strings.Contains(v, "=") {
+				i++
+				continue
+			}
+			return args[i:], true
+		case strings.HasPrefix(v, "--"):
+			name, _, hasEq := strings.Cut(v, "=")
+			switch name {
+			case "--ignore-environment", "--null", "--debug":
+				i++
+			case "--unset", "--chdir", "--split-string":
+				if hasEq {
+					i++
+					continue
+				}
+				if i+1 >= len(args) || !args[i+1].Static {
+					return nil, false
+				}
+				i += 2
+			default:
+				return nil, false
+			}
+		default:
+			chars := v[1:]
+			advanced := false
+			for k := 0; k < len(chars); k++ {
+				switch chars[k] {
+				case 'i', '0', 'v':
+				case 'u', 'C', 'S':
+					if k+1 < len(chars) {
+						i++
+					} else {
+						if i+1 >= len(args) || !args[i+1].Static {
+							return nil, false
+						}
+						i += 2
+					}
+					advanced = true
+					k = len(chars)
+				default:
+					return nil, false
+				}
+			}
+			if !advanced {
+				i++
+			}
+		}
 	}
 	return args[i:], true
 }
