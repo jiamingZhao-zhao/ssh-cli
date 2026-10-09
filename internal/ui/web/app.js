@@ -21,6 +21,9 @@ let catalog = { envs: [], groups: [], hosts: [], policies: [] };
 let csrfToken = "";
 let editing = false;
 let auditPage = 1;
+let auditPageSize = 10;
+const PAGE_SIZES = [10, 20, 50];
+const DEFAULT_PAGE_SIZE = 10;
 const pageState = {};
 let editingGroup = false;
 let editingPolicy = "";
@@ -692,7 +695,7 @@ function auditQuery() {
     if (String(v).trim() !== "") params.set(k, String(v).trim());
   }
   params.set("page", String(auditPage));
-  params.set("pageSize", "50");
+  params.set("pageSize", String(auditPageSize));
   return params;
 }
 
@@ -716,26 +719,25 @@ async function loadAudit() {
     auditBody.appendChild(tr);
   }
   const stats = data.stats || {};
-  const pages = Math.max(1, Math.ceil((data.total || 0) / (data.pageSize || 50)));
+  const size = data.pageSize || auditPageSize;
+  const pages = Math.max(1, Math.ceil((data.total || 0) / size));
   setText("#summary-audit", "日志 " + (stats.files || 0) + " 个文件，" + (stats.entries || 0) + " 条，" + (stats.bytes || 0) + " 字节 · 筛选 " + (data.total || 0) + " 条");
   setBadge("audit", stats.entries || 0);
-  const bar = document.querySelector("#audit-pager");
-  bar.replaceChildren();
-  const prev = document.createElement("button");
-  prev.type = "button";
-  prev.className = "secondary";
-  prev.textContent = "上一页";
-  prev.disabled = auditPage <= 1;
-  prev.addEventListener("click", () => { auditPage -= 1; loadAudit().catch((err) => showError(auditError, err.message)); });
-  const next = document.createElement("button");
-  next.type = "button";
-  next.className = "secondary";
-  next.textContent = "下一页";
-  next.disabled = auditPage >= pages;
-  next.addEventListener("click", () => { auditPage += 1; loadAudit().catch((err) => showError(auditError, err.message)); });
-  const label = document.createElement("span");
-  label.textContent = "第 " + (data.page || auditPage) + " / " + pages + " 页";
-  bar.append(prev, label, next);
+  renderPager(document.querySelector("#audit-pager"), {
+    page: data.page || auditPage,
+    pages: pages,
+    total: data.total || 0,
+    size: size,
+    onPage: (p) => {
+      auditPage = p;
+      loadAudit().catch((err) => showError(auditError, err.message));
+    },
+    onSize: (n) => {
+      auditPageSize = n;
+      auditPage = 1;
+      loadAudit().catch((err) => showError(auditError, err.message));
+    }
+  });
 }
 
 document.querySelector("#audit-filter").addEventListener("submit", async (ev) => {
@@ -831,37 +833,75 @@ function applyFilters() {
   pageTables();
 }
 
+function ensurePage(key) {
+  const cur = pageState[key];
+  if (!cur || typeof cur !== "object") pageState[key] = { page: 1, size: DEFAULT_PAGE_SIZE };
+  const st = pageState[key];
+  if (!PAGE_SIZES.includes(st.size)) st.size = DEFAULT_PAGE_SIZE;
+  if (!Number.isFinite(st.page) || st.page < 1) st.page = 1;
+  return st;
+}
+
+function renderPager(bar, state) {
+  if (!bar) return;
+  bar.replaceChildren();
+  const total = document.createElement("span");
+  total.className = "pager-meta";
+  total.textContent = "共 " + state.total + " 条";
+  const sizeLabel = document.createElement("label");
+  sizeLabel.className = "pager-size";
+  const sizeText = document.createElement("span");
+  sizeText.textContent = "每页";
+  const select = document.createElement("select");
+  select.setAttribute("aria-label", "每页条数");
+  for (const n of PAGE_SIZES) {
+    const opt = document.createElement("option");
+    opt.value = String(n);
+    opt.textContent = String(n);
+    if (n === state.size) opt.selected = true;
+    select.appendChild(opt);
+  }
+  select.addEventListener("change", () => state.onSize(Number(select.value)));
+  sizeLabel.append(sizeText, select);
+  const prev = document.createElement("button");
+  prev.type = "button";
+  prev.className = "secondary";
+  prev.textContent = "上一页";
+  prev.disabled = state.page <= 1;
+  prev.addEventListener("click", () => state.onPage(state.page - 1));
+  const label = document.createElement("span");
+  label.className = "pager-meta";
+  label.textContent = state.page + " / " + state.pages;
+  const next = document.createElement("button");
+  next.type = "button";
+  next.className = "secondary";
+  next.textContent = "下一页";
+  next.disabled = state.page >= state.pages;
+  next.addEventListener("click", () => state.onPage(state.page + 1));
+  bar.append(total, sizeLabel, prev, label, next);
+}
+
 function pageTables() {
   document.querySelectorAll("[data-pager]").forEach((bar) => {
-    const body = document.querySelector(bar.dataset.pager);
+    const key = bar.dataset.pager;
+    const body = document.querySelector(key);
     if (!body) return;
-    const size = 25;
+    const st = ensurePage(key);
     const rows = [...body.rows].filter((tr) => tr.dataset.hit !== "0");
-    const pages = Math.max(1, Math.ceil(rows.length / size));
-    let page = pageState[bar.dataset.pager] || 1;
-    if (page > pages) page = pages;
-    pageState[bar.dataset.pager] = page;
+    const pages = Math.max(1, Math.ceil(rows.length / st.size) || 1);
+    if (st.page > pages) st.page = pages;
     for (const tr of body.rows) tr.hidden = true;
     rows.forEach((tr, i) => {
-      tr.hidden = i < (page - 1) * size || i >= page * size;
+      tr.hidden = i < (st.page - 1) * st.size || i >= st.page * st.size;
     });
-    bar.replaceChildren();
-    if (rows.length <= size) return;
-    const prev = document.createElement("button");
-    prev.type = "button";
-    prev.className = "secondary";
-    prev.textContent = "上一页";
-    prev.disabled = page <= 1;
-    prev.addEventListener("click", () => { pageState[bar.dataset.pager] = page - 1; pageTables(); });
-    const next = document.createElement("button");
-    next.type = "button";
-    next.className = "secondary";
-    next.textContent = "下一页";
-    next.disabled = page >= pages;
-    next.addEventListener("click", () => { pageState[bar.dataset.pager] = page + 1; pageTables(); });
-    const label = document.createElement("span");
-    label.textContent = rows.length + " 条 · 第 " + page + " / " + pages + " 页";
-    bar.append(prev, label, next);
+    renderPager(bar, {
+      page: st.page,
+      pages: pages,
+      total: rows.length,
+      size: st.size,
+      onPage: (p) => { st.page = p; pageTables(); },
+      onSize: (n) => { st.size = n; st.page = 1; pageTables(); }
+    });
   });
 }
 
@@ -943,7 +983,11 @@ document.querySelectorAll("button[data-view]").forEach((btn) => {
   btn.addEventListener("click", () => showView(btn.dataset.view));
 });
 document.querySelectorAll("[data-filter]").forEach((input) => {
-  input.addEventListener("input", applyFilters);
+  input.addEventListener("input", () => {
+    const st = pageState[input.dataset.filter];
+    if (st) st.page = 1;
+    applyFilters();
+  });
 });
 document.querySelector("#host-new").addEventListener("click", () => {
   resetForm();
@@ -999,6 +1043,7 @@ async function loadSessions() {
     body.appendChild(tr);
   }
   setText("#summary-sessions", (data.sessions || []).length + " 个会话在这个进程里");
+  pageTables();
 }
 
 document.querySelector("#session-refresh").addEventListener("click", () => {
