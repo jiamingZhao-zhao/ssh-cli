@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -199,6 +200,13 @@ func (h *Host) PortOrDefault() int {
 	return h.Port
 }
 
+// SessionDefaults is the in-process pool window. Empty fields use the built-in
+// defaults: idle 5m, maxLife 60m. There is no background daemon.
+type SessionDefaults struct {
+	Idle    string `yaml:"idle,omitempty"`
+	MaxLife string `yaml:"maxLife,omitempty"`
+}
+
 // Config is the on-disk document.
 type Config struct {
 	Version  int                `yaml:"version"`
@@ -207,6 +215,7 @@ type Config struct {
 	Envs     map[string]*Env    `yaml:"envs,omitempty"`
 	Groups   map[string]*Group  `yaml:"groups,omitempty"`
 	Tasks    map[string]any     `yaml:"tasks,omitempty"`
+	Session  *SessionDefaults   `yaml:"session,omitempty"`
 }
 
 // VerifyPolicy is the extension point for HMAC verification of the policy
@@ -322,10 +331,38 @@ func Update(dir string, fn func(*Config) error) error {
 	})
 }
 
+func (c *Config) validateSession() error {
+	if c.Session == nil {
+		return nil
+	}
+	if _, err := parseSessionDuration(c.Session.Idle); err != nil {
+		return fmt.Errorf("session.idle: %w", err)
+	}
+	if _, err := parseSessionDuration(c.Session.MaxLife); err != nil {
+		return fmt.Errorf("session.maxLife: %w", err)
+	}
+	return nil
+}
+
+func parseSessionDuration(raw string) (time.Duration, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" || raw == "0" || raw == "0s" {
+		return 0, nil
+	}
+	d, err := time.ParseDuration(raw)
+	if err != nil || d < 0 {
+		return 0, fmt.Errorf("invalid duration %q", raw)
+	}
+	return d, nil
+}
+
 // Validate checks structural rules that must hold before a file is trusted.
 func (c *Config) Validate() error {
 	if c == nil {
 		return fmt.Errorf("nil config")
+	}
+	if err := c.validateSession(); err != nil {
+		return err
 	}
 	for name, env := range c.Envs {
 		if !ValidName(name) {

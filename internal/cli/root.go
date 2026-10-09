@@ -176,6 +176,7 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 		a.groupCmd(),
 		a.envCmd(),
 		a.execCmd(),
+		a.sessionCmd(),
 		a.uploadCmd(),
 		a.downloadCmd(),
 		a.statusCmd(),

@@ -32,6 +32,7 @@ const (
 	OpService      = "service"
 	OpKeys         = "keys"
 	OpConfigChange = "config_change"
+	OpSession      = "session"
 
 	StatusOK      = "ok"
 	StatusDenied  = "denied"
