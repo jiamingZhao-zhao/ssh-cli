@@ -56,6 +56,9 @@ func (s *service) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/settings", s.settingsUpdateAPI)
 	mux.HandleFunc("POST /api/exec/batch", s.batchExecAPI)
 	mux.HandleFunc("GET /api/audit/stats", s.auditStatsAPI)
+	mux.HandleFunc("GET /api/audit/overview", s.auditOverviewAPI)
+	mux.HandleFunc("POST /api/terminal/open", s.terminalOpen)
+	mux.HandleFunc("GET /api/terminal/ws", s.terminalWS)
 	mux.HandleFunc("POST /api/audit/cleanup", s.auditCleanupAPI)
 	mux.HandleFunc("GET /api/sessions", s.sessionsAPI)
 	mux.HandleFunc("POST /api/sessions/open", s.sessionOpenAPI)
@@ -155,6 +158,7 @@ type service struct {
 	bearer      string
 	mu          sync.Mutex
 	sessions    map[string]string
+	tickets     map[string]termTicket
 	pool        *session.Pool
 }
 
@@ -163,7 +167,9 @@ func (s *service) guard(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'")
+		// alpine-csp does not eval. xterm and Litepicker inject style elements.
+		// Tabler paints select and check icons with data: SVG images.
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:")
 		if !s.allowRemote && !remoteLoopback(r.RemoteAddr) {
 			http.Error(w, "localhost only", http.StatusForbidden)
 			return
@@ -428,6 +434,10 @@ func filterFromQuery(r *http.Request) (audit.Filter, error) {
 		Env:    strings.TrimSpace(q.Get("env")),
 		Status: strings.TrimSpace(q.Get("status")),
 		Op:     strings.TrimSpace(q.Get("op")),
+		Source: strings.TrimSpace(q.Get("source")),
+	}
+	if f.Source != "" && !audit.ValidSource(f.Source) {
+		return audit.Filter{}, fmt.Errorf("invalid source")
 	}
 	if f.Status != "" && !audit.ValidStatus(f.Status) {
 		return audit.Filter{}, fmt.Errorf("invalid status")

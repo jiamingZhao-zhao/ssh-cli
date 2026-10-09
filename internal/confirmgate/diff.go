@@ -454,8 +454,12 @@ func RecordImport(dir, actor string, needs []Need, summary string) {
 	if strings.TrimSpace(actor) == "" {
 		actor = audit.Actor()
 	}
+	source := audit.SourceCLI
+	if actor == audit.SourceUI {
+		source = audit.SourceUI
+	}
 	_, _ = audit.Append(dir, audit.Record{
 		Op: audit.OpConfigChange, Status: audit.StatusOK, Actor: actor,
-		Reason: summary, Command: "config import",
+		Reason: summary, Command: "config import", Source: source,
 	})
 }

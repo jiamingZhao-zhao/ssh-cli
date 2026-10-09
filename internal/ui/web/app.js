@@ -1,5 +1,83 @@
 const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZES = [10, 20, 50];
+const termMap = new Map();
+let chartDays = null;
+let chartOps = null;
+let rangePicker = null;
+let suppressRange = false;
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+function stamp(value) {
+  if (!value) return "";
+  const d = new Date(value);
+  if (isNaN(d.getTime())) return String(value);
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate()) + " " + pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds());
+}
+
+function ymd(value) {
+  if (!value) return "";
+  if (typeof value.format === "function") return value.format("YYYY-MM-DD");
+  const d = value.dateInstance || value;
+  if (!(d instanceof Date) || isNaN(d.getTime())) return "";
+  return d.getFullYear() + "-" + pad2(d.getMonth() + 1) + "-" + pad2(d.getDate());
+}
+
+function destroyCharts() {
+  if (chartDays) {
+    chartDays.destroy();
+    chartDays = null;
+  }
+  if (chartOps) {
+    chartOps.destroy();
+    chartOps = null;
+  }
+}
+
+function paintOverview(ov, attempt) {
+  if (typeof Chart === "undefined") return;
+  const daysEl = document.getElementById("chart-days");
+  const opsEl = document.getElementById("chart-ops");
+  if (!daysEl || !opsEl) return;
+  if (daysEl.offsetParent === null) {
+    if ((attempt || 0) < 6) setTimeout(() => paintOverview(ov, (attempt || 0) + 1), 40);
+    return;
+  }
+  destroyCharts();
+  const days = (ov && ov.days) || [];
+  const ops = (ov && ov.ops) || [];
+  chartDays = new Chart(daysEl, {
+    type: "bar",
+    data: {
+      labels: days.map((d) => d.date),
+      datasets: [
+        { label: "成功", data: days.map((d) => d.ok || 0), backgroundColor: "#34c759", borderRadius: 6, stack: "a" },
+        { label: "拒绝", data: days.map((d) => d.denied || 0), backgroundColor: "#ff3b30", borderRadius: 6, stack: "a" },
+        { label: "其他", data: days.map((d) => d.other || 0), backgroundColor: "#ff9f0a", borderRadius: 6, stack: "a" }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: { legend: { position: "bottom" } },
+      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } }
+    }
+  });
+  chartOps = new Chart(opsEl, {
+    type: "doughnut",
+    data: {
+      labels: ops.map((item) => item.op),
+      datasets: [{
+        data: ops.map((item) => item.count || 0),
+        backgroundColor: ["#0071e3", "#34c759", "#ff9f0a", "#ff3b30", "#5e5ce6", "#64d2ff", "#ac8e68", "#8e8e93"],
+        borderWidth: 0
+      }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, cutout: "62%", plugins: { legend: { position: "bottom" } } }
+  });
+}
 
 document.addEventListener("alpine:init", () => {
   Alpine.data("sshui", () => sshui());
@@ -21,7 +99,7 @@ function sshui() {
     detail: { host: {}, policy: { capabilities: {} }, sessions: [], audit: [] },
     ops: { hmac: {}, audit: {} },
     audit: { records: [], page: 1, pageSize: DEFAULT_PAGE_SIZE, total: 0, stats: {} },
-    auditFilter: { op: "", host: "", group: "", env: "", status: "", since: "", until: "" },
+    auditFilter: { op: "", host: "", group: "", env: "", status: "", source: "", since: "", until: "" },
     col: { time: "", status: "", op: "", host: "", env: "", command: "", reason: "" },
     q: { hosts: "", groups: "", tags: "", envs: "", policy: "", known: "" },
     pages: {
@@ -37,7 +115,7 @@ function sshui() {
     pickAll: false,
     tagDraft: {},
     tagBulk: {},
-    dialog: { host: false, group: false, policy: false, env: false, batch: false },
+    dialog: { host: false, group: false, policy: false, env: false, batch: false, detail: false },
     wizard: "export",
     bundleYaml: "",
     bundleImport: "",
@@ -61,8 +139,15 @@ function sshui() {
     envForm: null,
     exec: { alias: "", command: "", timeout: "", confirm: "", allowOutflow: false },
     relay: { from: "", fromPath: "", to: "", toPath: "", confirm: "", allowCrossEnv: false },
+    termTabs: [],
+    termActive: "",
+    termAlias: "",
+    detailTitle: "",
+    detailText: "",
+    overview: { days: [], ops: [] },
     titles: {
       home: "概览",
+      terminal: "终端",
       hosts: "主机",
       host: "主机详情",
       groups: "分组",
@@ -80,6 +165,7 @@ function sshui() {
     viewAlias: {
       "": "home",
       home: "home",
+      terminal: "terminal",
       hosts: "hosts",
       host: "host",
       groups: "groups",
@@ -121,6 +207,9 @@ function sshui() {
           const input = document.getElementById("host-search");
           if (input) input.focus();
         }, 0);
+      });
+      window.addEventListener("resize", () => {
+        if (this.view === "terminal") this.fitActive();
       });
       setInterval(() => this.tickSessions(), 1000);
       setInterval(() => {
@@ -214,7 +303,10 @@ function sshui() {
       this.navOpen = false;
       const hash = view === "host" && this.currentHost ? "#host/" + encodeURIComponent(this.currentHost) : "#" + view;
       if (location.hash !== hash) history.replaceState(null, "", hash);
+      if (view !== "home") destroyCharts();
       if (view === "home") this.loadDashboard();
+      if (view === "terminal") this.fitActive();
+      if (view === "audit") setTimeout(() => this.bindRange(), 0);
       if (view === "host") this.loadHost();
       if (view === "sessions") this.loadSessions();
       if (view === "settings") this.loadSettings();
@@ -313,6 +405,7 @@ function sshui() {
         if (!this.catalog.policies) this.catalog.policies = [];
         this.syncTagDrafts();
         if (!this.exec.alias && this.catalog.hosts.length) this.exec.alias = this.catalog.hosts[0].alias;
+        if (!this.termAlias && this.catalog.hosts.length) this.termAlias = this.catalog.hosts[0].alias;
         if (!this.relay.from && this.catalog.hosts.length) {
           this.relay.from = this.catalog.hosts[0].alias;
           this.relay.to = this.catalog.hosts[0].alias;
@@ -340,6 +433,10 @@ function sshui() {
         this.dash = await this.readJSON(await this.api("/api/dashboard"));
         if (!this.dash.recent) this.dash.recent = [];
         if (!this.dash.failures) this.dash.failures = [];
+        this.overview = await this.readJSON(await this.api("/api/audit/overview"));
+        if (!this.overview.days) this.overview.days = [];
+        if (!this.overview.ops) this.overview.ops = [];
+        paintOverview(this.overview);
       } catch (err) {
         this.setError("home", err.message);
       }
@@ -436,6 +533,7 @@ function sshui() {
       if (f.group) params.set("group", f.group);
       if (f.env) params.set("env", f.env);
       if (f.status) params.set("status", f.status);
+      if (f.source) params.set("source", f.source);
       if (String(f.since || "").trim()) params.set("since", String(f.since).trim());
       if (String(f.until || "").trim()) params.set("until", String(f.until).trim());
       params.set("page", String(this.audit.page));
@@ -465,6 +563,11 @@ function sshui() {
     setRange(value) {
       this.auditFilter.since = value;
       this.auditFilter.until = "";
+      const el = document.getElementById("audit-range");
+      if (el) el.value = "";
+      suppressRange = true;
+      setTimeout(() => { suppressRange = false; }, 300);
+      if (rangePicker && rangePicker.clearSelection) rangePicker.clearSelection();
       this.searchAudit();
     },
 
@@ -533,7 +636,7 @@ function sshui() {
 
     auditVisible(rec) {
       const cols = {
-        time: rec.time || "",
+        time: this.formatTime(rec.time) || rec.time || "",
         status: rec.status || "",
         op: rec.op || "",
         host: rec.host || "",
@@ -547,6 +650,158 @@ function sshui() {
         if (q && String(cols[keys[i]] || "").toLowerCase().indexOf(q) < 0) return false;
       }
       return true;
+    },
+
+    formatTime(value) {
+      return stamp(value);
+    },
+
+    openDetail(title, text) {
+      this.detailTitle = title || "详情";
+      this.detailText = text || "";
+      this.openDialog("detail");
+    },
+
+    bindRange() {
+      if (rangePicker || typeof Litepicker === "undefined") return;
+      const el = document.getElementById("audit-range");
+      if (!el) return;
+      const app = this;
+      rangePicker = new Litepicker({
+        element: el,
+        singleMode: false,
+        numberOfMonths: 2,
+        numberOfColumns: 2,
+        format: "YYYY-MM-DD",
+        lang: "zh-CN",
+        autoApply: true,
+        setup: (picker) => {
+          picker.on("selected", (start, end) => {
+            if (suppressRange) return;
+            const since = ymd(start);
+            const until = ymd(end);
+            if (!since || !until) return;
+            app.auditFilter.since = since;
+            app.auditFilter.until = until;
+            app.searchAudit();
+          });
+        }
+      });
+    },
+
+    async openTerminal(alias) {
+      const name = String(alias || this.termAlias || "").trim();
+      this.termAlias = name;
+      this.show("terminal");
+      if (!name) {
+        this.setError("terminal", "先选择一台主机。");
+        return;
+      }
+      this.setError("terminal", "");
+      await new Promise((resolve) => setTimeout(resolve, 40));
+      await this.mountTerm(name);
+    },
+
+    async mountTerm(alias) {
+      const screen = document.getElementById("term-screen");
+      if (!screen || typeof Terminal === "undefined" || !window.FitAddon) {
+        this.setError("terminal", "终端组件没有加载。");
+        return;
+      }
+      const id = "t" + Date.now().toString(36) + this.termTabs.length;
+      const pane = document.createElement("div");
+      pane.className = "term-pane";
+      pane.dataset.id = id;
+      screen.appendChild(pane);
+      const term = new Terminal({
+        cursorBlink: true,
+        fontFamily: '"SF Mono", Menlo, Consolas, monospace',
+        fontSize: 14,
+        theme: { background: "#1d1d1f", foreground: "#f5f5f7", cursor: "#f5f5f7" }
+      });
+      const fit = new FitAddon.FitAddon();
+      term.loadAddon(fit);
+      term.open(pane);
+      fit.fit();
+      const app = this;
+      let opened;
+      try {
+        opened = await this.postJSON("/api/terminal/open", { alias: alias, cols: term.cols || 80, rows: term.rows || 24 });
+      } catch (err) {
+        term.dispose();
+        pane.remove();
+        this.setError("terminal", err.message || "终端连接失败");
+        return;
+      }
+      const proto = location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(proto + "//" + location.host + "/api/terminal/ws?ticket=" + encodeURIComponent(opened.ticket));
+      ws.binaryType = "arraybuffer";
+      const entry = { id: id, alias: alias, term: term, fit: fit, ws: ws, pane: pane, saw: false };
+      termMap.set(id, entry);
+      this.termTabs.push({ id: id, alias: alias });
+      this.showPane(id);
+      ws.onmessage = (ev) => {
+        entry.saw = true;
+        if (typeof ev.data === "string") term.write(ev.data);
+        else term.write(new Uint8Array(ev.data));
+      };
+      ws.onopen = () => {
+        fit.fit();
+        if (ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+      };
+      ws.onerror = () => {
+        if (!entry.saw) app.setError("terminal", "终端连接失败");
+      };
+      ws.onclose = () => {
+        if (!entry.saw) {
+          term.write("终端连接失败\r\n");
+          app.setError("terminal", "终端连接失败");
+        } else {
+          term.write("\r\n连接已关闭\r\n");
+        }
+      };
+      term.onData((data) => {
+        if (ws.readyState === 1) ws.send(new TextEncoder().encode(data));
+      });
+      term.onResize(({ cols, rows }) => {
+        if (ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: cols, rows: rows }));
+      });
+    },
+
+    showPane(id) {
+      this.termActive = id;
+      termMap.forEach((entry) => {
+        entry.pane.classList.toggle("active", entry.id === id);
+      });
+      this.fitActive();
+    },
+
+    fitActive() {
+      const entry = termMap.get(this.termActive);
+      if (!entry) return;
+      setTimeout(() => {
+        if (!entry.pane.classList.contains("active")) return;
+        entry.fit.fit();
+        if (entry.ws && entry.ws.readyState === 1) {
+          entry.ws.send(JSON.stringify({ type: "resize", cols: entry.term.cols, rows: entry.term.rows }));
+        }
+      }, 30);
+    },
+
+    closeTab(id) {
+      const entry = termMap.get(id);
+      if (entry) {
+        try { entry.ws.close(); } catch (err) { /* already closed */ }
+        entry.term.dispose();
+        entry.pane.remove();
+        termMap.delete(id);
+      }
+      this.termTabs = this.termTabs.filter((tab) => tab.id !== id);
+      if (this.termActive === id) {
+        const next = this.termTabs[this.termTabs.length - 1];
+        this.termActive = next ? next.id : "";
+        if (next) this.showPane(next.id);
+      }
     },
 
     subject(rec) {
@@ -1196,7 +1451,7 @@ function sshui() {
     },
 
     anyDialog() {
-      return this.dialog.host || this.dialog.group || this.dialog.policy || this.dialog.env || this.dialog.batch;
+      return this.dialog.host || this.dialog.group || this.dialog.policy || this.dialog.env || this.dialog.batch || this.dialog.detail;
     },
 
     openDialog(name) {
@@ -1210,6 +1465,7 @@ function sshui() {
       this.dialog.policy = false;
       this.dialog.env = false;
       this.dialog.batch = false;
+      this.dialog.detail = false;
       document.body.classList.remove("overflow-hidden");
     },
 

@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>ssh-cli</title>
   <link rel="stylesheet" href="/tabler.min.css">
+  <link rel="stylesheet" href="/litepicker.css">
+  <link rel="stylesheet" href="/xterm.css">
   <link rel="stylesheet" href="/app.css">
 </head>
 <body>
@@ -21,6 +23,7 @@
           <p class="text-secondary small px-3">本地配置与审计。不启动这个页面时，命令行照常工作。</p>
           <ul class="navbar-nav">
             <li class="nav-item"><a class="nav-link" href="#home" data-view="home" :class="{ active: is('home') }" @click.prevent="show('home')"><span class="nav-link-title">概览</span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#terminal" data-view="terminal" :class="{ active: is('terminal') }" @click.prevent="show('terminal')"><span class="nav-link-title">终端</span><span class="badge bg-blue-lt ms-auto" x-text="termTabs.length"></span></a></li>
             <li class="nav-item"><a class="nav-link" href="#hosts" data-view="hosts" :class="{ active: is('hosts') }" @click.prevent="show('hosts')"><span class="nav-link-title">主机</span><span class="badge bg-blue-lt ms-auto" x-text="catalog.hosts.length"></span></a></li>
             <li class="nav-item"><a class="nav-link" href="#groups" data-view="groups" :class="{ active: is('groups') }" @click.prevent="show('groups')"><span class="nav-link-title">分组</span><span class="badge bg-blue-lt ms-auto" x-text="catalog.groups.length"></span></a></li>
             <li class="nav-item"><a class="nav-link" href="#tags" data-view="tags" :class="{ active: is('tags') }" @click.prevent="show('tags')"><span class="nav-link-title">标签</span><span class="badge bg-blue-lt ms-auto" x-text="taggedCount()"></span></a></li>
@@ -71,6 +74,20 @@
               </div>
             </div>
             <div class="card mb-3"><div class="card-body"><div :class="hmacClass()" role="alert" x-text="hmacText()"></div><button class="btn btn-outline-secondary btn-sm" type="button" @click="show('bundle')">打开运维</button></div></div>
+            <div class="row row-cards mb-3">
+              <div class="col-lg-7">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title">近 14 天</h3></div>
+                  <div class="card-body"><div class="chart-box"><canvas id="chart-days"></canvas></div></div>
+                </div>
+              </div>
+              <div class="col-lg-5">
+                <div class="card">
+                  <div class="card-header"><h3 class="card-title">操作</h3></div>
+                  <div class="card-body"><div class="chart-box"><canvas id="chart-ops"></canvas></div></div>
+                </div>
+              </div>
+            </div>
             <div class="row row-cards">
               <div class="col-lg-6">
                 <div class="card">
@@ -81,11 +98,11 @@
                       <thead><tr><th>时间</th><th>状态</th><th>主机</th><th>命令 / 路径</th></tr></thead>
                       <tbody>
                         <template x-for="rec in dash.recent" :key="rec.id || rec.time + rec.host + subject(rec)">
-                          <tr :class="auditRowClass(rec)" @click="openAuditHost(rec)">
-                            <td class="text-secondary" x-text="rec.time"></td>
+                          <tr :class="auditRowClass(rec)">
+                            <td class="text-secondary" x-text="formatTime(rec.time)"></td>
                             <td><span :class="statusBadge(rec.status)" x-text="rec.status"></span></td>
-                            <td x-text="rec.host"></td>
-                            <td x-text="subject(rec)"></td>
+                            <td><button class="btn btn-link p-0" type="button" @click="openAuditHost(rec)" x-text="rec.host"></button></td>
+                            <td><button class="btn btn-ghost-secondary btn-sm clip" type="button" @click="openDetail('命令', subject(rec))" x-text="subject(rec)"></button></td>
                           </tr>
                         </template>
                       </tbody>
@@ -102,11 +119,11 @@
                       <thead><tr><th>时间</th><th>状态</th><th>主机</th><th>原因</th></tr></thead>
                       <tbody>
                         <template x-for="rec in dash.failures" :key="(rec.id || '') + rec.time">
-                          <tr :class="auditRowClass(rec)" @click="openAuditHost(rec)">
-                            <td class="text-secondary" x-text="rec.time"></td>
+                          <tr :class="auditRowClass(rec)">
+                            <td class="text-secondary" x-text="formatTime(rec.time)"></td>
                             <td><span :class="statusBadge(rec.status)" x-text="rec.status"></span></td>
-                            <td x-text="rec.host"></td>
-                            <td x-text="rec.reason || subject(rec)"></td>
+                            <td><button class="btn btn-link p-0" type="button" @click="openAuditHost(rec)" x-text="rec.host"></button></td>
+                            <td><button class="btn btn-ghost-secondary btn-sm clip" type="button" @click="openDetail('原因', rec.reason || subject(rec))" x-text="rec.reason || subject(rec)"></button></td>
                           </tr>
                         </template>
                       </tbody>
@@ -114,6 +131,41 @@
                   </div>
                 </div>
               </div>
+            </div>
+          </div>
+
+          <div x-show="is('terminal')" data-view="terminal">
+            <div class="card">
+              <div class="card-header">
+                <div>
+                  <h3 class="card-title">终端</h3>
+                  <p class="text-secondary m-0">交互终端不套用允许 / 拒绝 / 确认，只记开关和字节数，不记按键。命令行和「执行」页仍然拦截。没有端口转发。开着时不算空闲，最长仍是 60 分钟。</p>
+                </div>
+                <div class="card-actions btn-list">
+                  <select class="form-select w-auto" x-model="termAlias" aria-label="终端主机">
+                    <template x-for="h in sortedHosts()" :key="'term-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
+                  </select>
+                  <button class="btn btn-primary" type="button" @click="openTerminal(termAlias)">打开</button>
+                </div>
+              </div>
+              <div class="card-body border-bottom py-2" x-show="termTabs.length > 0">
+                <div class="btn-list">
+                  <template x-for="tab in termTabs" :key="tab.id">
+                    <span class="btn btn-sm" :class="tab.id === termActive ? 'btn-primary' : 'btn-outline-secondary'">
+                      <button class="btn btn-sm p-0 border-0" type="button" :class="tab.id === termActive ? 'text-white' : ''" @click="showPane(tab.id)" x-text="tab.alias"></button>
+                      <button class="btn btn-sm p-0 border-0 ms-2" type="button" :class="tab.id === termActive ? 'text-white' : ''" @click="closeTab(tab.id)" :aria-label="'关闭 ' + tab.alias">×</button>
+                    </span>
+                  </template>
+                </div>
+              </div>
+              <div class="card-body" x-show="errors.terminal">
+                <div class="alert alert-danger mb-0" role="alert" x-text="errors.terminal"></div>
+              </div>
+              <div class="empty" x-show="termTabs.length === 0">
+                <p class="empty-title">还没有打开的终端</p>
+                <p class="empty-subtitle text-secondary">选一台主机后点「打开」。可以同时开多个。连接失败时会写「终端连接失败」。</p>
+              </div>
+              <div id="term-screen" class="term-screen" x-show="termTabs.length > 0"></div>
             </div>
           </div>
 
@@ -162,8 +214,9 @@
                         <td x-text="h.port"></td>
                         <td x-text="h.user"></td>
                         <td><span class="badge bg-secondary-lt" x-text="h.auth"></span></td>
-                        <td x-text="(h.tags || []).join(', ')"></td>
+                        <td><button class="btn btn-ghost-secondary btn-sm clip" type="button" x-show="(h.tags || []).length" @click="openDetail('标签', (h.tags || []).join(', '))" x-text="(h.tags || []).join(', ')"></button></td>
                         <td class="text-end">
+                          <button class="btn btn-outline-primary btn-sm" type="button" @click="openTerminal(h.alias)">终端</button>
                           <button class="btn btn-outline-secondary btn-sm" type="button" @click="openHost(h.alias)">详情</button>
                           <button class="btn btn-outline-secondary btn-sm" type="button" @click="openHostForm(h)">编辑</button>
                           <button class="btn btn-outline-danger btn-sm" type="button" @click="removeHost(h.alias)">删除</button>
@@ -196,6 +249,7 @@
                 </div>
                 <div class="card-actions">
                   <button class="btn btn-outline-secondary" type="button" @click="show('hosts')">返回主机</button>
+                  <button class="btn btn-outline-primary" type="button" @click="openTerminal(currentHost)">终端</button>
                   <button class="btn btn-primary" type="button" @click="openSession(currentHost)">打开会话</button>
                 </div>
               </div>
@@ -227,9 +281,9 @@
                     <tbody>
                       <template x-for="rec in detail.audit" :key="(rec.id || '') + rec.time">
                         <tr :class="auditRowClass(rec)">
-                          <td x-text="rec.time"></td>
+                          <td class="text-secondary" x-text="formatTime(rec.time)"></td>
                           <td><span :class="statusBadge(rec.status)" x-text="rec.status"></span></td>
-                          <td x-text="subject(rec) || rec.reason"></td>
+                          <td><button class="btn btn-ghost-secondary btn-sm clip" type="button" @click="openDetail('命令', subject(rec) || rec.reason)" x-text="subject(rec) || rec.reason"></button></td>
                         </tr>
                       </template>
                     </tbody>
@@ -514,7 +568,7 @@
               <div class="card-body border-bottom">
                 <form class="row g-2" @submit.prevent="searchAudit()">
                   <div class="col-md-2"><label class="form-label">操作</label>
-                    <select class="form-select" x-model="auditFilter.op"><option value="">全部</option><option>exec</option><option>upload</option><option>download</option><option>relay</option><option>policy_check</option><option>session</option><option>config_change</option><option>status</option><option>service</option><option>keys</option></select>
+                    <select class="form-select" x-model="auditFilter.op"><option value="">全部</option><option>exec</option><option>upload</option><option>download</option><option>relay</option><option>policy_check</option><option>session</option><option>terminal</option><option>config_change</option><option>status</option><option>service</option><option>keys</option></select>
                   </div>
                   <div class="col-md-2"><label class="form-label">主机</label>
                     <select class="form-select" x-model="auditFilter.host"><option value="">全部</option><template x-for="h in sortedHosts()" :key="h.alias"><option :value="h.alias" x-text="h.alias"></option></template></select>
@@ -528,8 +582,10 @@
                   <div class="col-md-2"><label class="form-label">状态</label>
                     <select class="form-select" x-model="auditFilter.status"><option value="">全部</option><option>ok</option><option>denied</option><option>timeout</option><option>auth</option><option>connect</option><option>error</option></select>
                   </div>
-                  <div class="col-md-2"><label class="form-label">自从</label><input class="form-control" x-model="auditFilter.since" placeholder="24h 或 2026-01-02" autocomplete="off"></div>
-                  <div class="col-md-2"><label class="form-label">直到</label><input class="form-control" x-model="auditFilter.until" placeholder="YYYY-MM-DD" autocomplete="off"></div>
+                  <div class="col-md-2"><label class="form-label">来源</label>
+                    <select class="form-select" x-model="auditFilter.source"><option value="">全部</option><option value="cli">cli</option><option value="ui">ui</option></select>
+                  </div>
+                  <div class="col-md-4"><label class="form-label" for="audit-range">日期</label><input id="audit-range" class="form-control" readonly placeholder="选择日期范围" autocomplete="off"></div>
                   <div class="col-md-10 d-flex align-items-end gap-2 flex-wrap">
                     <button class="btn btn-outline-secondary" type="button" @click="setRange('1h')">1 小时</button>
                     <button class="btn btn-outline-secondary" type="button" @click="setRange('24h')">24 小时</button>
@@ -563,16 +619,16 @@
                   </thead>
                   <tbody>
                     <template x-for="rec in shownAudit()" :key="(rec.id || '') + rec.time + subject(rec)">
-                      <tr :class="auditRowClass(rec)" @click="openAuditHost(rec)">
-                        <td class="text-secondary" x-text="rec.time"></td>
+                      <tr :class="auditRowClass(rec)">
+                        <td class="text-secondary" x-text="formatTime(rec.time)"></td>
                         <td><span :class="statusBadge(rec.status)" x-text="rec.status"></span></td>
                         <td x-text="rec.op"></td>
-                        <td x-text="rec.host"></td>
+                        <td><button class="btn btn-link p-0" type="button" @click="openAuditHost(rec)" x-text="rec.host"></button></td>
                         <td x-text="rec.env"></td>
                         <td x-text="rec.exit_code == null ? '' : rec.exit_code"></td>
                         <td x-text="rec.high_risk ? 'yes' : ''"></td>
-                        <td x-text="subject(rec)"></td>
-                        <td x-text="rec.reason"></td>
+                        <td><button class="btn btn-ghost-secondary btn-sm clip" type="button" @click="openDetail('命令', subject(rec))" x-text="subject(rec)"></button></td>
+                        <td><button class="btn btn-ghost-secondary btn-sm clip" type="button" @click="openDetail('原因', rec.reason)" x-text="rec.reason"></button></td>
                       </tr>
                     </template>
                   </tbody>
@@ -628,8 +684,8 @@
                         <td><span :class="item.status === 'busy' ? 'badge bg-yellow-lt' : 'badge bg-green-lt'" x-text="item.status === 'busy' ? '忙碌' : '空闲'"></span></td>
                         <td x-text="idleText(item)"></td>
                         <td x-text="formatLeft(item.lifeLeftSec)"></td>
-                        <td class="text-secondary" x-text="item.opened"></td>
-                        <td class="text-secondary" x-text="item.used"></td>
+                        <td class="text-secondary" x-text="formatTime(item.opened)"></td>
+                        <td class="text-secondary" x-text="formatTime(item.used)"></td>
                         <td class="text-end"><button class="btn btn-outline-danger btn-sm" type="button" @click="closeSession(item.alias)">关闭</button></td>
                       </tr>
                     </template>
@@ -657,7 +713,7 @@
                 <form class="card" @submit.prevent="runExec()">
                   <div class="card-header"><h3 class="card-title">执行命令</h3></div>
                   <div class="card-body">
-                    <p class="text-secondary">执行、上传、下载走和命令行同一套策略与审计。需要确认时输入主机别名。</p>
+                    <p class="text-secondary">执行、上传、下载走和命令行同一套策略与审计。需要确认时输入主机别名。交互终端不套用这套规则，只记审计。</p>
                     <div class="row g-3">
                       <div class="col-md-4"><label class="form-label">主机</label>
                         <select class="form-select" x-model="exec.alias" required>
@@ -1022,6 +1078,21 @@
       </div>
     </div>
 
+    <div class="modal modal-blur" tabindex="-1" role="dialog" x-show="dialog.detail" :class="{ show: dialog.detail, 'd-block': dialog.detail }">
+      <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h5 class="modal-title" x-text="detailTitle"></h5>
+            <button type="button" class="btn-close" @click="closeDialogs()" aria-label="关闭"></button>
+          </div>
+          <div class="modal-body"><pre class="detail-pre mb-0" x-text="detailText"></pre></div>
+          <div class="modal-footer">
+            <button type="button" class="btn btn-primary" @click="closeDialogs()">关闭</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <div class="modal modal-blur" tabindex="-1" role="dialog" x-show="dialog.batch" :class="{ show: dialog.batch, 'd-block': dialog.batch }">
       <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
         <form class="modal-content" @submit.prevent="submitBatch()">
@@ -1050,6 +1121,10 @@
       </div>
     </div>
   </div>
+  <script src="/chart.umd.min.js"></script>
+  <script src="/litepicker.js"></script>
+  <script src="/xterm.js"></script>
+  <script src="/xterm-addon-fit.js"></script>
   <script src="/app.js"></script>
   <script src="/alpine-csp.min.js"></script>
 </body>

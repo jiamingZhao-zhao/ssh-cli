@@ -34,6 +34,16 @@ const (
 	OpConfigChange = "config_change"
 	OpSession      = "session"
 	OpRelay        = "relay"
+	OpTerminal     = "terminal"
+
+	// SourceCLI and SourceUI record who drove the operation.
+	// cli is the command line and agents. ui is the localhost page.
+	// Interactive terminal sessions are ui and do not apply command policy.
+	SourceCLI = "cli"
+	SourceUI  = "ui"
+
+	// DisplayLayout is the human-facing timestamp form.
+	DisplayLayout = "2006-01-02 15:04:05"
 
 	StatusOK      = "ok"
 	StatusDenied  = "denied"
@@ -69,6 +79,9 @@ type Record struct {
 	DeniedByPolicy bool   `json:"denied_by_policy"`
 	Reason         string `json:"reason,omitempty"`
 	Actor          string `json:"actor,omitempty"`
+	// Source is cli or ui. It is assigned by the process that performed the
+	// operation. Callers must not copy it from a request body.
+	Source string `json:"source,omitempty"`
 }
 
 // Actor returns SSH_CLI_ACTOR, or "cli" when it is unset.
@@ -93,11 +106,25 @@ func ValidStatus(s string) bool {
 // ValidOp reports whether s is a known operation filter value.
 func ValidOp(s string) bool {
 	switch s {
-	case OpExec, OpUpload, OpDownload, OpPolicyCheck, OpStatus, OpService, OpKeys, OpConfigChange, OpSession, OpRelay:
+	case OpExec, OpUpload, OpDownload, OpPolicyCheck, OpStatus, OpService, OpKeys, OpConfigChange, OpSession, OpRelay, OpTerminal:
 		return true
 	default:
 		return false
 	}
+}
+
+// ValidSource reports whether s is cli or ui.
+func ValidSource(s string) bool {
+	return s == SourceCLI || s == SourceUI
+}
+
+// DisplayTime formats a stored RFC3339 stamp as yyyy-MM-dd HH:mm:ss in local time.
+func DisplayTime(s string) string {
+	t, err := ParseStamp(s)
+	if err != nil {
+		return s
+	}
+	return t.In(time.Local).Format(DisplayLayout)
 }
 
 // Append scrubs, clips, and writes one JSONL record. It returns the stored record.
@@ -121,6 +148,7 @@ func Append(dir string, rec Record) (Record, error) {
 		rec.Status = StatusError
 	}
 	scrubRecord(&rec)
+	rec.Source = canonicalizeSource(rec.Source, rec.Actor)
 	if rec.ID == "" {
 		rec.ID = newID(when)
 	}
@@ -212,6 +240,19 @@ func marshalLine(rec Record) ([]byte, error) {
 		return nil, err
 	}
 	return []byte(strings.TrimRight(buf.String(), "\n")), nil
+}
+
+func canonicalizeSource(source, actor string) string {
+	switch strings.ToLower(strings.TrimSpace(source)) {
+	case SourceCLI:
+		return SourceCLI
+	case SourceUI:
+		return SourceUI
+	}
+	if strings.TrimSpace(actor) == SourceUI {
+		return SourceUI
+	}
+	return SourceCLI
 }
 
 func scrubRecord(rec *Record) {

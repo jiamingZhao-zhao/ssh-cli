@@ -117,6 +117,9 @@ func (a *App) logRemote(meta auditMeta, h config.ResolvedHost, dec guard.Decisio
 // commitAudit appends a record. keepGoing preserves a remote or policy failure
 // when the log itself cannot be written; a successful remote op fails closed.
 func (a *App) commitAudit(rec audit.Record, keepGoing bool) error {
+	if rec.Source == "" {
+		rec.Source = audit.SourceCLI
+	}
 	if _, err := audit.Append(a.Dir, rec); err != nil {
 		fmt.Fprintf(a.Err, "error: audit log: %s\n", err.Error())
 		if !keepGoing {

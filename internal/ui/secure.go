@@ -60,7 +60,9 @@ func bearerOK(r *http.Request, want string) bool {
 
 func (s *service) authorize(w http.ResponseWriter, r *http.Request) bool {
 	if s.allowRemote {
-		if strings.HasPrefix(r.URL.Path, "/api/") && !bearerOK(r, s.bearer) {
+		// The WebSocket cannot send Authorization. The ticket was minted by a
+		// bearer-authenticated POST, and the handler still requires loopback.
+		if strings.HasPrefix(r.URL.Path, "/api/") && r.URL.Path != "/api/terminal/ws" && !bearerOK(r, s.bearer) {
 			w.Header().Set("WWW-Authenticate", "Bearer")
 			http.Error(w, "bearer token required", http.StatusUnauthorized)
 			return false

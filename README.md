@@ -2,7 +2,7 @@
 
 零依赖的单文件 SSH 运维 CLI（Go）。远程命令、文件上传下载；凭据加密存储，危险命令拦截，对 agent 友好的输出。
 
-当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。0.3.1 让 `--timeout` 限制 SSH 建连，并为分组增加可选显示名。0.3.2 让 `update --yes` 在没有交互终端时也能安装。0.3.3 起，不带参数的 `ssh-cli update` 在没有交互终端时也会安装。0.4.0 增加进程内会话、审计分页与 30 天清理、不含明文的配置导入导出、本机 UI 执行和上传下载、轻量 relay，以及策略 HMAC。0.5.0 用内嵌的 Tabler 组件和 Alpine.js CSP 重排本机界面，并加上概览、主机详情、会话倒计时、审计筛选与 CSV、运维向导、深色与紧凑表格、批量并行执行和设置页。破窗提权（elevate）、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
+当前包含第 1 次迭代（M0 + M1，以及策略引擎核心）、第 2 次迭代（版本号、`update`、安装脚本）、强制审计日志和可选的本机 UI，以及 0.3.0 的配置面打通、`import ssh-ops`、`status` / `service` / `keys`。0.3.1 让 `--timeout` 限制 SSH 建连，并为分组增加可选显示名。0.3.2 让 `update --yes` 在没有交互终端时也能安装。0.3.3 起，不带参数的 `ssh-cli update` 在没有交互终端时也会安装。0.4.0 增加进程内会话、审计分页与 30 天清理、不含明文的配置导入导出、本机 UI 执行和上传下载、轻量 relay，以及策略 HMAC。0.5.0 用内嵌的 Tabler 组件和 Alpine.js CSP 重排本机界面，并加上概览、主机详情、会话倒计时、审计筛选与 CSV、运维向导、深色与紧凑表格、批量并行执行和设置页。本机页面另有交互终端：不套用命令策略，审计来源记为 `ui`，不记录按键。破窗提权（elevate）、GoReleaser 和 SKILL.md 还没做。设计全文见 [docs/PLAN.md](docs/PLAN.md)。安装步骤见 [INSTALL.md](INSTALL.md)。
 
 ## 构建
 
@@ -168,10 +168,10 @@ ssh-cli keys known remove 192.0.2.10:22
 
 每次 `exec`、`upload`、`download` 都会在配置目录追加一条 JSONL，包括策略预检拒绝（内置危险命令、确认类命令、能力开关）、超时、认证失败、连接失败，以及远程非零退出。不记录密码、私钥或明文密钥；命令里的 `password=...` 一类片段会打成 `[redacted]`。
 
-记录字段：`time`（本地时区的 RFC3339）、`op`（`exec` / `upload` / `download` / `relay` / `policy_check` / `session` / `config_change` 等）、主机别名、分组、环境、命令或 `src`/`dst`、`duration_ms`、`exit_code`、截断到 8KiB 的 `result_summary`、`status`（`ok` / `denied` / `timeout` / `auth` / `connect` / `error`）、`high_risk`、`denied_by_policy`、`reason`、`actor`。`actor` 取环境变量 `SSH_CLI_ACTOR`，否则是 `cli`；本机 UI 写 `ui`。
+记录字段：`time`（本地时区的 RFC3339；本机页面显示为 `yyyy-MM-dd HH:mm:ss`）、`op`（`exec` / `upload` / `download` / `relay` / `policy_check` / `session` / `terminal` / `config_change` 等）、主机别名、分组、环境、命令或 `src`/`dst`、`duration_ms`、`exit_code`、截断到 8KiB 的 `result_summary`、`status`（`ok` / `denied` / `timeout` / `auth` / `connect` / `error`）、`high_risk`、`denied_by_policy`、`reason`、`actor`、`source`（`cli` 或 `ui`）。`actor` 取环境变量 `SSH_CLI_ACTOR`，否则是 `cli`；本机 UI 写 `ui`。`source` 由进程填写，请求里自报的来源不算数。交互终端只记开关和字节数，不记按键内容。
 
 ```bash
-ssh-cli audit list --host main --since 24h --status denied --op exec --page 1
+ssh-cli audit list --host main --since 24h --status denied --op exec --source cli --page 1
 ssh-cli audit stats
 ssh-cli audit cleanup
 ssh-cli audit show <id>
@@ -185,9 +185,9 @@ ssh-cli audit tail --follow
 
 ## 本地界面（可选）
 
-0.5.0 的页面用内嵌的 Tabler 和 Alpine.js CSP 版。样式和脚本打进二进制，不跑 npm，断网也能打开。内容安全策略仍是 `default-src 'self'`，没有 `unsafe-eval`。Alpine 只把按钮、表单和表格接到原来的 JSON 接口。导航、卡片、表格、对话框、表单、徽章、提示、分页和空状态都用 Tabler 自带的组件。
+0.5.0 的页面用内嵌的 Tabler 和 Alpine.js CSP 版。样式和脚本打进二进制，不跑 npm，断网也能打开。脚本仍限制在 `default-src 'self'`，没有 `unsafe-eval`。xterm 和日期选择器会插入 style 标签，所以样式额外允许 `'unsafe-inline'`。Tabler 的选择框和勾选用 `data:` 图片，所以图片额外允许 `data:`。Alpine 只把按钮、表单和表格接到原来的 JSON 接口。导航、卡片、表格、对话框、表单、徽章、提示、分页和空状态都用 Tabler 自带的组件。
 
-左侧栏切换：概览、主机、主机详情、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继、运维、设置。列表默认每页 10 条，可改成 20 或 50。在主机页按 `/` 聚焦搜索。深色用 `data-bs-theme`，紧凑表格用 Tabler 的 `table-sm`。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用居中对话框。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。批量执行在页面上对应 `POST /api/exec/batch`，在命令行上对应 `exec --parallel`。
+左侧栏切换：概览、终端、主机、主机详情、分组、标签、环境、危险命令、已知主机密钥、审计、会话、执行、中继、运维、设置。列表默认每页 10 条，可改成 20 或 50。在主机页按 `/` 聚焦搜索。深色用 `data-bs-theme`，紧凑表格用 Tabler 的 `table-sm`。长命令和路径截断，点开看全文。审计日期用日历选择，也可以点 1 小时、24 小时、7 天或 30 天。页面上的时间都是 `yyyy-MM-dd HH:mm:ss`。内置环境 `dev`、`test`、`preprod`、`prod` 只读。不运行就等于关闭，没有后台进程。添加和编辑用居中对话框。导入清单仍用 `import ssh-ops`。配置包用 `config export` / `config import`，不含明文密码。批量执行在页面上对应 `POST /api/exec/batch`，在命令行上对应 `exec --parallel`。
 
 ```bash
 ssh-cli ui
@@ -196,19 +196,20 @@ ssh-cli ui --addr 127.0.0.1:7788
 
 打开 <http://127.0.0.1:7788> 之后：
 
-- **概览**：主机数、最近命令、最近失败，以及策略 HMAC 是否有效。
+- **概览**：主机数、最近命令、最近失败，以及策略 HMAC 是否有效。近 14 天画成柱状图，操作类型画成环形图。
 - **主机**和**主机详情**：勾选多台后可以批量执行，一次最多 16 台，并行最多 4。包含 `prod` 且多于一台时，整批按只读策略检查。详情页给出分组、环境、标签、有效策略、当前会话和这台主机最近的审计。
 - **分组**：新建、修改环境、命名策略、行内 allow/deny/confirm 和受保护路径。有主机的分组不能删，和 `group remove` 一样。
 - **标签**：标签只在主机上，给 `ssh-cli -t` 选择用，分组没有 `tags` 字段。可以把一个标签加到该分组下的每台主机，或从全组去掉。
 - **危险命令**：用表单编辑 allow / deny / confirm，不手改 JSON。内置环境只读；自定义环境可以改 `maxMode` 和 `defaultPolicy`。某一层不写 allow 就是全集，写成空列表则会把这一层交空。内置硬拒绝不能关。HMAC 仍由 `policy sign` 维护。
-- **审计**：按操作、主机、分组、环境、状态和时间筛选，表头可以再过滤当前页，失败行用危险色和警告色。可以导出 CSV。清理只删 30 天前的记录。
+- **审计**：按操作、来源（`cli` / `ui`）、主机、分组、环境、状态和时间筛选，表头可以再过滤当前页，失败行用危险色和警告色。可以导出 CSV。清理只删 30 天前的记录。
 - **会话**：列出状态、空闲倒计时和最长寿命，可以打开或关闭。会话只活在这个 UI 进程里。
 - **执行**、**中继**和**运维**：密码只通过主机表单 POST 进加密存储，不会回显，也不会写入审计。运维页分步导出、导入、查看 HMAC、清理审计。配置包不含明文。
+- **终端**：选一台主机，可以开多个标签，用法接近 FinalShell。这条路径不套用允许 / 拒绝 / 确认，只记审计（`source=ui`），不记按键。命令行和「执行」页仍然拦截。连接复用本机会话：终端开着时不算空闲，最长仍是 60 分钟；关掉之后空闲 5 分钟会断开。没有端口转发。CLI 或 agent 不能靠自称 `source=ui` 走这条路径。
 - **设置**：默认命令超时、每页条数、主题、密度，以及中继是否默认允许跨环境，保存在这台浏览器。会话空闲和最长寿命写入 `hosts.yaml`，和命令行共用。
 
 连接失败、策略拒绝和空列表会写出下一步该做什么。
 
-执行、上传、下载、中继、会话、审计清理和配置导入导出都在本机页面里，策略和审计与命令行相同。elevate 仍不做。
+执行、上传、下载、中继、会话、审计清理和配置导入导出都在本机页面里。除交互终端外，策略和审计与命令行相同。elevate 仍不做。
 
 默认只监听 `127.0.0.1:7788`。`0.0.0.0` 和其他非回环地址会拒绝，除非显式加上 `--allow-non-loopback`。该模式启动时打印一次随机 Bearer token。之后每个 `/api` 请求都要带 `Authorization: Bearer <token>`。页面会提示粘贴这个 token。`Host: localhost` 不能代替它。更稳妥的做法是 SSH 隧道到 `127.0.0.1`，不要把端口暴露到公网。用 Ctrl-C 停止。
 

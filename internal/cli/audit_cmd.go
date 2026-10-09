@@ -33,13 +33,13 @@ exec, upload, and download write a record even when policy denies the attempt, t
 }
 
 func (a *App) auditList() *cobra.Command {
-	var since, until, status, op string
+	var since, until, status, op, source string
 	var page, pageSize int
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List audit records",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			f, err := a.auditFilter(since, until, status, op)
+			f, err := a.auditFilter(since, until, status, op, source)
 			if err != nil {
 				return err
 			}
@@ -82,7 +82,8 @@ func (a *App) auditList() *cobra.Command {
 	cmd.Flags().StringVar(&since, "since", "", "include records at or after this time (RFC3339, YYYY-MM-DD, or a duration like 24h)")
 	cmd.Flags().StringVar(&until, "until", "", "exclude records at or after this time (a YYYY-MM-DD includes that whole day)")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status: ok, denied, timeout, auth, connect, or error")
-	cmd.Flags().StringVar(&op, "op", "", "filter by op: exec, upload, download, relay, policy_check, session, config_change, status, service, keys")
+	cmd.Flags().StringVar(&op, "op", "", "filter by op: exec, upload, download, relay, policy_check, session, terminal, config_change, status, service, keys")
+	cmd.Flags().StringVar(&source, "source", "", "filter by source: cli or ui")
 	cmd.Flags().IntVar(&page, "page", 0, "1-based page when set; newest records are page 1")
 	cmd.Flags().IntVar(&pageSize, "page-size", 0, "page size (default 50, max 200) when --page is set")
 	return cmd
@@ -120,7 +121,7 @@ func (a *App) auditCleanup() *cobra.Command {
 				return a.emit(res)
 			}
 			fmt.Fprintf(a.Out, "removed=%d kept=%d files_deleted=%d bytes_freed=%d cutoff=%s\n",
-				res.Removed, res.Kept, res.FilesDeleted, res.BytesFreed, res.Cutoff.Format(time.RFC3339))
+				res.Removed, res.Kept, res.FilesDeleted, res.BytesFreed, res.Cutoff.In(time.Local).Format(audit.DisplayLayout))
 			return nil
 		},
 	}
@@ -181,12 +182,15 @@ func (a *App) auditTail() *cobra.Command {
 	return cmd
 }
 
-func (a *App) auditFilter(since, until, status, op string) (audit.Filter, error) {
+func (a *App) auditFilter(since, until, status, op, source string) (audit.Filter, error) {
 	if status != "" && !audit.ValidStatus(status) {
 		return audit.Filter{}, exitcode.New(exitcode.Usage, "invalid --status %q", status)
 	}
 	if op != "" && !audit.ValidOp(op) {
 		return audit.Filter{}, exitcode.New(exitcode.Usage, "invalid --op %q", op)
+	}
+	if source != "" && !audit.ValidSource(source) {
+		return audit.Filter{}, exitcode.New(exitcode.Usage, "invalid --source %q", source)
 	}
 	f := audit.Filter{
 		Hosts:  append([]string(nil), a.Hosts...),
@@ -194,6 +198,7 @@ func (a *App) auditFilter(since, until, status, op string) (audit.Filter, error)
 		Env:    a.Env,
 		Status: status,
 		Op:     op,
+		Source: source,
 	}
 	if since != "" {
 		t, err := audit.ParseBound(since, false)
@@ -255,9 +260,9 @@ func printAuditRecord(w io.Writer, rec audit.Record, full bool) {
 	if rec.ExitCode != nil {
 		exit = strconv.Itoa(*rec.ExitCode)
 	}
-	fmt.Fprintf(w, "%s  %s  %s  %s  %s/%s  exit=%s  %dms  high_risk=%t  denied_by_policy=%t  actor=%s  id=%s\n",
-		rec.Time, rec.Status, rec.Op, rec.Host, emptyDash(rec.Env), emptyDash(rec.Group), exit, rec.DurationMS,
-		rec.HighRisk, rec.DeniedByPolicy, emptyDash(rec.Actor), rec.ID)
+	fmt.Fprintf(w, "%s  %s  %s  %s  %s/%s  exit=%s  %dms  high_risk=%t  denied_by_policy=%t  actor=%s  source=%s  id=%s\n",
+		audit.DisplayTime(rec.Time), rec.Status, rec.Op, rec.Host, emptyDash(rec.Env), emptyDash(rec.Group), exit, rec.DurationMS,
+		rec.HighRisk, rec.DeniedByPolicy, emptyDash(rec.Actor), emptyDash(rec.Source), rec.ID)
 	if rec.Command != "" {
 		fmt.Fprintf(w, "  command: %s\n", oneLine(rec.Command))
 	}

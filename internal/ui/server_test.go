@@ -244,6 +244,16 @@ func TestUILayout(t *testing.T) {
 		return rr.Body.String()
 	}
 	body := get("/")
+	cspReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	cspReq.Host = "127.0.0.1"
+	cspReq.RemoteAddr = "127.0.0.1:9"
+	useLoopback(cspReq)
+	cspRR := httptest.NewRecorder()
+	h.ServeHTTP(cspRR, cspReq)
+	csp := cspRR.Header().Get("Content-Security-Policy")
+	if !strings.Contains(csp, "default-src 'self'") || strings.Contains(csp, "unsafe-eval") || !strings.Contains(csp, "img-src 'self' data:") || !strings.Contains(csp, "style-src 'self' 'unsafe-inline'") {
+		t.Fatalf("csp %s", csp)
+	}
 	if strings.Contains(body, "tabbar") {
 		t.Fatal("top tab bar still present")
 	}

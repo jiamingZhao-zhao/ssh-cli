@@ -101,7 +101,7 @@ func (s *service) authMethods(h config.ResolvedHost) ([]ssh.AuthMethod, error) {
 
 func (s *service) onSessionClose(alias, reason string) {
 	rec := audit.Record{
-		Op: audit.OpSession, Host: alias, Status: audit.StatusOK, Reason: reason, Actor: "ui",
+		Op: audit.OpSession, Host: alias, Status: audit.StatusOK, Reason: reason, Actor: "ui", Source: audit.SourceUI,
 	}
 	if cfg, err := config.Load(s.dir); err == nil {
 		if h, ok := cfg.Find(alias); ok {

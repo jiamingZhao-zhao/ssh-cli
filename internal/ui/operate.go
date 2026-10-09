@@ -479,6 +479,15 @@ func cleanUploadName(raw string) (string, error) {
 	return name, nil
 }
 
+func (s *service) auditOverviewAPI(w http.ResponseWriter, r *http.Request) {
+	ov, err := audit.LoadOverview(s.dir, 14, time.Now())
+	if err != nil {
+		writeFail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, ov)
+}
+
 func (s *service) auditStatsAPI(w http.ResponseWriter, r *http.Request) {
 	st, err := audit.Stat(s.dir)
 	if err != nil {
@@ -504,7 +513,7 @@ func (s *service) writeAudit(h config.ResolvedHost, op, command, src, dst, statu
 	rec := audit.Record{
 		Op: op, Host: h.Alias, Group: h.Group, Env: h.EnvName, Command: command, Src: src, Dst: dst,
 		DurationMS: time.Since(started).Milliseconds(), ExitCode: &c, ResultSummary: summary, Status: status,
-		DeniedByPolicy: denied, Reason: reason, Actor: "ui", HighRisk: denied,
+		DeniedByPolicy: denied, Reason: reason, Actor: "ui", Source: audit.SourceUI, HighRisk: denied,
 	}
 	if rec.DurationMS < 0 {
 		rec.DurationMS = 0
