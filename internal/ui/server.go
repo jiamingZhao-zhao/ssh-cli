@@ -46,8 +46,15 @@ func HandlerBearer(dir string, allowRemote bool, bearer string) http.Handler {
 func (s *service) routes() *http.ServeMux {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/session", s.apiSession)
+	mux.HandleFunc("GET /api/dashboard", s.dashboardAPI)
 	mux.HandleFunc("GET /api/catalog", s.catalog)
+	mux.HandleFunc("GET /api/hosts/detail", s.hostDetailAPI)
 	mux.HandleFunc("GET /api/audit", s.auditList)
+	mux.HandleFunc("GET /api/audit/export", s.auditExportAPI)
+	mux.HandleFunc("GET /api/ops", s.opsAPI)
+	mux.HandleFunc("GET /api/settings", s.settingsAPI)
+	mux.HandleFunc("POST /api/settings", s.settingsUpdateAPI)
+	mux.HandleFunc("POST /api/exec/batch", s.batchExecAPI)
 	mux.HandleFunc("GET /api/audit/stats", s.auditStatsAPI)
 	mux.HandleFunc("GET /api/audit/overview", s.auditOverviewAPI)
 	mux.HandleFunc("POST /api/terminal/open", s.terminalOpen)
@@ -160,9 +167,9 @@ func (s *service) guard(next http.Handler) http.Handler {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("Referrer-Policy", "no-referrer")
 		w.Header().Set("Cache-Control", "no-store")
-		// Alpine evaluates expressions with new Function. xterm and Litepicker set element styles.
-		// Scripts stay same-origin. The page is the localhost UI.
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-eval'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self' data:")
+		// alpine-csp does not eval. xterm and Litepicker inject style elements, so
+		// styles allow unsafe-inline. Scripts stay same-origin.
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'")
 		if !s.allowRemote && !remoteLoopback(r.RemoteAddr) {
 			http.Error(w, "localhost only", http.StatusForbidden)
 			return

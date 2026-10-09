@@ -36,12 +36,17 @@ type CloseFunc func(alias, reason string)
 
 // Info is a snapshot of one live session.
 type Info struct {
-	Alias   string    `json:"alias"`
-	Opened  time.Time `json:"opened"`
-	Used    time.Time `json:"used"`
-	Busy    int       `json:"busy"`
-	Idle    string    `json:"idle"`
-	MaxLife string    `json:"maxLife"`
+	Alias       string    `json:"alias"`
+	Opened      time.Time `json:"opened"`
+	Used        time.Time `json:"used"`
+	Busy        int       `json:"busy"`
+	Idle        string    `json:"idle"`
+	MaxLife     string    `json:"maxLife"`
+	Status      string    `json:"status"`
+	IdleLeft    string    `json:"idleLeft"`
+	LifeLeft    string    `json:"lifeLeft"`
+	IdleLeftSec int       `json:"idleLeftSec"`
+	LifeLeftSec int       `json:"lifeLeftSec"`
 }
 
 // Pool is the in-process session table.
@@ -361,18 +366,65 @@ func (p *Pool) Shutdown() {
 	}
 }
 
-// List returns live sessions.
+// SetWindows replaces the idle and max-life windows used by later sweeps.
+// Zero selects the built-in default. Negative is rejected.
+func (p *Pool) SetWindows(idle, maxLife time.Duration) error {
+	idle, err := normalize(idle, DefaultIdle)
+	if err != nil {
+		return err
+	}
+	maxLife, err = normalize(maxLife, DefaultMaxLife)
+	if err != nil {
+		return err
+	}
+	p.mu.Lock()
+	p.idle = idle
+	p.maxLife = maxLife
+	p.mu.Unlock()
+	return nil
+}
+
+// Windows returns the current idle and max-life durations.
+func (p *Pool) Windows() (idle, maxLife time.Duration) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.idle, p.maxLife
+}
+
+// List returns live sessions. IdleLeft is the time until an idle close.
+// A busy session reports IdleLeftSec -1 because idle close waits until it is free.
+// LifeLeft still counts down while the session is busy.
 func (p *Pool) List() []Info {
 	p.mu.Lock()
 	defer p.mu.Unlock()
+	now := p.now()
 	out := make([]Info, 0, len(p.items))
 	for _, e := range p.items {
 		if e.closed {
 			continue
 		}
+		status := "open"
+		idleLeft := p.idle - now.Sub(e.used)
+		idleSec := int(idleLeft / time.Second)
+		if e.busy > 0 {
+			status = "busy"
+			idleLeft = p.idle
+			idleSec = -1
+		} else if idleLeft < 0 {
+			idleLeft = 0
+			idleSec = 0
+		}
+		lifeLeft := p.maxLife - now.Sub(e.opened)
+		lifeSec := int(lifeLeft / time.Second)
+		if lifeLeft < 0 {
+			lifeLeft = 0
+			lifeSec = 0
+		}
 		out = append(out, Info{
 			Alias: e.alias, Opened: e.opened, Used: e.used, Busy: e.busy,
-			Idle: p.idle.String(), MaxLife: p.maxLife.String(),
+			Idle: p.idle.String(), MaxLife: p.maxLife.String(), Status: status,
+			IdleLeft: idleLeft.Truncate(time.Second).String(), LifeLeft: lifeLeft.Truncate(time.Second).String(),
+			IdleLeftSec: idleSec, LifeLeftSec: lifeSec,
 		})
 	}
 	return out

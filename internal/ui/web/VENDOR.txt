@@ -1,0 +1,31 @@
+Vendored so the localhost UI works offline. No npm build.
+
+alpine-csp.min.js
+  Package: @alpinejs/csp 3.17.4
+  License: MIT
+  https://github.com/alpinejs/alpine
+
+tabler.min.css
+  Package: @tabler/core 1.6.1
+  License: MIT
+  https://github.com/tabler/tabler
+
+chart.umd.min.js
+  Package: chart.js 4.4.6
+  License: MIT
+  https://github.com/chartjs/Chart.js
+
+litepicker.js, litepicker.css
+  Package: litepicker 2.0.12
+  License: MIT
+  https://github.com/wakirin/Litepicker
+
+xterm.js, xterm.css
+  Package: xterm 5.3.0
+  License: MIT
+  https://github.com/xtermjs/xterm.js
+
+xterm-addon-fit.js
+  Package: xterm-addon-fit 0.8.0
+  License: MIT
+  https://github.com/xtermjs/xterm.js

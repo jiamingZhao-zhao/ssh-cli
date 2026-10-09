@@ -55,6 +55,32 @@ func TestShellKeepsWorkingDirectory(t *testing.T) {
 	}
 }
 
+func TestListCountdown(t *testing.T) {
+	pool, _, _ := testPool(t)
+	start := time.Date(2026, 10, 9, 4, 0, 0, 0, time.UTC)
+	now := start
+	pool.SetClock(func() time.Time { return now })
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := pool.Open(ctx, "main", testFingerprint, false); err != nil {
+		t.Fatal(err)
+	}
+	now = start.Add(time.Minute)
+	info := pool.List()
+	if len(info) != 1 || info[0].Status != "open" {
+		t.Fatalf("list %+v", info)
+	}
+	if info[0].IdleLeftSec != int((DefaultIdle-time.Minute)/time.Second) {
+		t.Fatalf("idle left %d", info[0].IdleLeftSec)
+	}
+	if info[0].LifeLeftSec != int((DefaultMaxLife-time.Minute)/time.Second) {
+		t.Fatalf("life left %d", info[0].LifeLeftSec)
+	}
+	if info[0].IdleLeft == "" || info[0].LifeLeft == "" {
+		t.Fatalf("missing countdown strings %+v", info[0])
+	}
+}
+
 func TestIdleAndMaxLife(t *testing.T) {
 	pool, _, reasons := testPool(t)
 	start := time.Date(2026, 10, 9, 3, 0, 0, 0, time.UTC)

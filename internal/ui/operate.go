@@ -41,55 +41,82 @@ func (s *service) hostPlan(alias string) (*config.Config, config.ResolvedHost, g
 	return cfg, h, eff, nil
 }
 
+type execIn struct {
+	Alias          string            `json:"alias"`
+	Command        string            `json:"command"`
+	Timeout        string            `json:"timeout"`
+	Confirm        string            `json:"confirm"`
+	Confirms       map[string]string `json:"confirms"`
+	AllowOutflow   bool              `json:"allowOutflow"`
+	OutflowConfirm string            `json:"outflowConfirm"`
+	Aliases        []string          `json:"aliases"`
+	Parallel       int               `json:"parallel"`
+	SkipDenied     bool              `json:"skipDenied"`
+	AllowCrossEnv  bool              `json:"allowCrossEnv"`
+}
+
+type execHit struct {
+	status  int
+	payload map[string]any
+}
+
 func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		Alias          string `json:"alias"`
-		Command        string `json:"command"`
-		Timeout        string `json:"timeout"`
-		Confirm        string `json:"confirm"`
-		AllowOutflow   bool   `json:"allowOutflow"`
-		OutflowConfirm string `json:"outflowConfirm"`
-	}
+	var body execIn
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
 		writeFail(w, err)
 		return
 	}
-	_, h, eff, err := s.hostPlan(body.Alias)
+	out := s.execOne(r.Context(), body, false)
+	writeJSON(w, out.status, out.payload)
+}
+
+func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) execHit {
+	cfg, h, eff, err := s.hostPlan(body.Alias)
 	if err != nil {
-		writeFail(w, err)
-		return
+		return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": err.Error(), "alias": body.Alias}}
+	}
+	if forceReadonly {
+		eff, err = guard.Resolve(cfg, h, true)
+		if err != nil {
+			return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": err.Error(), "alias": h.Alias}}
+		}
+	}
+	phrase := strings.TrimSpace(body.Confirm)
+	if body.Confirms != nil {
+		if v := strings.TrimSpace(body.Confirms[h.Alias]); v != "" {
+			phrase = v
+		}
 	}
 	dec := guard.Decide(eff, body.Command)
 	started := time.Now()
 	if !dec.Allowed {
 		s.writeAudit(h, audit.OpPolicyCheck, body.Command, "", "", audit.StatusDenied, 0, decisionText(dec), decisionText(dec), true, started)
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec)})
-		return
+		return execHit{status: http.StatusForbidden, payload: map[string]any{
+			"ok": false, "alias": h.Alias, "error": decisionText(dec), "status": audit.StatusDenied,
+		}}
 	}
-	if dec.NeedsConfirm && body.Confirm != h.Alias {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": "type the host alias to confirm",
-		})
-		return
+	if dec.NeedsConfirm && phrase != h.Alias {
+		return execHit{status: http.StatusConflict, payload: map[string]any{
+			"ok": false, "needsConfirm": true, "confirm": h.Alias, "alias": h.Alias,
+			"error": "type the host alias to confirm",
+		}}
 	}
 	suppress, needsOut := guard.ExecOutflow(eff.NoDataOut, body.AllowOutflow)
 	if needsOut && body.OutflowConfirm != guard.OutflowPhrase {
-		writeJSON(w, http.StatusConflict, map[string]any{
+		return execHit{status: http.StatusConflict, payload: map[string]any{
 			"ok": false, "needsConfirm": true, "confirm": guard.OutflowPhrase, "confirmField": "outflowConfirm",
-			"error": "type outflow to return command output",
-		})
-		return
+			"alias": h.Alias, "error": "type outflow to return command output",
+		}}
 	}
 	timeout := 30 * time.Second
 	if strings.TrimSpace(body.Timeout) != "" {
 		d, err := time.ParseDuration(body.Timeout)
 		if err != nil || d <= 0 || d > 5*time.Minute {
-			writeFail(w, fmt.Errorf("invalid timeout"))
-			return
+			return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": "invalid timeout", "alias": h.Alias}}
 		}
 		timeout = d
 	}
-	ctx, cancel := context.WithTimeout(r.Context(), timeout)
+	runCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var stdout, stderr limitBuf
 	var outW, errW io.Writer = &stdout, &stderr
@@ -98,7 +125,7 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 		outW, errW = io.Discard, io.Discard
 	}
 	s.reconcile()
-	code, err := s.pool.Exec(ctx, h.Alias, h.Host.ConnFingerprint(), body.Command, outW, errW)
+	code, err := s.pool.Exec(runCtx, h.Alias, h.Host.ConnFingerprint(), body.Command, outW, errW)
 	summary := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
 	if stdout.cut || stderr.cut {
 		summary += "\n[truncated]"
@@ -108,8 +135,9 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	if err != nil {
 		s.writeAudit(h, audit.OpExec, body.Command, "", "", audit.StatusError, code, summary, err.Error(), false, started)
-		writeFail(w, err)
-		return
+		return execHit{status: http.StatusBadRequest, payload: map[string]any{
+			"ok": false, "alias": h.Alias, "error": err.Error(), "exitCode": code, "status": audit.StatusError,
+		}}
 	}
 	status := audit.StatusOK
 	if code != 0 {
@@ -117,7 +145,8 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	s.writeAudit(h, audit.OpExec, body.Command, "", "", status, code, summary, "", false, started)
 	resp := map[string]any{
-		"ok": true, "exitCode": code, "stdout": stdout.String(), "stderr": stderr.String(), "truncated": stdout.cut || stderr.cut,
+		"ok": true, "alias": h.Alias, "exitCode": code, "stdout": stdout.String(), "stderr": stderr.String(),
+		"truncated": stdout.cut || stderr.cut, "status": status,
 	}
 	if suppress {
 		resp["stdout"] = ""
@@ -126,7 +155,7 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 		resp["notice"] = guard.OutflowDiscarded
 		resp["truncated"] = false
 	}
-	writeJSON(w, http.StatusOK, resp)
+	return execHit{status: http.StatusOK, payload: resp}
 }
 
 func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
