@@ -736,12 +736,18 @@ function sshui() {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(proto + "//" + location.host + "/api/terminal/ws?ticket=" + encodeURIComponent(opened.ticket));
       ws.binaryType = "arraybuffer";
-      const entry = { id: id, alias: alias, term: term, fit: fit, ws: ws, pane: pane, saw: false };
+      const entry = { id: id, alias: alias, term: term, fit: fit, ws: ws, pane: pane, saw: false, hadError: false };
       termMap.set(id, entry);
       this.termTabs.push({ id: id, alias: alias });
       this.showPane(id);
+      const closeLine = (ev) => {
+        const code = ev && Number(ev.code);
+        if (code) return "终端连接已断开 (" + code + ")";
+        return "终端连接已断开";
+      };
       ws.onmessage = (ev) => {
         entry.saw = true;
+        app.setError("terminal", "");
         if (typeof ev.data === "string") term.write(ev.data);
         else term.write(new Uint8Array(ev.data));
       };
@@ -750,15 +756,15 @@ function sshui() {
         if (ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       };
       ws.onerror = () => {
-        if (!entry.saw) app.setError("terminal", "终端连接失败");
+        entry.hadError = true;
       };
-      ws.onclose = () => {
+      ws.onclose = (ev) => {
         if (!entry.saw) {
           term.write("终端连接失败\r\n");
           app.setError("terminal", "终端连接失败");
-        } else {
-          term.write("\r\n连接已关闭\r\n");
+          return;
         }
+        term.write("\r\n" + closeLine(ev) + "\r\n");
       };
       term.onData((data) => {
         if (ws.readyState === 1) ws.send(new TextEncoder().encode(data));

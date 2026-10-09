@@ -263,6 +263,153 @@ func readAuditRecords(t *testing.T, dir string) []audit.Record {
 	return out
 }
 
+func TestTerminalDialFailureWritesReason(t *testing.T) {
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	addr := ln.Addr().String()
+	if err := ln.Close(); err != nil {
+		t.Fatal(err)
+	}
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	h := Handler(dir, false)
+	web := httptest.NewServer(h)
+	t.Cleanup(web.Close)
+	client := web.Client()
+	csrf, cookie := uiSession(t, client, web.URL)
+	post := func(path, body string, browser bool) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, web.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", csrf)
+		req.Header.Set("Cookie", cookie)
+		if browser {
+			browserFetch(req, web.URL)
+		}
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	mustOK := func(path, body string) {
+		t.Helper()
+		res := post(path, body, false)
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("%s %d %s", path, res.StatusCode, raw)
+		}
+	}
+	mustOK("/api/groups", `{"name":"app","env":"prod"}`)
+	mustOK("/api/hosts", `{"alias":"down","group":"app","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
+
+	opened := post("/api/terminal/open", `{"alias":"down","cols":80,"rows":24}`, true)
+	openBody, _ := io.ReadAll(opened.Body)
+	opened.Body.Close()
+	if opened.StatusCode != http.StatusOK {
+		t.Fatalf("terminal open %d %s", opened.StatusCode, openBody)
+	}
+	var ticket struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.Unmarshal(openBody, &ticket); err != nil || ticket.Ticket == "" {
+		t.Fatalf("ticket %v %s", err, openBody)
+	}
+	ws, err := dialWebSocket(web.URL+"/api/terminal/ws?ticket="+ticket.Ticket, browserSocket(web.URL, cookie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	_ = ws.c.SetReadDeadline(time.Now().Add(8 * time.Second))
+	op, payload, err := ws.ReadMessage()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op != wsText {
+		t.Fatalf("opcode %d", op)
+	}
+	text := string(payload)
+	if !strings.HasPrefix(text, "终端连接失败: ") || !strings.HasSuffix(text, "\r\n") || strings.Contains(text, "ui-secret") {
+		t.Fatalf("failure frame %q", text)
+	}
+	reason := strings.TrimSuffix(strings.TrimPrefix(text, "终端连接失败: "), "\r\n")
+	if reason == "" || strings.Contains(reason, "\n") {
+		t.Fatalf("failure reason %q", text)
+	}
+
+	deadline := time.Now().Add(4 * time.Second)
+	var recs []audit.Record
+	for {
+		recs = readAuditRecords(t, dir)
+		if terminalConnectFailure(recs, reason) {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("missing connect audit %#v frame %q", recs, text)
+		}
+		time.Sleep(40 * time.Millisecond)
+	}
+}
+
+func TestTerminalUIDoesNotStickFalseBanner(t *testing.T) {
+	dir := t.TempDir()
+	h := Handler(dir, false)
+	req := httptest.NewRequest(http.MethodGet, "/app.js", nil)
+	req.RemoteAddr = "127.0.0.1:9"
+	req.Host = "127.0.0.1"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("app.js %d", rr.Code)
+	}
+	script := rr.Body.String()
+	msgAt := strings.Index(script, "ws.onmessage = (ev) => {")
+	openAt := strings.Index(script, "ws.onopen = () => {")
+	errAt := strings.Index(script, "ws.onerror = () => {")
+	closeAt := strings.Index(script, "ws.onclose = (ev) => {")
+	if msgAt < 0 || openAt < msgAt || errAt < openAt || closeAt < errAt {
+		t.Fatal("mountTerm handlers out of order")
+	}
+	onmessage := script[msgAt:openAt]
+	onopen := script[openAt:errAt]
+	onerror := script[errAt:closeAt]
+	end := closeAt + 500
+	if end > len(script) {
+		end = len(script)
+	}
+	onclose := script[closeAt:end]
+	if !strings.Contains(onmessage, "entry.saw = true") || !strings.Contains(onmessage, `app.setError("terminal", "")`) {
+		t.Fatalf("first message must clear the banner: %s", onmessage)
+	}
+	if strings.Contains(onopen, "setError") || strings.Contains(onopen, "entry.saw") {
+		t.Fatalf("open must not mark success: %s", onopen)
+	}
+	if strings.Contains(onerror, "setError") || !strings.Contains(onerror, "entry.hadError = true") {
+		t.Fatalf("error event must not raise the banner: %s", onerror)
+	}
+	if !strings.Contains(onclose, "!entry.saw") || !strings.Contains(onclose, `app.setError("terminal", "终端连接失败")`) || !strings.Contains(script, "终端连接已断开 (") {
+		t.Fatalf("close copy: %s", onclose)
+	}
+}
+
+func terminalConnectFailure(recs []audit.Record, reason string) bool {
+	for _, rec := range recs {
+		if rec.Op == audit.OpTerminal && rec.Host == "down" && rec.Status == audit.StatusConnect && rec.Reason == "open" && rec.ResultSummary == reason {
+			return true
+		}
+	}
+	return false
+}
+
 func terminalClosed(recs []audit.Record) bool {
 	for _, rec := range recs {
 		if rec.Op == audit.OpTerminal && rec.Reason == "close" {

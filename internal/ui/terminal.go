@@ -205,6 +205,7 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 	fp := h.Host.ConnFingerprint()
 	if err := s.pool.OpenConn(r.Context(), h.Alias, fp); err != nil {
 		s.auditTerminal(h, audit.StatusConnect, "open", err.Error(), time.Now(), 0, 0)
+		writeTermFail(ws, err)
 		return
 	}
 	var opened bool
@@ -232,6 +233,7 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 			err = errString("terminal did not start")
 		}
 		s.auditTerminal(h, status, "open", err.Error(), time.Now(), 0, 0)
+		writeTermFail(ws, err)
 		return
 	}
 	status := audit.StatusOK
@@ -264,6 +266,19 @@ func (s *service) auditTerminal(h config.ResolvedHost, status, reason, summary s
 		rec.DurationMS = 0
 	}
 	_, _ = audit.Append(s.dir, rec)
+}
+
+// writeTermFail tells the browser why the PTY never started. The socket is
+// already accepted, so a silent close looks like a healthy disconnect.
+func writeTermFail(ws *wsConn, err error) {
+	if ws == nil || err == nil {
+		return
+	}
+	msg := strings.TrimSpace(err.Error())
+	msg = strings.ReplaceAll(msg, "\r\n", " ")
+	msg = strings.ReplaceAll(msg, "\n", " ")
+	msg = strings.ReplaceAll(msg, "\r", " ")
+	_ = ws.Write(wsText, []byte("终端连接失败: "+msg+"\r\n"))
 }
 
 func itoa(n int64) string {
