@@ -2,6 +2,7 @@ package cli
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"runtime"
 
@@ -37,10 +38,9 @@ from /releases/download/<tag>/, not the GitHub REST API, so anonymous API
 rate limits do not block an update. GITHUB_TOKEN is optional: it is sent to
 api.github.com only when that direct lookup fails.
 --check prints current and latest without installing and does not require a TTY.
-Installing asks you to type the release version on an interactive TTY.
-Without --yes, update refuses to install when there is no TTY; use --check
-to query only. --yes skips that prompt and installs without a TTY, so
-agents and non-interactive shells can run: ssh-cli update --yes`,
+On an interactive TTY, installing asks you to type the release version.
+--yes skips that prompt. Without a TTY the install proceeds with no prompt;
+--yes is unnecessary there and does not error.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if repo == "" {
 				repo = os.Getenv("SSH_CLI_REPO")
@@ -99,17 +99,26 @@ func nonInteractiveYesOK(cmd *cobra.Command) bool {
 	return false
 }
 
+// openConfirmTTY opens the console used for the typed release confirmation.
+// Tests replace it so the prompt can run without /dev/tty.
+var openConfirmTTY = defaultOpenConfirmTTY
+
+func defaultOpenConfirmTTY() (io.ReadWriteCloser, error) {
+	return os.OpenFile(devTTY(), os.O_RDWR, 0)
+}
+
+// confirmRelease gates an install. An interactive TTY must type the release
+// version unless --yes is set. No TTY (Windows cmd, PowerShell, agent shells)
+// means the caller already asked to update, so the install proceeds and --yes
+// is a no-op.
 func confirmRelease(latest string, yes bool) error {
-	if yes {
+	if yes || !ttyCheck() {
 		return nil
 	}
-	if !ttyCheck() {
-		return exitcode.New(exitcode.Denied, "update requires an interactive TTY; use --check to query only")
-	}
-	f, err := os.OpenFile(devTTY(), os.O_RDWR, 0)
+	rw, err := openConfirmTTY()
 	if err != nil {
-		return exitcode.New(exitcode.Denied, "update requires an interactive TTY; use --check to query only")
+		return exitcode.New(exitcode.Denied, "could not open a terminal to confirm the update")
 	}
-	defer f.Close()
-	return confirmTyped(latest, "release version", f, f)
+	defer rw.Close()
+	return confirmTyped(latest, "release version", rw, rw)
 }

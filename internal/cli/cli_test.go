@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -238,12 +239,12 @@ func TestRootHelpListsCommands(t *testing.T) {
 	var out, errb bytes.Buffer
 	code := Execute([]string{"update", "-h"}, strings.NewReader(""), &out, &errb)
 	help := out.String()
-	if code != 0 || !strings.Contains(help, "checksums.txt") || !strings.Contains(help, "ssh-cli_<version>_") || !strings.Contains(help, "installs without a TTY") {
+	if code != 0 || !strings.Contains(help, "checksums.txt") || !strings.Contains(help, "ssh-cli_<version>_") || !strings.Contains(help, "Without a TTY the install proceeds") {
 		t.Fatalf("update help %d\n%s\n%s", code, help, errb.String())
 	}
 }
 
-func TestUpdateCheckAndNonTTYRefusal(t *testing.T) {
+func TestUpdateCheckWithoutTTY(t *testing.T) {
 	ttyCheck = func() bool { return false }
 	t.Cleanup(func() { ttyCheck = defaultTTY })
 	srv := updateReleaseServer(t)
@@ -270,17 +271,6 @@ func TestUpdateCheckAndNonTTYRefusal(t *testing.T) {
 	got, err := os.ReadFile(dest)
 	if err != nil || string(got) != "old" {
 		t.Fatal("check replaced the binary")
-	}
-
-	out.Reset()
-	errb.Reset()
-	code = Execute([]string{"--config", dir, "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
-	if code != 253 || !strings.Contains(errb.String(), "interactive TTY") {
-		t.Fatalf("install without tty: %d %s %s", code, out.String(), errb.String())
-	}
-	got, _ = os.ReadFile(dest)
-	if string(got) != "old" {
-		t.Fatal("refused install replaced the binary")
 	}
 
 	out.Reset()
@@ -336,17 +326,134 @@ func TestUpdateYesWithoutTTYInstalls(t *testing.T) {
 	}
 }
 
-func TestConfirmReleaseYesSkipsTTY(t *testing.T) {
+func TestConfirmReleaseNonTTYProceeds(t *testing.T) {
 	ttyCheck = func() bool { return false }
 	t.Cleanup(func() { ttyCheck = defaultTTY })
 	if err := confirmRelease("1.2.3", true); err != nil {
 		t.Fatal(err)
 	}
-	err := confirmRelease("1.2.3", false)
-	if err == nil || !strings.Contains(err.Error(), "interactive TTY") || strings.Contains(err.Error(), "--yes is only valid") {
-		t.Fatalf("no --yes: %v", err)
+	if err := confirmRelease("1.2.3", false); err != nil {
+		t.Fatalf("bare update confirm: %v", err)
 	}
 }
+
+func TestUpdateNonTTYBareInstall(t *testing.T) {
+	ttyCheck = func() bool { return false }
+	t.Cleanup(func() { ttyCheck = defaultTTY })
+	prompted := false
+	openConfirmTTY = func() (io.ReadWriteCloser, error) {
+		prompted = true
+		return nil, os.ErrInvalid
+	}
+	t.Cleanup(func() { openConfirmTTY = defaultOpenConfirmTTY })
+	t.Setenv("GITHUB_TOKEN", "")
+
+	const ver = "1.2.3"
+	payload := []byte("updated-binary")
+	srv := updateInstallServer(t, ver, payload)
+	oldBase := update.ReleaseBase
+	update.ReleaseBase = srv.URL
+	t.Cleanup(func() { update.ReleaseBase = oldBase })
+
+	dest := filepath.Join(t.TempDir(), "ssh-cli")
+	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldBin := update.CurrentBinary
+	update.CurrentBinary = func() (string, error) { return dest, nil }
+	t.Cleanup(func() { update.CurrentBinary = oldBin })
+
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	code := Execute([]string{"--config", dir, "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
+	if code != 0 || !strings.Contains(out.String(), "installed "+ver) {
+		t.Fatalf("bare install %d\n%s\n%s", code, out.String(), errb.String())
+	}
+	if prompted {
+		t.Fatal("non-TTY update prompted")
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("installed %q %v", got, err)
+	}
+}
+
+func TestUpdateTTYRequiresConfirm(t *testing.T) {
+	ttyCheck = func() bool { return true }
+	t.Cleanup(func() { ttyCheck = defaultTTY })
+	t.Cleanup(func() { openConfirmTTY = defaultOpenConfirmTTY })
+	t.Setenv("GITHUB_TOKEN", "")
+
+	const ver = "1.2.3"
+	payload := []byte("updated-binary")
+	srv := updateInstallServer(t, ver, payload)
+	oldBase := update.ReleaseBase
+	update.ReleaseBase = srv.URL
+	t.Cleanup(func() { update.ReleaseBase = oldBase })
+
+	dest := filepath.Join(t.TempDir(), "ssh-cli")
+	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	oldBin := update.CurrentBinary
+	update.CurrentBinary = func() (string, error) { return dest, nil }
+	t.Cleanup(func() { update.CurrentBinary = oldBin })
+
+	var prompt bytes.Buffer
+	openConfirmTTY = func() (io.ReadWriteCloser, error) {
+		prompt.Reset()
+		return confirmRWC{Reader: strings.NewReader("nope\n"), Writer: &prompt}, nil
+	}
+	dir := t.TempDir()
+	var out, errb bytes.Buffer
+	code := Execute([]string{"--config", dir, "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
+	if code != 253 || !strings.Contains(errb.String(), "confirmation did not match") {
+		t.Fatalf("tty mismatch: %d %s %s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(prompt.String(), `release version "1.2.3"`) {
+		t.Fatalf("prompt %q", prompt.String())
+	}
+	got, _ := os.ReadFile(dest)
+	if string(got) != "old" {
+		t.Fatal("mismatched confirm replaced the binary")
+	}
+
+	openConfirmTTY = func() (io.ReadWriteCloser, error) {
+		prompt.Reset()
+		return confirmRWC{Reader: strings.NewReader(ver + "\n"), Writer: &prompt}, nil
+	}
+	out.Reset()
+	errb.Reset()
+	code = Execute([]string{"--config", dir, "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
+	if code != 0 || !strings.Contains(out.String(), "installed "+ver) {
+		t.Fatalf("tty confirm: %d %s %s", code, out.String(), errb.String())
+	}
+	got, err := os.ReadFile(dest)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("confirmed install %q %v", got, err)
+	}
+
+	if err := os.WriteFile(dest, []byte("old"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	openConfirmTTY = func() (io.ReadWriteCloser, error) {
+		t.Fatal("--yes on a TTY still prompted")
+		return nil, os.ErrInvalid
+	}
+	out.Reset()
+	errb.Reset()
+	code = Execute([]string{"--config", dir, "--yes", "update", "--repo", "example/ssh-cli"}, strings.NewReader(""), &out, &errb)
+	if code != 0 || !strings.Contains(out.String(), "installed "+ver) {
+		t.Fatalf("--yes on tty: %d %s %s", code, out.String(), errb.String())
+	}
+}
+
+type confirmRWC struct {
+	io.Reader
+	io.Writer
+}
+
+func (confirmRWC) Close() error { return nil }
 
 func updateInstallServer(t *testing.T, ver string, payload []byte) *httptest.Server {
 	t.Helper()

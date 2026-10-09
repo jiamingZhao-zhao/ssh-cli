@@ -138,8 +138,8 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			// update --yes is the explicit non-interactive install path.
-			// Every other command still rejects --yes without a TTY.
+			// update installs when there is no TTY, so --yes is redundant there
+			// and must not fail. Every other command still rejects --yes without a TTY.
 			if a.Yes && !ttyCheck() && !nonInteractiveYesOK(cmd) {
 				return exitcode.New(exitcode.Denied, "--yes is only valid on an interactive TTY")
 			}
@@ -157,7 +157,7 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 	f := root.PersistentFlags()
 	f.StringVar(&a.ConfigFlag, "config", "", "config directory (default: SSH_CLI_HOME, else %APPDATA%\\ssh-cli or ~/.config/ssh-cli)")
 	f.BoolVar(&a.JSON, "json", false, "print JSON on stdout")
-	f.BoolVar(&a.Yes, "yes", false, "skip confirmation; only valid on an interactive TTY (update --yes installs without a TTY)")
+	f.BoolVar(&a.Yes, "yes", false, "skip confirmation; only valid on an interactive TTY (update installs without a TTY)")
 	f.BoolVar(&a.Insecure, "insecure-ignore-host-key", false, "do not verify host keys (escape hatch)")
 	f.BoolVar(&a.AllowCrossEnv, "allow-cross-env", false, "allow one operation to target hosts in more than one env")
 	f.BoolVar(&a.SkipDenied, "skip-denied", false, "skip hosts denied by policy instead of aborting the batch")
