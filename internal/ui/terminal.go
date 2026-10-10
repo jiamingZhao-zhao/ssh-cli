@@ -103,6 +103,13 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 // clients often omit Fetch Metadata on the upgrade. The upgrade still requires
 // loopback, a non-empty Origin whose host equals Host and is allowed, and the
 // session cookie that minted the ticket.
+// workspaceHuman is the localhost page. A client-supplied source field is ignored.
+// Workspace file, history, and metric calls from this page skip command policy
+// and are not written to the audit log. Anything else stays policy-gated.
+func (s *service) workspaceHuman(r *http.Request) bool {
+	return s.terminalBrowser(r, "fetch")
+}
+
 func (s *service) terminalBrowser(r *http.Request, kind string) bool {
 	if !remoteLoopback(r.RemoteAddr) {
 		return false

@@ -152,17 +152,14 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 		}
 		time.Sleep(40 * time.Millisecond)
 	}
-	var sawDeny, sawOpen, sawClose bool
+	var sawOpen, sawClose bool
 	for _, rec := range recs {
 		blob := rec.Command + "\n" + rec.ResultSummary + "\n" + rec.Reason
 		if strings.Contains(blob, "ui-term-ok") {
 			t.Fatalf("terminal keystroke logged: %#v", rec)
 		}
-		if rec.Op == audit.OpPolicyCheck && rec.Status == audit.StatusDenied && rec.Host == "box" {
-			sawDeny = true
-			if rec.Source != audit.SourceUI || !rec.DeniedByPolicy || !strings.Contains(rec.Command, "echo denied-by-policy") {
-				t.Fatalf("denied exec %#v", rec)
-			}
+		if strings.Contains(blob, "denied-by-policy") || rec.Op == audit.OpExec {
+			t.Fatalf("ui exec must not be audited: %#v", rec)
 		}
 		if rec.Op != audit.OpTerminal || rec.Host != "box" || rec.Source != audit.SourceUI || rec.Actor != "ui" {
 			continue
@@ -183,8 +180,8 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 			}
 		}
 	}
-	if !sawDeny || !sawOpen || !sawClose {
-		t.Fatalf("audit flags deny=%v open=%v close=%v %#v", sawDeny, sawOpen, sawClose, recs)
+	if !sawOpen || !sawClose {
+		t.Fatalf("audit flags open=%v close=%v %#v", sawOpen, sawClose, recs)
 	}
 }
 

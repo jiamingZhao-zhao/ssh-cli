@@ -1,6 +1,7 @@
 const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZES = [10, 20, 50];
 const termMap = new Map();
+const transferCtl = new Map();
 let chartDays = null;
 let chartOps = null;
 let rangePicker = null;
@@ -131,7 +132,7 @@ function sshui() {
     detail: { host: {}, policy: { capabilities: {} }, sessions: [], audit: [] },
     ops: { hmac: {}, audit: {} },
     audit: { records: [], page: 1, pageSize: DEFAULT_PAGE_SIZE, total: 0, stats: {} },
-    auditFilter: { op: "", host: "", group: "", env: "", status: "", source: "", since: "", until: "" },
+    auditFilter: { op: "", host: "", group: "", env: "", status: "", source: "cli", since: "", until: "" },
     col: { time: "", status: "", op: "", host: "", env: "", command: "", reason: "" },
     q: { hosts: "", groups: "", tags: "", envs: "", policy: "", known: "" },
     pages: {
@@ -174,6 +175,18 @@ function sshui() {
     termTabs: [],
     termActive: "",
     termAlias: "",
+    ws: { side: 280, lower: 280 },
+    metrics: { alias: "", connected: false, address: "", port: "", user: "", hostname: "", uptime: "", load: "", cpuPercent: null, mem: null, swap: null, procs: [], disks: [], notes: [], netRx: 0, netTx: 0, netRxRate: 0, netTxRate: 0 },
+    netSeries: {},
+    metricsTimer: 0,
+    metricsSeq: 0,
+    files: { alias: "", mode: "files", path: "", parent: "", crumbs: [], entries: [], truncated: false },
+    drop: { over: false, target: "", label: "" },
+    transfers: [],
+    toasts: [],
+    menu: { open: false, x: 0, y: 0, entry: null },
+    selectedPath: "",
+    historyView: { alias: "", found: false, status: "", path: "", shell: "", lines: [], notes: [], truncated: false, error: "", suppressed: false },
     detailTitle: "",
     detailText: "",
     overview: { days: [], ops: [] },
@@ -258,6 +271,8 @@ function sshui() {
       this.draft.relayCrossEnv = !!prefs.relayCrossEnv;
       this.theme = this.draft.theme;
       this.density = this.draft.density;
+      if (prefs.wsSide >= 220 && prefs.wsSide <= 460) this.ws.side = prefs.wsSide;
+      if (prefs.wsLower >= 160 && prefs.wsLower <= 520) this.ws.lower = prefs.wsLower;
       this.exec.timeout = this.draft.commandTimeout;
       this.audit.pageSize = this.draft.pageSize;
       for (const key of Object.keys(this.pages)) this.pages[key].size = this.draft.pageSize;
@@ -338,7 +353,12 @@ function sshui() {
       if (location.hash !== hash) history.replaceState(null, "", hash);
       if (view !== "home") destroyCharts();
       if (view === "home") this.loadDashboard();
-      if (view === "terminal") this.fitActive();
+      if (view === "terminal") {
+        this.fitActive();
+        this.syncWorkspace();
+      } else {
+        this.stopMetrics();
+      }
       if (view === "audit") setTimeout(() => this.bindRange(), 0);
       if (view === "host") this.loadHost();
       if (view === "sessions") this.loadSessions();
@@ -583,6 +603,9 @@ function sshui() {
         this.audit.pageSize = data.pageSize || this.audit.pageSize;
         this.audit.total = data.total || 0;
         this.audit.stats = data.stats || {};
+        if ((this.auditFilter.source || "") === "cli") {
+          this.dash.auditCli = this.audit.total;
+        }
       } catch (err) {
         this.setError("audit", err.message);
       }
@@ -771,7 +794,7 @@ function sshui() {
       ws.binaryType = "arraybuffer";
       const entry = { id: id, alias: alias, term: term, fit: fit, ws: ws, pane: pane, saw: false, hadError: false };
       termMap.set(id, entry);
-      this.termTabs.push({ id: id, alias: alias });
+      this.termTabs.push({ id: id, alias: alias, busy: true });
       this.showPane(id);
       const closeLine = (ev) => {
         const code = ev && Number(ev.code);
@@ -780,6 +803,7 @@ function sshui() {
       };
       ws.onmessage = (ev) => {
         entry.saw = true;
+        app.markTabIdle(id);
         app.setError("terminal", "");
         if (typeof ev.data === "string") term.write(ev.data);
         else term.write(new Uint8Array(ev.data));
@@ -813,6 +837,7 @@ function sshui() {
         entry.pane.classList.toggle("active", entry.id === id);
       });
       this.fitActive();
+      this.syncWorkspace();
     },
 
     fitActive() {
@@ -840,7 +865,677 @@ function sshui() {
         const next = this.termTabs[this.termTabs.length - 1];
         this.termActive = next ? next.id : "";
         if (next) this.showPane(next.id);
+        else this.syncWorkspace();
       }
+    },
+
+    activeTermAlias() {
+      const tabs = this.termTabs || [];
+      for (let i = 0; i < tabs.length; i++) {
+        if (tabs[i].id === this.termActive) return tabs[i].alias;
+      }
+      return this.termAlias || "";
+    },
+
+    hostByAlias(alias) {
+      const hosts = (this.catalog && this.catalog.hosts) || [];
+      for (let i = 0; i < hosts.length; i++) {
+        if (hosts[i].alias === alias) return hosts[i];
+      }
+      return null;
+    },
+
+    overviewAddr() {
+      const live = this.metrics && this.metrics.alias === this.activeTermAlias() ? this.metrics : null;
+      if (live && live.address) return live.user + "@" + live.address + ":" + live.port;
+      const h = this.hostByAlias(this.activeTermAlias());
+      if (!h) return "选择主机后显示地址";
+      return (h.user || "") + "@" + (h.host || "") + ":" + (h.port || "");
+    },
+
+    sideStyle() { return "width:" + this.ws.side + "px"; },
+    lowerStyle() { return "height:" + this.ws.lower + "px"; },
+
+    beginSplit(which, ev) {
+      const startX = ev.clientX;
+      const startY = ev.clientY;
+      const baseSide = this.ws.side;
+      const baseLower = this.ws.lower;
+      const app = this;
+      const move = (e) => {
+        if (which === "side") {
+          app.ws.side = Math.max(220, Math.min(460, baseSide + (e.clientX - startX)));
+        } else {
+          app.ws.lower = Math.max(160, Math.min(520, baseLower - (e.clientY - startY)));
+        }
+      };
+      const up = () => {
+        window.removeEventListener("mousemove", move);
+        window.removeEventListener("mouseup", up);
+        app.saveSplit();
+        app.fitActive();
+      };
+      window.addEventListener("mousemove", move);
+      window.addEventListener("mouseup", up);
+    },
+
+    saveSplit() {
+      this.savePrefs({ wsSide: this.ws.side, wsLower: this.ws.lower });
+    },
+
+    syncWorkspace() {
+      const alias = this.activeTermAlias();
+      if (!alias) {
+        this.stopMetrics();
+        return;
+      }
+      if (this.files.alias !== alias) {
+        this.files.alias = alias;
+        this.files.path = "";
+        this.files.parent = "";
+        this.files.crumbs = [];
+        this.files.entries = [];
+        this.files.truncated = false;
+        if (this.files.mode !== "history") this.refreshFiles();
+      }
+      if (this.files.mode === "history" && this.historyView.alias !== alias) this.loadHistory(alias);
+      this.startMetrics();
+    },
+
+    startMetrics() {
+      this.refreshMetrics();
+      if (this.metricsTimer) return;
+      const app = this;
+      this.metricsTimer = window.setInterval(() => {
+        if (app.view !== "terminal") {
+          app.stopMetrics();
+          return;
+        }
+        app.refreshMetrics();
+        app.loadSessions();
+      }, 5000);
+    },
+
+    stopMetrics() {
+      if (this.metricsTimer) {
+        window.clearInterval(this.metricsTimer);
+        this.metricsTimer = 0;
+      }
+    },
+
+    async refreshMetrics() {
+      const alias = this.activeTermAlias();
+      if (!alias || this.view !== "terminal") return;
+      const seq = ++this.metricsSeq;
+      try {
+        const data = await this.postJSON("/api/metrics", { alias: alias });
+        if (seq !== this.metricsSeq || this.activeTermAlias() !== alias) return;
+        data.procs = data.procs || [];
+        data.disks = data.disks || [];
+        data.notes = data.notes || [];
+        this.metrics = data;
+        this.pushNet(alias, data.netRx, data.netTx);
+        this.setError("metrics", "");
+      } catch (err) {
+        if (seq !== this.metricsSeq) return;
+        this.metrics.connected = false;
+        this.metrics.alias = alias;
+        this.setError("metrics", err.message || "概况暂时不可用");
+      }
+    },
+
+    pushNet(alias, rx, tx) {
+      if (!this.netSeries[alias]) this.netSeries[alias] = [];
+      const series = this.netSeries[alias];
+      series.push({ rx: Number(rx) || 0, tx: Number(tx) || 0 });
+      if (series.length > 24) series.shift();
+    },
+
+    sparkPoints() {
+      const alias = this.activeTermAlias();
+      const series = (this.netSeries && this.netSeries[alias]) || [];
+      if (series.length < 2) return "0,32 160,32";
+      const rates = [];
+      for (let i = 1; i < series.length; i++) {
+        const d = (series[i].rx - series[i - 1].rx) + (series[i].tx - series[i - 1].tx);
+        rates.push(d > 0 ? d : 0);
+      }
+      let max = 1;
+      for (let i = 0; i < rates.length; i++) if (rates[i] > max) max = rates[i];
+      const pts = [];
+      for (let i = 0; i < rates.length; i++) {
+        const x = rates.length === 1 ? 0 : (160 * i) / (rates.length - 1);
+        const y = 32 - (28 * rates[i]) / max;
+        pts.push(x.toFixed(1) + "," + y.toFixed(1));
+      }
+      return pts.join(" ");
+    },
+
+    pct(n) {
+      const v = Number(n);
+      if (!isFinite(v)) return "—";
+      return Math.round(v) + "%";
+    },
+
+    memPct(mem) {
+      if (!mem || mem.percent == null) return null;
+      return mem.percent;
+    },
+
+    memText(mem) {
+      if (!mem || !mem.total) return "—";
+      return this.pct(mem.percent) + " · " + this.formatBytes(mem.used) + " / " + this.formatBytes(mem.total);
+    },
+
+    diskPct(text) {
+      const n = parseInt(String(text || ""), 10);
+      return isFinite(n) ? n : null;
+    },
+
+    diskEmpty() { return !this.metrics || !this.metrics.disks || this.metrics.disks.length === 0; },
+    procEmpty() { return !this.metrics || !this.metrics.procs || this.metrics.procs.length === 0; },
+
+    noteText() {
+      const notes = (this.metrics && this.metrics.notes) || [];
+      return notes.length ? notes.join("；") : "";
+    },
+
+    netText() {
+      const m = this.metrics || {};
+      return "收 " + this.formatBytes(m.netRx) + " · 发 " + this.formatBytes(m.netTx);
+    },
+
+    formatBytes(n) {
+      n = Number(n);
+      if (!isFinite(n) || n < 0) n = 0;
+      const units = ["B", "KB", "MB", "GB", "TB"];
+      let i = 0;
+      while (n >= 1024 && i < units.length - 1) {
+        n /= 1024;
+        i++;
+      }
+      const shown = i === 0 ? String(Math.round(n)) : n.toFixed(1);
+      return shown + " " + units[i];
+    },
+
+    barStyle(n) {
+      let v = Number(n);
+      if (!isFinite(v) || v < 0) v = 0;
+      if (v > 100) v = 100;
+      return "width:" + v + "%";
+    },
+
+    showFiles() {
+      this.files.mode = "files";
+      this.setError("files", "");
+      if (this.activeTermAlias() && !this.files.path) this.refreshFiles();
+    },
+
+    showHistory() {
+      this.files.mode = "history";
+      this.setError("files", "");
+      this.loadHistory(this.activeTermAlias());
+    },
+
+    async openHistory(alias) {
+      this.files.mode = "history";
+      this.termAlias = alias || this.termAlias;
+      this.show("terminal");
+      await this.loadHistory(alias || this.activeTermAlias());
+    },
+
+    async refreshFiles() {
+      const alias = this.activeTermAlias();
+      if (!alias) {
+        this.setError("files", "先选择一台主机。");
+        return;
+      }
+      await this.listFiles(this.files.alias === alias && this.files.path ? this.files.path : ".");
+    },
+
+    async listFiles(path) {
+      const alias = this.activeTermAlias();
+      if (!alias) {
+        this.setError("files", "先选择一台主机。");
+        return;
+      }
+      this.setError("files", "");
+      try {
+        const data = await this.postJSON("/api/files/list", { alias: alias, path: path || "." });
+        this.files.alias = alias;
+        this.files.path = data.path || "";
+        this.files.parent = data.parent || "";
+        this.files.crumbs = data.crumbs || [];
+        this.files.entries = data.entries || [];
+        this.files.truncated = !!data.truncated;
+      } catch (err) {
+        this.setError("files", err.message || "列目录失败");
+      }
+    },
+
+    dirEntries() {
+      const out = [];
+      const entries = this.files.entries || [];
+      for (let i = 0; i < entries.length; i++) if (entries[i].dir) out.push(entries[i]);
+      return out;
+    },
+
+    selectEntry(entry) {
+      this.selectedPath = entry && entry.path ? entry.path : "";
+    },
+
+    openEntry(entry) {
+      if (!entry) return;
+      if (entry.dir) this.listFiles(entry.path);
+      else this.wsDownload(entry);
+    },
+
+    pickUpload() {
+      this.menu.open = false;
+      const input = document.getElementById("ws-upload");
+      if (input) input.click();
+    },
+
+    async wsUpload(ev) {
+      const files = ev.target.files;
+      ev.target.value = "";
+      await this.enqueueUploads(files, this.files.path);
+    },
+
+    async enqueueUploads(fileList, remoteDir) {
+      const alias = this.activeTermAlias();
+      if (!alias) {
+        this.toast("先选择一台主机。", "bad");
+        return;
+      }
+      const dest = remoteDir || this.files.path;
+      if (!dest) {
+        this.toast("先刷新目录，再上传。", "bad");
+        return;
+      }
+      const files = [];
+      const list = fileList || [];
+      for (let i = 0; i < list.length; i++) files.push(list[i]);
+      if (!files.length) return;
+      this.setError("files", "");
+      await this.ensureSession();
+      for (let i = 0; i < files.length; i++) {
+        await this.uploadOne(alias, files[i], dest);
+      }
+      if (this.files.path) await this.listFiles(this.files.path);
+    },
+
+    uploadOne(alias, file, remoteDir) {
+      const app = this;
+      const id = "up" + Date.now().toString(36) + Math.floor(Math.random() * 1000);
+      const item = { id: id, alias: alias, name: file.name, loaded: 0, total: file.size || 0, active: true, label: "上传中" };
+      this.transfers.push(item);
+      return new Promise((resolve) => {
+        const send = (confirmText) => {
+          const xhr = new XMLHttpRequest();
+          transferCtl.set(id, xhr);
+          const fd = new FormData();
+          fd.set("alias", alias);
+          fd.set("remote", remoteDir);
+          fd.set("file", file, file.name);
+          if (confirmText) fd.set("confirm", confirmText);
+          xhr.open("POST", "/api/upload");
+          if (app.csrf) xhr.setRequestHeader("X-CSRF-Token", app.csrf);
+          const token = sessionStorage.getItem("sshCliBearer") || "";
+          if (token) xhr.setRequestHeader("Authorization", "Bearer " + token);
+          xhr.upload.onprogress = (ev) => {
+            if (ev.lengthComputable) {
+              item.loaded = ev.loaded;
+              item.total = ev.total;
+              item.label = app.pct(ev.total ? (100 * ev.loaded) / ev.total : 0);
+            }
+          };
+          xhr.onerror = () => {
+            item.active = false;
+            item.label = "失败";
+            transferCtl.delete(id);
+            app.toast(file.name + " 上传失败", "bad");
+            resolve();
+          };
+          xhr.onabort = () => {
+            item.active = false;
+            item.label = "已取消";
+            transferCtl.delete(id);
+            resolve();
+          };
+          xhr.onload = () => {
+            let data = {};
+            try { data = JSON.parse(xhr.responseText || "{}"); } catch (err) { data = {}; }
+            if (xhr.status === 409 && data.needsConfirm && !confirmText) {
+              const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + (data.confirm || alias));
+              if (typed == null) {
+                item.active = false;
+                item.label = "已取消";
+                transferCtl.delete(id);
+                resolve();
+                return;
+              }
+              send(typed);
+              return;
+            }
+            transferCtl.delete(id);
+            item.active = false;
+            if (xhr.status < 200 || xhr.status >= 300 || data.ok === false) {
+              item.label = "失败";
+              app.toast(file.name + "：" + (data.error || xhr.statusText || "上传失败"), "bad");
+            } else {
+              item.loaded = item.total || item.loaded;
+              item.label = "完成";
+            }
+            resolve();
+          };
+          xhr.send(fd);
+        };
+        send("");
+      });
+    },
+
+    async wsDownload(entry) {
+      this.menu.open = false;
+      const alias = this.activeTermAlias();
+      if (!alias || !entry || !entry.path) return;
+      this.setError("files", "");
+      await this.ensureSession();
+      const id = "dn" + Date.now().toString(36);
+      const item = { id: id, alias: alias, name: entry.name || "download", loaded: 0, total: 0, active: true, label: "下载中" };
+      this.transfers.push(item);
+      const ctrl = new AbortController();
+      transferCtl.set(id, ctrl);
+      try {
+        const res = await this.api("/api/download", {
+          method: "POST",
+          signal: ctrl.signal,
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ alias: alias, path: entry.path })
+        });
+        if (!res.ok) {
+          const data = await res.json();
+          throw new Error(data.error || res.statusText);
+        }
+        const total = Number(res.headers.get("Content-Length")) || 0;
+        item.total = total;
+        const reader = res.body && res.body.getReader ? res.body.getReader() : null;
+        const chunks = [];
+        if (!reader) {
+          const blob = await res.blob();
+          item.loaded = blob.size;
+          this.saveBlob(blob, entry.name || "download");
+        } else {
+          while (true) {
+            const step = await reader.read();
+            if (step.done) break;
+            chunks.push(step.value);
+            item.loaded += step.value.length;
+            item.label = total ? this.pct((100 * item.loaded) / total) : this.formatBytes(item.loaded);
+          }
+          this.saveBlob(new Blob(chunks), entry.name || "download");
+        }
+        item.active = false;
+        item.label = "完成";
+      } catch (err) {
+        item.active = false;
+        if (err && err.name === "AbortError") {
+          item.label = "已取消";
+        } else {
+          item.label = "失败";
+          this.toast((entry.name || "文件") + "：" + (err.message || "下载失败"), "bad");
+        }
+      } finally {
+        transferCtl.delete(id);
+      }
+    },
+
+    saveBlob(blob, name) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = name || "download";
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+
+    cancelTransfer(id) {
+      const ctl = transferCtl.get(id);
+      if (ctl && ctl.abort) ctl.abort();
+      const items = this.transfers || [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].id === id) {
+          items[i].active = false;
+          items[i].label = "已取消";
+        }
+      }
+    },
+
+    transferPct() {
+      const items = this.transfers || [];
+      let loaded = 0;
+      let total = 0;
+      let active = false;
+      for (let i = 0; i < items.length; i++) {
+        if (!items[i].active && items[i].label !== "完成") continue;
+        active = true;
+        loaded += Number(items[i].loaded) || 0;
+        total += Number(items[i].total) || 0;
+      }
+      if (!active || !total) return 0;
+      return (100 * loaded) / total;
+    },
+
+    hasLocalFiles(ev) {
+      const types = ev && ev.dataTransfer && ev.dataTransfer.types;
+      if (!types) return false;
+      for (let i = 0; i < types.length; i++) if (types[i] === "Files") return true;
+      return false;
+    },
+
+    dragEnter(ev) {
+      if (!this.hasLocalFiles(ev)) return;
+      this.drop.over = true;
+      this.drop.label = "松开以上传到当前目录";
+    },
+
+    dragOver(ev, target) {
+      if (ev && ev.dataTransfer) ev.dataTransfer.dropEffect = "copy";
+      this.dragPoint = { x: ev.clientX, y: ev.clientY };
+      if (this.hasLocalFiles(ev)) {
+        this.drop.over = true;
+        this.drop.target = target || "";
+        this.drop.label = target ? "松开以上传到这个目录" : "松开以上传到当前目录";
+      }
+    },
+
+    dragLeave(ev) {
+      const next = ev.relatedTarget;
+      const stage = ev.currentTarget;
+      if (next && stage && stage.contains && stage.contains(next)) return;
+      this.drop.over = false;
+      this.drop.target = "";
+    },
+
+    async dropFiles(ev, target) {
+      this.drop.over = false;
+      this.drop.target = "";
+      const raw = ev.dataTransfer ? ev.dataTransfer.getData("application/x-ssh-cli-file") : "";
+      if (raw) {
+        this.wsInternalDrop = true;
+        if (target === "download") {
+          try { await this.wsDownload(JSON.parse(raw)); } catch (err) { this.toast("无法下载", "bad"); }
+        }
+        return;
+      }
+      const dest = target && target !== "download" ? target : this.files.path;
+      await this.enqueueUploads(ev.dataTransfer ? ev.dataTransfer.files : [], dest);
+    },
+
+    dragRemoteStart(ev, entry) {
+      if (!entry || entry.dir) {
+        if (ev.dataTransfer) ev.dataTransfer.effectAllowed = "none";
+        return;
+      }
+      this.wsInternalDrop = false;
+      this.dragPoint = { x: ev.clientX, y: ev.clientY };
+      ev.dataTransfer.effectAllowed = "copy";
+      ev.dataTransfer.setData("application/x-ssh-cli-file", JSON.stringify({ path: entry.path, name: entry.name }));
+      ev.dataTransfer.setData("text/plain", entry.path || entry.name || "");
+    },
+
+    dragRemoteEnd(ev, entry) {
+      if (!entry || entry.dir) return;
+      if (this.wsInternalDrop) {
+        this.wsInternalDrop = false;
+        return;
+      }
+      const box = document.querySelector("[data-view='terminal']");
+      if (!box || !this.dragPoint) return;
+      const r = box.getBoundingClientRect();
+      const p = this.dragPoint;
+      const outside = p.x < r.left || p.x > r.right || p.y < r.top || p.y > r.bottom;
+      if (!outside) return;
+      this.toast("浏览器不能把文件直接放进系统文件夹，已改为下载");
+      this.wsDownload(entry);
+    },
+
+    openMenu(ev, entry) {
+      if (entry) this.selectedPath = entry.path || "";
+      this.menu = { open: true, x: ev.clientX, y: ev.clientY, entry: entry || null };
+      const app = this;
+      const close = (e) => {
+        if (e.type === "keydown" && e.key !== "Escape") return;
+        app.menu.open = false;
+        document.removeEventListener("click", close, true);
+        document.removeEventListener("keydown", close);
+      };
+      setTimeout(() => {
+        document.addEventListener("click", close, true);
+        document.addEventListener("keydown", close);
+      }, 0);
+    },
+
+    menuStyle() {
+      return "left:" + (this.menu.x || 0) + "px;top:" + (this.menu.y || 0) + "px";
+    },
+
+    async copyPath() {
+      const entry = this.menu.entry;
+      const path = (entry && entry.path) || this.files.path || "";
+      this.menu.open = false;
+      if (!path) return;
+      try {
+        if (navigator.clipboard && navigator.clipboard.writeText) await navigator.clipboard.writeText(path);
+        else throw new Error("clipboard");
+        this.toast("已复制路径");
+      } catch (err) {
+        this.toast(path);
+      }
+    },
+
+    toast(text, kind) {
+      const id = "n" + Date.now().toString(36) + this.toasts.length;
+      this.toasts.push({ id: id, text: text, kind: kind || "" });
+      const app = this;
+      setTimeout(() => {
+        app.toasts = app.toasts.filter((t) => t.id !== id);
+      }, 4200);
+    },
+
+    markTabIdle(id) {
+      const tabs = this.termTabs || [];
+      for (let i = 0; i < tabs.length; i++) if (tabs[i].id === id) tabs[i].busy = false;
+    },
+
+    tabBusy(tab) {
+      if (!tab) return false;
+      if (tab.busy) return true;
+      const items = this.transfers || [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].active && items[i].alias === tab.alias) return true;
+      }
+      return false;
+    },
+
+    workspaceSession() {
+      const alias = this.activeTermAlias();
+      if (!alias) return "未选择主机";
+      const items = this.sessions || [];
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].alias !== alias) continue;
+        const idle = items[i].status === "busy" ? "忙碌，暂不因空闲关闭" : ("空闲剩余 " + this.formatLeft(items[i].idleLeftSec));
+        return (items[i].status === "busy" ? "忙碌" : "已连接") + " · " + idle + " · 最长剩余 " + this.formatLeft(items[i].lifeLeftSec);
+      }
+      return "未连接 · 点「连接」或「打开」";
+    },
+
+    async openWorkspaceHost() {
+      const alias = this.activeTermAlias();
+      if (!alias) {
+        this.toast("先选择一台主机。", "bad");
+        return;
+      }
+      try {
+        await this.postJSON("/api/sessions/open", { alias: alias });
+        await this.loadSessions();
+        this.toast("已连接 " + alias);
+      } catch (err) {
+        this.toast(err.message || "连接失败", "bad");
+      }
+    },
+
+    async closeWorkspaceHost() {
+      const alias = this.activeTermAlias();
+      if (!alias) return;
+      const tabs = (this.termTabs || []).slice();
+      for (let i = 0; i < tabs.length; i++) if (tabs[i].alias === alias) this.closeTab(tabs[i].id);
+      try {
+        await this.postJSON("/api/sessions/close", { alias: alias });
+        await this.loadSessions();
+      } catch (err) {
+        this.toast(err.message || "断开失败", "bad");
+      }
+    },
+
+    async loadHistory(alias) {
+      const name = String(alias || this.activeTermAlias() || "").trim();
+      if (!name) {
+        this.setError("files", "先选择一台主机。");
+        return;
+      }
+      this.files.mode = "history";
+      this.setError("files", "");
+      try {
+        const data = await this.postJSON("/api/history", { alias: name, lines: 100 });
+        data.lines = data.lines || [];
+        data.notes = data.notes || [];
+        this.historyView = data;
+      } catch (err) {
+        this.historyView = { alias: name, found: false, status: "error", lines: [], notes: [], error: err.message || "读取历史失败" };
+        this.setError("files", err.message || "读取历史失败");
+      }
+    },
+
+    historyCaption() {
+      const h = this.historyView || {};
+      if (h.suppressed) return "这个环境不允许把历史带回本机。";
+      if (!h.path && !h.error) return "只读最近命令。不会修改远端历史。内容可能含密钥，常见片段已打码。";
+      const bits = [];
+      if (h.path) bits.push(h.path);
+      if (h.shell) bits.push(h.shell);
+      if (h.status && h.status !== "ok") bits.push(h.status);
+      if (h.truncated) bits.push("已截断");
+      bits.push("只读，可能含密钥");
+      return bits.join(" · ");
+    },
+
+    historyText() {
+      const h = this.historyView || {};
+      const lines = h.lines || [];
+      if (lines.length) return lines.join("\n");
+      const notes = (h.notes || []).join("\n");
+      return h.error || notes || "没有读到 shell 历史。";
     },
 
     subject(rec) {
@@ -1785,7 +2480,8 @@ function sshui() {
     },
 
     dashEntries() {
-      return (this.dash.audit && this.dash.audit.entries) || 0;
+      if (this.dash && this.dash.auditCli != null) return this.dash.auditCli;
+      return 0;
     },
 
     opsEntries() {

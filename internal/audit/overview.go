@@ -29,6 +29,12 @@ type Overview struct {
 // LoadOverview summarizes the last days of audit data, including today.
 // days is clamped to 1..31. A missing audit directory is an empty overview.
 func LoadOverview(dir string, days int, now time.Time) (Overview, error) {
+	return LoadOverviewSource(dir, days, now, "")
+}
+
+// LoadOverviewSource is LoadOverview limited to one source. An empty source
+// counts every record. The dashboard passes cli so UI workspace noise is omitted.
+func LoadOverviewSource(dir string, days int, now time.Time, source string) (Overview, error) {
 	if days < 1 {
 		days = 14
 	}
@@ -49,7 +55,7 @@ func LoadOverview(dir string, days int, now time.Time) (Overview, error) {
 		index[key] = i
 	}
 	ops := map[string]int{}
-	err := List(dir, Filter{Since: start, HasSince: true}, func(rec Record) error {
+	err := List(dir, Filter{Since: start, HasSince: true, Source: source}, func(rec Record) error {
 		when, err := ParseStamp(rec.Time)
 		if err != nil {
 			return nil
