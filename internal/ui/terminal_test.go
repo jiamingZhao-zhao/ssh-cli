@@ -263,6 +263,169 @@ func readAuditRecords(t *testing.T, dir string) []audit.Record {
 	return out
 }
 
+func TestTerminalBrowserFetchMetadataSplit(t *testing.T) {
+	s := &service{sessions: map[string]string{"sid": "csrf-token"}}
+	newReq := func(method string) *http.Request {
+		t.Helper()
+		req := httptest.NewRequest(method, "http://127.0.0.1:7788/api/terminal/ws", nil)
+		req.RemoteAddr = "127.0.0.1:9"
+		req.Host = "127.0.0.1:7788"
+		req.Header.Set("Origin", "http://127.0.0.1:7788")
+		req.AddCookie(&http.Cookie{Name: sessionCookie, Value: "sid"})
+		return req
+	}
+
+	if !s.terminalBrowser(newReq(http.MethodGet), "websocket") {
+		t.Fatal("websocket without Sec-Fetch metadata rejected")
+	}
+
+	noCookie := newReq(http.MethodGet)
+	noCookie.Header.Del("Cookie")
+	if s.terminalBrowser(noCookie, "websocket") {
+		t.Fatal("websocket without session cookie accepted")
+	}
+	noOrigin := newReq(http.MethodGet)
+	noOrigin.Header.Del("Origin")
+	if s.terminalBrowser(noOrigin, "websocket") {
+		t.Fatal("websocket without Origin accepted")
+	}
+	cross := newReq(http.MethodGet)
+	cross.Header.Set("Origin", "http://evil.example")
+	if s.terminalBrowser(cross, "websocket") {
+		t.Fatal("websocket with foreign Origin accepted")
+	}
+	remote := newReq(http.MethodGet)
+	remote.RemoteAddr = "203.0.113.8:9"
+	if s.terminalBrowser(remote, "websocket") {
+		t.Fatal("websocket from non-loopback accepted")
+	}
+
+	fetch := newReq(http.MethodPost)
+	if s.terminalBrowser(fetch, "fetch") {
+		t.Fatal("terminal open without Sec-Fetch metadata accepted")
+	}
+	fetch.Header.Set("Sec-Fetch-Site", "same-origin")
+	fetch.Header.Set("Sec-Fetch-Dest", "empty")
+	fetch.Header.Set("Sec-Fetch-Mode", "cors")
+	fetch.Header.Set(csrfHeader, "csrf-token")
+	if !s.terminalBrowser(fetch, "fetch") {
+		t.Fatal("terminal open with browser fetch metadata rejected")
+	}
+	fetch.Header.Set("Sec-Fetch-Site", "cross-site")
+	if s.terminalBrowser(fetch, "fetch") {
+		t.Fatal("terminal open with cross-site Sec-Fetch-Site accepted")
+	}
+}
+
+func TestTerminalWebSocketWithoutFetchMetadata(t *testing.T) {
+	sshSrv, err := sshtest.Start("tester", "ui-secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() {
+			sshSrv.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	})
+	host, port, err := net.SplitHostPort(sshSrv.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	h := Handler(dir, false)
+	web := httptest.NewServer(h)
+	t.Cleanup(web.Close)
+
+	client := web.Client()
+	csrf, cookie := uiSession(t, client, web.URL)
+	post := func(path, body string, browser bool) *http.Response {
+		t.Helper()
+		req, err := http.NewRequest(http.MethodPost, web.URL+path, strings.NewReader(body))
+		if err != nil {
+			t.Fatal(err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		req.Header.Set("X-CSRF-Token", csrf)
+		req.Header.Set("Cookie", cookie)
+		if browser {
+			browserFetch(req, web.URL)
+		}
+		res, err := client.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return res
+	}
+	mustOK := func(path, body string) {
+		t.Helper()
+		res := post(path, body, false)
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("%s %d %s", path, res.StatusCode, raw)
+		}
+	}
+	mustOK("/api/groups", `{"name":"app","env":"prod"}`)
+	mustOK("/api/hosts", `{"alias":"box","group":"app","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
+
+	opened := post("/api/terminal/open", `{"alias":"box","cols":80,"rows":24}`, true)
+	openBody, _ := io.ReadAll(opened.Body)
+	opened.Body.Close()
+	if opened.StatusCode != http.StatusOK {
+		t.Fatalf("terminal open %d %s", opened.StatusCode, openBody)
+	}
+	var ticket struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.Unmarshal(openBody, &ticket); err != nil || ticket.Ticket == "" {
+		t.Fatalf("ticket %v %s", err, openBody)
+	}
+
+	wsURL := web.URL + "/api/terminal/ws?ticket=" + ticket.Ticket
+	originOnly := http.Header{}
+	originOnly.Set("Origin", web.URL)
+	if _, err := dialWebSocket(wsURL, originOnly); err == nil {
+		t.Fatal("websocket without session cookie accepted")
+	}
+	cookieOnly := http.Header{}
+	cookieOnly.Set("Cookie", cookie)
+	if _, err := dialWebSocket(wsURL, cookieOnly); err == nil {
+		t.Fatal("websocket without Origin accepted")
+	}
+
+	bare := http.Header{}
+	bare.Set("Origin", web.URL)
+	bare.Set("Cookie", cookie)
+	for key := range bare {
+		if strings.HasPrefix(key, "Sec-Fetch-") {
+			t.Fatalf("upgrade header must omit fetch metadata, has %s", key)
+		}
+	}
+	ws, err := dialWebSocket(wsURL, bare)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer ws.Close()
+	if err := ws.Write(wsBinary, []byte("echo ui-term-nofetch\n")); err != nil {
+		t.Fatal(err)
+	}
+	_ = ws.c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	var got bytes.Buffer
+	for !bytes.Contains(got.Bytes(), []byte("ui-term-nofetch")) {
+		_, payload, err := ws.ReadMessage()
+		if err != nil {
+			t.Fatalf("pty output %v %q", err, got.String())
+		}
+		got.Write(payload)
+	}
+}
+
 func TestTerminalDialFailureWritesReason(t *testing.T) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {

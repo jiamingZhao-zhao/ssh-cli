@@ -96,6 +96,13 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 // terminalBrowser is the proof that this request came from the localhost page,
 // not from the CLI or an agent HTTP client. A forged source header or JSON field
 // is not consulted. Loopback is required even when the rest of the API is remote.
+//
+// kind fetch (the ticket POST) still requires same-origin Fetch Metadata and the
+// CSRF token. kind websocket does not re-check Sec-Fetch-Site, Dest, or Mode.
+// The one-time ticket was already minted by that POST, and browsers or embedded
+// clients often omit Fetch Metadata on the upgrade. The upgrade still requires
+// loopback, a non-empty Origin whose host equals Host and is allowed, and the
+// session cookie that minted the ticket.
 func (s *service) terminalBrowser(r *http.Request, kind string) bool {
 	if !remoteLoopback(r.RemoteAddr) {
 		return false
@@ -108,18 +115,15 @@ func (s *service) terminalBrowser(r *http.Request, kind string) bool {
 	if err != nil || ou.Host == "" || !strings.EqualFold(ou.Host, r.Host) || !hostAllowed(ou.Host) {
 		return false
 	}
-	if strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))) != "same-origin" {
-		return false
-	}
-	dest := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")))
-	mode := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Mode")))
 	switch kind {
 	case "fetch":
-		return dest == "empty" && mode == "cors" && s.csrfOK(r)
-	case "websocket":
-		if dest != "websocket" || mode != "websocket" {
+		if strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Site"))) != "same-origin" {
 			return false
 		}
+		dest := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Dest")))
+		mode := strings.ToLower(strings.TrimSpace(r.Header.Get("Sec-Fetch-Mode")))
+		return dest == "empty" && mode == "cors" && s.csrfOK(r)
+	case "websocket":
 		return sessionID(r) != ""
 	default:
 		return false
