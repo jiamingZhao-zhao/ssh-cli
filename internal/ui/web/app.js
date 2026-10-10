@@ -144,18 +144,18 @@ function sshui() {
     dash: { hosts: 0, groups: 0, envs: 0, sessions: 0, recent: [], failures: [], audit: {}, hmac: {} },
     detail: { host: {}, policy: { capabilities: {} }, sessions: [], audit: [] },
     ops: { hmac: {}, audit: {} },
-    audit: { records: [], page: 1, pageSize: DEFAULT_PAGE_SIZE, total: 0, stats: {} },
+    audit: { records: [], page: 1, pageSize: DEFAULT_PAGE_SIZE, total: 0, stats: {}, jump: "" },
     auditFilter: { op: "", host: "", group: "", env: "", status: "", source: "cli", since: "", until: "" },
     col: { time: "", status: "", op: "", host: "", env: "", command: "", reason: "" },
     q: { hosts: "", groups: "", tags: "", envs: "", policy: "", known: "" },
     pages: {
-      hosts: { page: 1, size: DEFAULT_PAGE_SIZE },
-      groups: { page: 1, size: DEFAULT_PAGE_SIZE },
-      tags: { page: 1, size: DEFAULT_PAGE_SIZE },
-      envs: { page: 1, size: DEFAULT_PAGE_SIZE },
-      policy: { page: 1, size: DEFAULT_PAGE_SIZE },
-      known: { page: 1, size: DEFAULT_PAGE_SIZE },
-      sessions: { page: 1, size: DEFAULT_PAGE_SIZE }
+      hosts: { page: 1, size: DEFAULT_PAGE_SIZE, jump: "" },
+      groups: { page: 1, size: DEFAULT_PAGE_SIZE, jump: "" },
+      tags: { page: 1, size: DEFAULT_PAGE_SIZE, jump: "" },
+      envs: { page: 1, size: DEFAULT_PAGE_SIZE, jump: "" },
+      policy: { page: 1, size: DEFAULT_PAGE_SIZE, jump: "" },
+      known: { page: 1, size: DEFAULT_PAGE_SIZE, jump: "" },
+      sessions: { page: 1, size: DEFAULT_PAGE_SIZE, jump: "" }
     },
     selected: {},
     pickAll: false,
@@ -720,6 +720,35 @@ function sshui() {
         this.audit.page += 1;
         this.loadAudit();
       }
+    },
+
+    auditSetPage(n) {
+      const max = this.auditPages();
+      const page = Math.min(Math.max(1, Number(n) || 1), max);
+      if (page === this.audit.page) return;
+      this.audit.page = page;
+      this.loadAudit();
+    },
+
+    auditWindow() {
+      return this._pageWindow(this.audit.page, this.auditPages());
+    },
+
+    auditGo() {
+      const n = parseInt(String(this.audit.jump || "").trim(), 10);
+      if (!Number.isFinite(n) || n < 1) return;
+      const page = Math.min(Math.floor(n), this.auditPages());
+      this.audit.jump = String(page);
+      this.auditSetPage(page);
+    },
+
+    showAllAudit() {
+      this.auditFilter.source = "";
+      this.searchAudit();
+    },
+
+    clearAuditCols() {
+      this.col = { time: "", status: "", op: "", host: "", env: "", command: "", reason: "" };
     },
 
     auditPages() {
@@ -2516,6 +2545,34 @@ function sshui() {
 
     nextPage(key) {
       if (this.pages[key].page < this.pageCount(key)) this.pages[key].page += 1;
+    },
+
+    setPage(key, n) {
+      const max = this.pageCount(key);
+      const page = Math.min(Math.max(1, Number(n) || 1), max);
+      this.pages[key].page = page;
+    },
+
+    pageWindow(key) {
+      return this._pageWindow(this.pages[key].page, this.pageCount(key));
+    },
+
+    _pageWindow(current, total) {
+      const pages = Math.max(1, total || 1);
+      const cur = Math.min(Math.max(1, current || 1), pages);
+      const start = Math.max(1, Math.min(cur - 1, pages - 2));
+      const end = Math.min(pages, start + 2);
+      const out = [];
+      for (let i = start; i <= end; i++) out.push(i);
+      return out.length ? out : [1];
+    },
+
+    goPage(key) {
+      const n = parseInt(String(this.pages[key].jump || "").trim(), 10);
+      if (!Number.isFinite(n) || n < 1) return;
+      const page = Math.min(Math.floor(n), this.pageCount(key));
+      this.pages[key].jump = String(page);
+      this.pages[key].page = page;
     },
 
     resetPage(key) {

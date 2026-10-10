@@ -64,16 +64,16 @@
             <div class="alert alert-danger" role="alert" x-show="errors.home" x-text="errors.home"></div>
             <div class="row row-deck row-cards mb-3">
               <div class="col-sm-6 col-lg-3">
-                <div class="card"><div class="card-body"><div class="subheader">主机</div><div class="h1 mb-2" x-text="dash.hosts || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('hosts')">打开主机列表</button></div></div>
+                <div class="card"><div class="card-body text-center"><div class="subheader">主机</div><div class="h1 mb-2" x-text="dash.hosts || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('hosts')">打开主机列表</button></div></div>
               </div>
               <div class="col-sm-6 col-lg-3">
-                <div class="card"><div class="card-body"><div class="subheader">分组</div><div class="h1 mb-2" x-text="dash.groups || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('groups')">打开分组</button></div></div>
+                <div class="card"><div class="card-body text-center"><div class="subheader">分组</div><div class="h1 mb-2" x-text="dash.groups || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('groups')">打开分组</button></div></div>
               </div>
               <div class="col-sm-6 col-lg-3">
-                <div class="card"><div class="card-body"><div class="subheader">会话</div><div class="h1 mb-2" x-text="dash.sessions || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('terminal')">打开终端</button></div></div>
+                <div class="card"><div class="card-body text-center"><div class="subheader">会话</div><div class="h1 mb-2" x-text="dash.sessions || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('terminal')">打开终端</button></div></div>
               </div>
               <div class="col-sm-6 col-lg-3">
-                <div class="card"><div class="card-body"><div class="subheader">审计</div><div class="h1 mb-2" x-text="dashEntries()"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('audit')">打开审计</button></div></div>
+                <div class="card"><div class="card-body text-center"><div class="subheader">审计</div><div class="h1 mb-2" x-text="dashEntries()"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('audit')">打开审计</button></div></div>
               </div>
             </div>
             <div class="card mb-3"><div class="card-body"><div :class="hmacClass()" role="alert" x-text="hmacText()"></div><button class="btn btn-outline-secondary btn-sm" type="button" @click="show('bundle')">打开运维</button></div></div>
@@ -95,7 +95,7 @@
               <div class="col-lg-6">
                 <div class="card">
                   <div class="card-header"><h3 class="card-title">最近命令</h3></div>
-                  <div class="empty" x-show="dash.recent.length === 0"><p class="empty-title">还没有命令记录</p><p class="empty-subtitle text-secondary">执行、上传或命令行操作会写到这里。</p></div>
+                  <div class="empty" x-show="dash.recent.length === 0"><div class="empty-ico" aria-hidden="true"></div><p class="empty-title">还没有命令记录</p><p class="empty-subtitle text-secondary">执行、上传或命令行操作会写到这里。</p><div class="empty-action"><button class="btn btn-primary" type="button" @click="show('terminal')">打开终端</button></div></div>
                   <div class="table-responsive" x-show="dash.recent.length > 0">
                     <table :class="tableClass()">
                       <thead><tr><th>时间</th><th>状态</th><th>主机</th><th>命令 / 路径</th></tr></thead>
@@ -116,7 +116,7 @@
               <div class="col-lg-6">
                 <div class="card">
                   <div class="card-header"><h3 class="card-title">最近失败</h3></div>
-                  <div class="empty" x-show="dash.failures.length === 0"><p class="empty-title">最近没有失败</p><p class="empty-subtitle text-secondary">策略拒绝、连接失败和认证失败会列在这里。</p></div>
+                  <div class="empty" x-show="dash.failures.length === 0"><div class="empty-ico" aria-hidden="true"></div><p class="empty-title">最近没有失败</p><p class="empty-subtitle text-secondary">策略拒绝、连接失败和认证失败会列在这里。</p><div class="empty-action"><button class="btn btn-primary" type="button" @click="show('audit')">打开审计</button></div></div>
                   <div class="table-responsive" x-show="dash.failures.length > 0">
                     <table :class="tableClass()">
                       <thead><tr><th>时间</th><th>状态</th><th>主机</th><th>原因</th></tr></thead>
@@ -169,7 +169,12 @@
               </div>
               <div class="ws-block">
                 <div class="ws-kicker">进程</div>
-                <p class="ws-quiet" x-show="procEmpty() && !metricsPending()">没有进程数据</p>
+                <div class="empty" x-show="procEmpty() && !metricsPending()">
+                  <div class="empty-ico" aria-hidden="true"></div>
+                  <p class="empty-title">没有进程数据</p>
+                  <p class="empty-subtitle">连接主机后会显示占用较高的进程。</p>
+                  <div class="empty-action"><button class="btn btn-primary btn-sm" type="button" @click="refreshMetrics()">刷新</button></div>
+                </div>
                 <table class="table table-sm table-vcenter ws-proc mb-0" x-show="!procEmpty()">
                   <tbody>
                     <template x-for="p in metrics.procs" :key="p.pid + '-' + p.comm">
@@ -188,7 +193,12 @@
               </div>
               <div class="ws-block">
                 <div class="ws-kicker">磁盘</div>
-                <p class="ws-quiet" x-show="diskEmpty() && !metricsPending()">没有磁盘数据</p>
+                <div class="empty" x-show="diskEmpty() && !metricsPending()">
+                  <div class="empty-ico" aria-hidden="true"></div>
+                  <p class="empty-title">没有磁盘数据</p>
+                  <p class="empty-subtitle">连接主机后会显示各挂载点用量。</p>
+                  <div class="empty-action"><button class="btn btn-primary btn-sm" type="button" @click="refreshMetrics()">刷新</button></div>
+                </div>
                 <template x-for="d in metrics.disks" :key="d.mount">
                   <div class="ws-disk">
                     <div class="ws-meter-label"><span x-text="d.mount"></span><span x-text="d.percent || '—'"></span></div>
@@ -229,8 +239,10 @@
                   <div class="alert alert-danger mb-0" role="alert" x-text="errors.terminal"></div>
                 </div>
                 <div class="empty" x-show="termTabs.length === 0">
+                  <div class="empty-ico" aria-hidden="true"></div>
                   <p class="empty-title">还没有打开的终端</p>
                   <p class="empty-subtitle text-secondary">选一台主机后点「打开」。可以同时开多个。连接失败时会写「终端连接失败」。</p>
+                  <div class="empty-action"><button class="btn btn-primary" type="button" @click="openTerminal(termAlias)">打开终端</button></div>
                 </div>
                 <div id="term-screen" class="term-screen" x-show="termTabs.length > 0"></div>
               </div>
@@ -280,7 +292,18 @@
                         </tbody>
                       </table>
                       <p class="ws-quiet px-3" x-show="files.truncated">只显示前 2000 项。</p>
-                      <p class="ws-quiet px-3" x-show="files.path && !(files.entries || []).length && !errors.files">这个目录是空的。可以把本机文件拖进来。</p>
+                      <div class="empty" x-show="!files.path">
+                        <div class="empty-ico" aria-hidden="true"></div>
+                        <p class="empty-title">还没有列出目录</p>
+                        <p class="empty-subtitle text-secondary">选择主机并连接后，这里显示远端文件。</p>
+                        <div class="empty-action"><button class="btn btn-primary" type="button" @click="openWorkspaceHost()">连接</button></div>
+                      </div>
+                      <div class="empty" x-show="files.path && !(files.entries || []).length && !errors.files">
+                        <div class="empty-ico" aria-hidden="true"></div>
+                        <p class="empty-title">这个目录是空的</p>
+                        <p class="empty-subtitle text-secondary">可以把本机文件拖进来，或从这里上传。</p>
+                        <div class="empty-action"><button class="btn btn-primary" type="button" @click="pickUpload()">上传</button></div>
+                      </div>
                     </div>
                   </div>
                   <div class="ws-download-lane" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载到本机。浏览器不能直接拖进系统文件夹。</div>
@@ -333,13 +356,16 @@
                 <div class="alert alert-danger mt-3" role="alert" x-show="errors.hosts" x-text="errors.hosts"></div>
               </div>
               <div class="empty" x-show="catalog.hosts.length === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">还没有主机</p>
                 <p class="empty-subtitle text-secondary">点「添加主机」，或在命令行运行 ssh-cli host add。密码只通过表单进入加密存储。</p>
                 <div class="empty-action"><button class="btn btn-primary" type="button" @click="openHostForm()">添加主机</button></div>
               </div>
               <div class="empty" x-show="catalog.hosts.length > 0 && hostTotal() === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">没有匹配的主机</p>
                 <p class="empty-subtitle text-secondary">换个关键词，或清空搜索。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="q.hosts = ''; resetPage('hosts')">清空搜索</button></div>
               </div>
               <div class="table-responsive" x-show="hostTotal() > 0">
                 <table :class="tableClass()">
@@ -372,16 +398,26 @@
                   </tbody>
                 </table>
               </div>
-              <div class="card-footer" data-pager="#hosts" x-show="hostTotal() > 0">
-                <span class="text-secondary" x-text="pageMeta('hosts')"></span>
-                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.hosts.size" @change="setPageSize('hosts')">
-                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
-                </select>
-                <ul class="pagination m-0 ms-auto">
-                  <li class="page-item" :class="{ disabled: pages.hosts.page <= 1 }"><button class="page-link" type="button" @click="prevPage('hosts')">上一页</button></li>
-                  <li class="page-item active"><span class="page-link" x-text="pageFrac('hosts')"></span></li>
-                  <li class="page-item" :class="{ disabled: pages.hosts.page >= pageCount('hosts') }"><button class="page-link" type="button" @click="nextPage('hosts')">下一页</button></li>
-                </ul>
+              <div class="card-footer pager-bar" data-pager="#hosts" x-show="hostTotal() > 0">
+                <div class="pager">
+                  <span class="text-secondary" x-text="pageMeta('hosts')"></span>
+                  <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.hosts.size" @change="setPageSize('hosts')">
+                    <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                  </select>
+                  <ul class="pagination m-0">
+                    <li class="page-item" :class="{ disabled: pages.hosts.page <= 1 }"><button class="page-link" type="button" @click="prevPage('hosts')" aria-label="上一页">‹</button></li>
+                    <template x-for="n in pageWindow('hosts')" :key="'hosts-p-' + n">
+                      <li class="page-item" :class="{ active: pages.hosts.page === n }"><button class="page-link" type="button" @click="setPage('hosts', n)" x-text="n"></button></li>
+                    </template>
+                    <li class="page-item" :class="{ disabled: pages.hosts.page >= pageCount('hosts') }"><button class="page-link" type="button" @click="nextPage('hosts')" aria-label="下一页">›</button></li>
+                  </ul>
+                  <form class="pager-jump" @submit.prevent="goPage('hosts')">
+                    <span>到</span>
+                    <input class="form-control form-control-sm" inputmode="numeric" x-model="pages.hosts.jump" :aria-label="'跳转到页，共 ' + pageCount('hosts') + ' 页'">
+                    <span>页</span>
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">跳转</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -422,7 +458,7 @@
                 <div class="alert alert-warning mt-3" role="alert" x-show="warnText(detail.policy)" x-text="warnText(detail.policy)"></div>
                 <p class="text-secondary" x-text="sessionLine()"></p>
                 <h3 class="card-title">最近审计</h3>
-                <div class="empty" x-show="(detail.audit || []).length === 0"><p class="empty-title">这台主机还没有审计</p><p class="empty-subtitle text-secondary">在执行页对它跑一条命令，或用 ssh-cli exec。</p></div>
+                <div class="empty" x-show="(detail.audit || []).length === 0"><div class="empty-ico" aria-hidden="true"></div><p class="empty-title">这台主机还没有审计</p><p class="empty-subtitle text-secondary">在执行页对它跑一条命令，或用 ssh-cli exec。</p><div class="empty-action"><button class="btn btn-primary" type="button" @click="openTerminal(currentHost)">打开终端</button></div></div>
                 <div class="table-responsive" x-show="(detail.audit || []).length > 0">
                   <table :class="tableClass()">
                     <thead><tr><th>时间</th><th>状态</th><th>命令 / 路径</th></tr></thead>
@@ -456,9 +492,16 @@
                 <div class="alert alert-danger mt-3" role="alert" x-show="errors.groups" x-text="errors.groups"></div>
               </div>
               <div class="empty" x-show="catalog.groups.length === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">还没有分组</p>
                 <p class="empty-subtitle text-secondary">点「添加分组」。一台主机只能属于一个分组，环境从分组继承。</p>
                 <div class="empty-action"><button class="btn btn-primary" type="button" @click="openGroupForm()">添加分组</button></div>
+              </div>
+              <div class="empty" x-show="catalog.groups.length > 0 && groupTotal() === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
+                <p class="empty-title">没有匹配的分组</p>
+                <p class="empty-subtitle text-secondary">换个关键词，或清空搜索。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="q.groups = ''; resetPage('groups')">清空搜索</button></div>
               </div>
               <div class="table-responsive" x-show="groupTotal() > 0">
                 <table :class="tableClass()">
@@ -483,16 +526,26 @@
                   </tbody>
                 </table>
               </div>
-              <div class="card-footer" data-pager="#group-rows" x-show="groupTotal() > 0">
-                <span class="text-secondary" x-text="pageMeta('groups')"></span>
-                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.groups.size" @change="setPageSize('groups')">
-                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
-                </select>
-                <ul class="pagination m-0 ms-auto">
-                  <li class="page-item" :class="{ disabled: pages.groups.page <= 1 }"><button class="page-link" type="button" @click="prevPage('groups')">上一页</button></li>
-                  <li class="page-item active"><span class="page-link" x-text="pageFrac('groups')"></span></li>
-                  <li class="page-item" :class="{ disabled: pages.groups.page >= pageCount('groups') }"><button class="page-link" type="button" @click="nextPage('groups')">下一页</button></li>
-                </ul>
+              <div class="card-footer pager-bar" data-pager="#group-rows" x-show="groupTotal() > 0">
+                <div class="pager">
+                  <span class="text-secondary" x-text="pageMeta('groups')"></span>
+                  <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.groups.size" @change="setPageSize('groups')">
+                    <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                  </select>
+                  <ul class="pagination m-0">
+                    <li class="page-item" :class="{ disabled: pages.groups.page <= 1 }"><button class="page-link" type="button" @click="prevPage('groups')" aria-label="上一页">‹</button></li>
+                    <template x-for="n in pageWindow('groups')" :key="'groups-p-' + n">
+                      <li class="page-item" :class="{ active: pages.groups.page === n }"><button class="page-link" type="button" @click="setPage('groups', n)" x-text="n"></button></li>
+                    </template>
+                    <li class="page-item" :class="{ disabled: pages.groups.page >= pageCount('groups') }"><button class="page-link" type="button" @click="nextPage('groups')" aria-label="下一页">›</button></li>
+                  </ul>
+                  <form class="pager-jump" @submit.prevent="goPage('groups')">
+                    <span>到</span>
+                    <input class="form-control form-control-sm" inputmode="numeric" x-model="pages.groups.jump" :aria-label="'跳转到页，共 ' + pageCount('groups') + ' 页'">
+                    <span>页</span>
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">跳转</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -509,8 +562,16 @@
                 <div class="alert alert-danger mt-3" role="alert" x-show="errors.tags" x-text="errors.tags"></div>
               </div>
               <div class="empty" x-show="catalog.groups.length === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">还没有分组</p>
                 <p class="empty-subtitle text-secondary">先添加分组和主机。标签只写在主机上，用来配合 ssh-cli -t 选择。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="openGroupForm()">添加分组</button></div>
+              </div>
+              <div class="empty" x-show="catalog.groups.length > 0 && tagTotal() === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
+                <p class="empty-title">没有匹配的标签</p>
+                <p class="empty-subtitle text-secondary">换个关键词，或清空搜索。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="q.tags = ''; resetPage('tags')">清空搜索</button></div>
               </div>
               <div class="table-responsive" x-show="tagTotal() > 0">
                 <table :class="tableClass()">
@@ -540,16 +601,26 @@
                   </tbody>
                 </table>
               </div>
-              <div class="card-footer" data-pager="#tag-rows" x-show="tagTotal() > 0">
-                <span class="text-secondary" x-text="pageMeta('tags')"></span>
-                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.tags.size" @change="setPageSize('tags')">
-                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
-                </select>
-                <ul class="pagination m-0 ms-auto">
-                  <li class="page-item" :class="{ disabled: pages.tags.page <= 1 }"><button class="page-link" type="button" @click="prevPage('tags')">上一页</button></li>
-                  <li class="page-item active"><span class="page-link" x-text="pageFrac('tags')"></span></li>
-                  <li class="page-item" :class="{ disabled: pages.tags.page >= pageCount('tags') }"><button class="page-link" type="button" @click="nextPage('tags')">下一页</button></li>
-                </ul>
+              <div class="card-footer pager-bar" data-pager="#tag-rows" x-show="tagTotal() > 0">
+                <div class="pager">
+                  <span class="text-secondary" x-text="pageMeta('tags')"></span>
+                  <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.tags.size" @change="setPageSize('tags')">
+                    <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                  </select>
+                  <ul class="pagination m-0">
+                    <li class="page-item" :class="{ disabled: pages.tags.page <= 1 }"><button class="page-link" type="button" @click="prevPage('tags')" aria-label="上一页">‹</button></li>
+                    <template x-for="n in pageWindow('tags')" :key="'tags-p-' + n">
+                      <li class="page-item" :class="{ active: pages.tags.page === n }"><button class="page-link" type="button" @click="setPage('tags', n)" x-text="n"></button></li>
+                    </template>
+                    <li class="page-item" :class="{ disabled: pages.tags.page >= pageCount('tags') }"><button class="page-link" type="button" @click="nextPage('tags')" aria-label="下一页">›</button></li>
+                  </ul>
+                  <form class="pager-jump" @submit.prevent="goPage('tags')">
+                    <span>到</span>
+                    <input class="form-control form-control-sm" inputmode="numeric" x-model="pages.tags.jump" :aria-label="'跳转到页，共 ' + pageCount('tags') + ' 页'">
+                    <span>页</span>
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">跳转</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -568,7 +639,13 @@
                 <input class="form-control" x-model="q.envs" @input="resetPage('envs')" placeholder="名称、显示名" autocomplete="off">
                 <div class="alert alert-danger mt-3" role="alert" x-show="errors.envs" x-text="errors.envs"></div>
               </div>
-              <div class="table-responsive">
+              <div class="empty" x-show="envTotal() === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
+                <p class="empty-title">没有匹配的环境</p>
+                <p class="empty-subtitle text-secondary">换个关键词，或清空搜索。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="q.envs = ''; resetPage('envs')">清空搜索</button></div>
+              </div>
+              <div class="table-responsive" x-show="envTotal() > 0">
                 <table :class="tableClass()">
                   <thead><tr><th>环境</th><th>显示名</th><th>颜色</th><th>天花板</th><th>默认策略</th><th></th></tr></thead>
                   <tbody id="env-rows">
@@ -589,16 +666,26 @@
                   </tbody>
                 </table>
               </div>
-              <div class="card-footer" data-pager="#env-rows">
-                <span class="text-secondary" x-text="pageMeta('envs')"></span>
-                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.envs.size" @change="setPageSize('envs')">
-                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
-                </select>
-                <ul class="pagination m-0 ms-auto">
-                  <li class="page-item" :class="{ disabled: pages.envs.page <= 1 }"><button class="page-link" type="button" @click="prevPage('envs')">上一页</button></li>
-                  <li class="page-item active"><span class="page-link" x-text="pageFrac('envs')"></span></li>
-                  <li class="page-item" :class="{ disabled: pages.envs.page >= pageCount('envs') }"><button class="page-link" type="button" @click="nextPage('envs')">下一页</button></li>
-                </ul>
+              <div class="card-footer pager-bar" data-pager="#env-rows" x-show="envTotal() > 0">
+                <div class="pager">
+                  <span class="text-secondary" x-text="pageMeta('envs')"></span>
+                  <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.envs.size" @change="setPageSize('envs')">
+                    <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                  </select>
+                  <ul class="pagination m-0">
+                    <li class="page-item" :class="{ disabled: pages.envs.page <= 1 }"><button class="page-link" type="button" @click="prevPage('envs')" aria-label="上一页">‹</button></li>
+                    <template x-for="n in pageWindow('envs')" :key="'envs-p-' + n">
+                      <li class="page-item" :class="{ active: pages.envs.page === n }"><button class="page-link" type="button" @click="setPage('envs', n)" x-text="n"></button></li>
+                    </template>
+                    <li class="page-item" :class="{ disabled: pages.envs.page >= pageCount('envs') }"><button class="page-link" type="button" @click="nextPage('envs')" aria-label="下一页">›</button></li>
+                  </ul>
+                  <form class="pager-jump" @submit.prevent="goPage('envs')">
+                    <span>到</span>
+                    <input class="form-control form-control-sm" inputmode="numeric" x-model="pages.envs.jump" :aria-label="'跳转到页，共 ' + pageCount('envs') + ' 页'">
+                    <span>页</span>
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">跳转</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -618,7 +705,13 @@
                 <input class="form-control" x-model="q.policy" @input="resetPage('policy')" placeholder="策略名" autocomplete="off">
                 <div class="alert alert-danger mt-3" role="alert" x-show="errors.policy" x-text="errors.policy"></div>
               </div>
-              <div class="table-responsive">
+              <div class="empty" x-show="policyTotal() === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
+                <p class="empty-title">没有匹配的策略</p>
+                <p class="empty-subtitle text-secondary">换个策略名，或清空搜索后添加命名策略。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="q.policy = ''; resetPage('policy')">清空搜索</button></div>
+              </div>
+              <div class="table-responsive" x-show="policyTotal() > 0">
                 <table :class="tableClass()">
                   <thead><tr><th>名称</th><th>来源</th><th>模式</th><th>允许</th><th>拒绝</th><th>确认</th><th></th></tr></thead>
                   <tbody id="policy-rows">
@@ -639,16 +732,26 @@
                   </tbody>
                 </table>
               </div>
-              <div class="card-footer" data-pager="#policy-rows">
-                <span class="text-secondary" x-text="pageMeta('policy')"></span>
-                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.policy.size" @change="setPageSize('policy')">
-                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
-                </select>
-                <ul class="pagination m-0 ms-auto">
-                  <li class="page-item" :class="{ disabled: pages.policy.page <= 1 }"><button class="page-link" type="button" @click="prevPage('policy')">上一页</button></li>
-                  <li class="page-item active"><span class="page-link" x-text="pageFrac('policy')"></span></li>
-                  <li class="page-item" :class="{ disabled: pages.policy.page >= pageCount('policy') }"><button class="page-link" type="button" @click="nextPage('policy')">下一页</button></li>
-                </ul>
+              <div class="card-footer pager-bar" data-pager="#policy-rows" x-show="policyTotal() > 0">
+                <div class="pager">
+                  <span class="text-secondary" x-text="pageMeta('policy')"></span>
+                  <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.policy.size" @change="setPageSize('policy')">
+                    <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                  </select>
+                  <ul class="pagination m-0">
+                    <li class="page-item" :class="{ disabled: pages.policy.page <= 1 }"><button class="page-link" type="button" @click="prevPage('policy')" aria-label="上一页">‹</button></li>
+                    <template x-for="n in pageWindow('policy')" :key="'policy-p-' + n">
+                      <li class="page-item" :class="{ active: pages.policy.page === n }"><button class="page-link" type="button" @click="setPage('policy', n)" x-text="n"></button></li>
+                    </template>
+                    <li class="page-item" :class="{ disabled: pages.policy.page >= pageCount('policy') }"><button class="page-link" type="button" @click="nextPage('policy')" aria-label="下一页">›</button></li>
+                  </ul>
+                  <form class="pager-jump" @submit.prevent="goPage('policy')">
+                    <span>到</span>
+                    <input class="form-control form-control-sm" inputmode="numeric" x-model="pages.policy.jump" :aria-label="'跳转到页，共 ' + pageCount('policy') + ' 页'">
+                    <span>页</span>
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">跳转</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -665,12 +768,16 @@
                 <div class="alert alert-danger mt-3" role="alert" x-show="errors.known" x-text="errors.known"></div>
               </div>
               <div class="empty" x-show="known.length === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">还没有已知主机密钥</p>
                 <p class="empty-subtitle text-secondary">第一次成功连接会记下看到的钥匙。删掉一条后，下次连接重新记录第一把。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="show('terminal')">打开终端</button></div>
               </div>
               <div class="empty" x-show="known.length > 0 && knownTotal() === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">没有匹配的记录</p>
                 <p class="empty-subtitle text-secondary">换个关键词。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="q.known = ''; resetPage('known')">清空搜索</button></div>
               </div>
               <div class="table-responsive" x-show="knownTotal() > 0">
                 <table :class="tableClass()">
@@ -687,16 +794,26 @@
                   </tbody>
                 </table>
               </div>
-              <div class="card-footer" data-pager="#known" x-show="knownTotal() > 0">
-                <span class="text-secondary" x-text="pageMeta('known')"></span>
-                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.known.size" @change="setPageSize('known')">
-                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
-                </select>
-                <ul class="pagination m-0 ms-auto">
-                  <li class="page-item" :class="{ disabled: pages.known.page <= 1 }"><button class="page-link" type="button" @click="prevPage('known')">上一页</button></li>
-                  <li class="page-item active"><span class="page-link" x-text="pageFrac('known')"></span></li>
-                  <li class="page-item" :class="{ disabled: pages.known.page >= pageCount('known') }"><button class="page-link" type="button" @click="nextPage('known')">下一页</button></li>
-                </ul>
+              <div class="card-footer pager-bar" data-pager="#known" x-show="knownTotal() > 0">
+                <div class="pager">
+                  <span class="text-secondary" x-text="pageMeta('known')"></span>
+                  <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.known.size" @change="setPageSize('known')">
+                    <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                  </select>
+                  <ul class="pagination m-0">
+                    <li class="page-item" :class="{ disabled: pages.known.page <= 1 }"><button class="page-link" type="button" @click="prevPage('known')" aria-label="上一页">‹</button></li>
+                    <template x-for="n in pageWindow('known')" :key="'known-p-' + n">
+                      <li class="page-item" :class="{ active: pages.known.page === n }"><button class="page-link" type="button" @click="setPage('known', n)" x-text="n"></button></li>
+                    </template>
+                    <li class="page-item" :class="{ disabled: pages.known.page >= pageCount('known') }"><button class="page-link" type="button" @click="nextPage('known')" aria-label="下一页">›</button></li>
+                  </ul>
+                  <form class="pager-jump" @submit.prevent="goPage('known')">
+                    <span>到</span>
+                    <input class="form-control form-control-sm" inputmode="numeric" x-model="pages.known.jump" :aria-label="'跳转到页，共 ' + pageCount('known') + ' 页'">
+                    <span>页</span>
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">跳转</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -747,8 +864,10 @@
                 <div class="alert alert-danger mt-3" role="alert" x-show="errors.audit" x-text="errors.audit"></div>
               </div>
               <div class="empty" x-show="audit.records.length === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">这个筛选下没有记录</p>
                 <p class="empty-subtitle text-secondary">默认只看命令行。终端里的文件、历史和概况不写入审计。需要看页面上的终端开关时，把来源改成全部或 ui。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="showAllAudit()">查看全部来源</button></div>
               </div>
               <div class="table-responsive" x-show="audit.records.length > 0">
                 <table :class="tableClass()">
@@ -783,19 +902,31 @@
                 </table>
               </div>
               <div class="empty" x-show="audit.records.length > 0 && shownAudit().length === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">这一页没有匹配的列</p>
                 <p class="empty-subtitle text-secondary">清空表头里的过滤，或翻到别的页。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="clearAuditCols()">清空过滤</button></div>
               </div>
-              <div class="card-footer" id="audit-pager">
-                <span class="text-secondary" x-text="'共 ' + (audit.total || 0) + ' 条'"></span>
-                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="audit.pageSize" @change="setAuditSize()">
-                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
-                </select>
-                <ul class="pagination m-0 ms-auto">
-                  <li class="page-item" :class="{ disabled: audit.page <= 1 }"><button class="page-link" type="button" @click="auditPrev()">上一页</button></li>
-                  <li class="page-item active"><span class="page-link" x-text="audit.page + ' / ' + auditPages()"></span></li>
-                  <li class="page-item" :class="{ disabled: audit.page >= auditPages() }"><button class="page-link" type="button" @click="auditNext()">下一页</button></li>
-                </ul>
+              <div class="card-footer pager-bar" id="audit-pager">
+                <div class="pager">
+                  <span class="text-secondary" x-text="'共 ' + (audit.total || 0) + ' 条'"></span>
+                  <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="audit.pageSize" @change="setAuditSize()">
+                    <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                  </select>
+                  <ul class="pagination m-0">
+                    <li class="page-item" :class="{ disabled: audit.page <= 1 }"><button class="page-link" type="button" @click="auditPrev()" aria-label="上一页">‹</button></li>
+                    <template x-for="n in auditWindow()" :key="'audit-p-' + n">
+                      <li class="page-item" :class="{ active: audit.page === n }"><button class="page-link" type="button" @click="auditSetPage(n)" x-text="n"></button></li>
+                    </template>
+                    <li class="page-item" :class="{ disabled: audit.page >= auditPages() }"><button class="page-link" type="button" @click="auditNext()" aria-label="下一页">›</button></li>
+                  </ul>
+                  <form class="pager-jump" @submit.prevent="auditGo()">
+                    <span>到</span>
+                    <input class="form-control form-control-sm" inputmode="numeric" x-model="audit.jump" :aria-label="'跳转到页，共 ' + auditPages() + ' 页'">
+                    <span>页</span>
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">跳转</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>
@@ -819,8 +950,10 @@
                 <div class="alert alert-danger" role="alert" x-text="errors.sessions"></div>
               </div>
               <div class="empty" x-show="sessions.length === 0">
+                <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">这个进程里没有会话</p>
                 <p class="empty-subtitle text-secondary">选一台主机后点「打开」。命令行 session list 看不到这里的会话，它们只活在这个 UI 进程里。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="openSession(exec.alias)">打开会话</button></div>
               </div>
               <div class="table-responsive" x-show="sessionTotal() > 0">
                 <table :class="tableClass()">
@@ -840,16 +973,26 @@
                   </tbody>
                 </table>
               </div>
-              <div class="card-footer" data-pager="#session-rows" x-show="sessionTotal() > 0">
-                <span class="text-secondary" x-text="pageMeta('sessions')"></span>
-                <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.sessions.size" @change="setPageSize('sessions')">
-                  <option value="10">10</option><option value="20">20</option><option value="50">50</option>
-                </select>
-                <ul class="pagination m-0 ms-auto">
-                  <li class="page-item" :class="{ disabled: pages.sessions.page <= 1 }"><button class="page-link" type="button" @click="prevPage('sessions')">上一页</button></li>
-                  <li class="page-item active"><span class="page-link" x-text="pageFrac('sessions')"></span></li>
-                  <li class="page-item" :class="{ disabled: pages.sessions.page >= pageCount('sessions') }"><button class="page-link" type="button" @click="nextPage('sessions')">下一页</button></li>
-                </ul>
+              <div class="card-footer pager-bar" data-pager="#session-rows" x-show="sessionTotal() > 0">
+                <div class="pager">
+                  <span class="text-secondary" x-text="pageMeta('sessions')"></span>
+                  <select class="form-select form-select-sm w-auto" aria-label="每页条数" x-model.number="pages.sessions.size" @change="setPageSize('sessions')">
+                    <option value="10">10</option><option value="20">20</option><option value="50">50</option>
+                  </select>
+                  <ul class="pagination m-0">
+                    <li class="page-item" :class="{ disabled: pages.sessions.page <= 1 }"><button class="page-link" type="button" @click="prevPage('sessions')" aria-label="上一页">‹</button></li>
+                    <template x-for="n in pageWindow('sessions')" :key="'sessions-p-' + n">
+                      <li class="page-item" :class="{ active: pages.sessions.page === n }"><button class="page-link" type="button" @click="setPage('sessions', n)" x-text="n"></button></li>
+                    </template>
+                    <li class="page-item" :class="{ disabled: pages.sessions.page >= pageCount('sessions') }"><button class="page-link" type="button" @click="nextPage('sessions')" aria-label="下一页">›</button></li>
+                  </ul>
+                  <form class="pager-jump" @submit.prevent="goPage('sessions')">
+                    <span>到</span>
+                    <input class="form-control form-control-sm" inputmode="numeric" x-model="pages.sessions.jump" :aria-label="'跳转到页，共 ' + pageCount('sessions') + ' 页'">
+                    <span>页</span>
+                    <button class="btn btn-outline-secondary btn-sm" type="submit">跳转</button>
+                  </form>
+                </div>
               </div>
             </div>
           </div>

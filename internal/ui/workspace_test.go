@@ -87,7 +87,7 @@ func TestWorkspaceChrome(t *testing.T) {
 	cssRR := httptest.NewRecorder()
 	h.ServeHTTP(cssRR, cssReq)
 	style := cssRR.Body.String()
-	for _, s := range []string{"--mh-grid", "border-inline-end: 1px solid var(--mh-grid)", "navbar-folded", "is-terminal .ws", "max-width: none"} {
+	for _, s := range []string{"border-inline-end: 0", "text-align: center", "pager-jump", "empty-ico", "navbar-folded", "is-terminal .ws", "max-width: none"} {
 		if !strings.Contains(style, s) {
 			t.Fatalf("app.css missing %s", s)
 		}
