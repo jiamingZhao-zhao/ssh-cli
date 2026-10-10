@@ -12,6 +12,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -88,9 +89,7 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 		}
 	}
 	dec := guard.Decide(eff, body.Command)
-	started := time.Now()
 	if !dec.Allowed {
-		s.writeAudit(h, audit.OpPolicyCheck, body.Command, "", "", audit.StatusDenied, 0, decisionText(dec), decisionText(dec), true, started)
 		return execHit{status: http.StatusForbidden, payload: map[string]any{
 			"ok": false, "alias": h.Alias, "error": decisionText(dec), "status": audit.StatusDenied,
 		}}
@@ -134,7 +133,6 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 		summary = guard.OutflowDiscarded
 	}
 	if err != nil {
-		s.writeAudit(h, audit.OpExec, body.Command, "", "", audit.StatusError, code, summary, err.Error(), false, started)
 		return execHit{status: http.StatusBadRequest, payload: map[string]any{
 			"ok": false, "alias": h.Alias, "error": err.Error(), "exitCode": code, "status": audit.StatusError,
 		}}
@@ -143,7 +141,6 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 	if code != 0 {
 		status = audit.StatusError
 	}
-	s.writeAudit(h, audit.OpExec, body.Command, "", "", status, code, summary, "", false, started)
 	resp := map[string]any{
 		"ok": true, "alias": h.Alias, "exitCode": code, "stdout": stdout.String(), "stderr": stderr.String(),
 		"truncated": stdout.cut || stderr.cut, "status": status,
@@ -178,18 +175,19 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	dec := guard.DecideCapability(eff, "upload", remote)
-	started := time.Now()
-	if !dec.Allowed {
-		s.writeAudit(h, audit.OpPolicyCheck, "", hdr.Filename, remote, audit.StatusDenied, 0, decisionText(dec), decisionText(dec), true, started)
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec)})
-		return
-	}
-	if dec.NeedsConfirm && confirm != h.Alias {
-		writeJSON(w, http.StatusConflict, map[string]any{
-			"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": "type the host alias to confirm",
-		})
-		return
+	human := s.workspaceHuman(r)
+	if !human {
+		dec := guard.DecideCapability(eff, "upload", remote)
+		if !dec.Allowed {
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec)})
+			return
+		}
+		if dec.NeedsConfirm && confirm != h.Alias {
+			writeJSON(w, http.StatusConflict, map[string]any{
+				"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": "type the host alias to confirm",
+			})
+			return
+		}
 	}
 	name, err := cleanUploadName(hdr.Filename)
 	if err != nil {
@@ -217,19 +215,17 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 	s.reconcile()
 	fp := h.Host.ConnFingerprint()
 	if err := s.pool.Open(r.Context(), h.Alias, fp, false); err != nil {
-		s.writeAudit(h, audit.OpUpload, "", name, remote, audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
-	final := remote
 	err = s.pool.Use(h.Alias, fp, func() error {
 		client, ok := s.pool.Client(h.Alias, fp)
 		if !ok {
 			return fmt.Errorf("session %s is not open", h.Alias)
 		}
 		return transfer.UploadChecked(client, tmpName, remote, nil, func(dest string) error {
-			if path.Base(dest) == name {
-				final = dest
+			if human {
+				return nil
 			}
 			d := guard.DecideCapability(eff, "upload", dest)
 			if !d.Allowed {
@@ -242,11 +238,9 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		})
 	})
 	if err != nil {
-		s.writeAudit(h, audit.OpUpload, "", name, final, audit.StatusError, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
-	s.writeAudit(h, audit.OpUpload, "", name, final, audit.StatusOK, 0, "upload ok", "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -265,17 +259,16 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	dec := guard.DecideCapability(eff, "download", body.Path)
-	started := time.Now()
-	if !dec.Allowed {
-		s.writeAudit(h, audit.OpPolicyCheck, "", body.Path, "", audit.StatusDenied, 0, decisionText(dec), decisionText(dec), true, started)
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec)})
-		return
+	if !s.workspaceHuman(r) {
+		dec := guard.DecideCapability(eff, "download", body.Path)
+		if !dec.Allowed {
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec)})
+			return
+		}
 	}
 	s.reconcile()
 	fp := h.Host.ConnFingerprint()
 	if err := s.pool.Open(r.Context(), h.Alias, fp, false); err != nil {
-		s.writeAudit(h, audit.OpDownload, "", body.Path, "", audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -294,11 +287,9 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 		return transfer.Download(client, body.Path, dest, nil)
 	})
 	if err != nil {
-		s.writeAudit(h, audit.OpDownload, "", body.Path, dest, audit.StatusError, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
-	s.writeAudit(h, audit.OpDownload, "", body.Path, "", audit.StatusOK, 0, "download ok", "", false, started)
 	info, err := os.Stat(dest)
 	if err != nil {
 		writeFail(w, err)
@@ -320,6 +311,7 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	defer f.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Header().Set("Content-Disposition", "attachment; filename="+filepath.Base(body.Path))
+	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	_, _ = io.Copy(w, f)
 }
 
@@ -480,7 +472,14 @@ func cleanUploadName(raw string) (string, error) {
 }
 
 func (s *service) auditOverviewAPI(w http.ResponseWriter, r *http.Request) {
-	ov, err := audit.LoadOverview(s.dir, 14, time.Now())
+	source := strings.TrimSpace(r.URL.Query().Get("source"))
+	if source == "" {
+		source = audit.SourceCLI
+	}
+	if source == "all" {
+		source = ""
+	}
+	ov, err := audit.LoadOverviewSource(s.dir, 14, time.Now(), source)
 	if err != nil {
 		writeFail(w, err)
 		return

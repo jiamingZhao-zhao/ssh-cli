@@ -11,7 +11,6 @@ import (
 	"strconv"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
@@ -46,7 +45,8 @@ func (s *service) dashboardAPI(w http.ResponseWriter, r *http.Request) {
 			groups++
 		}
 	}
-	recent := newest(s.dir, audit.Filter{}, dashScan)
+	cliOnly := audit.Filter{Source: audit.SourceCLI}
+	recent := newest(s.dir, cliOnly, dashScan)
 	failures := make([]audit.Record, 0)
 	commands := make([]audit.Record, 0)
 	for _, rec := range recent {
@@ -64,10 +64,15 @@ func (s *service) dashboardAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
+	cliEntries, err := audit.Count(s.dir, cliOnly)
+	if err != nil {
+		writeFail(w, err)
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "hosts": hosts, "groups": groups, "envs": len(cfg.Envs),
 		"sessions": len(s.pool.List()), "recent": commands, "failures": failures,
-		"audit": stats, "hmac": s.integrity(),
+		"audit": stats, "auditCli": cliEntries, "hmac": s.integrity(),
 	})
 }
 
@@ -86,6 +91,7 @@ func (s *service) hostDetailAPI(w http.ResponseWriter, r *http.Request) {
 		"alias": h.Alias, "group": h.Group, "env": h.EnvName,
 		"host": h.Host.Host, "port": h.Host.PortOrDefault(), "user": h.Host.User,
 		"auth": authOf(h.Host), "tags": h.Host.Tags, "policy": h.Host.Policy,
+		"via":     strings.TrimSpace(h.Host.Via),
 		"default": cfg.Default == h.Alias,
 	}
 	fillRulesJSON(view, h.Host.Allow, h.Host.Deny, h.Host.Confirm)
@@ -115,7 +121,7 @@ func (s *service) hostDetailAPI(w http.ResponseWriter, r *http.Request) {
 	if live == nil {
 		live = []any{}
 	}
-	recs := newest(s.dir, audit.Filter{Hosts: []string{h.Alias}}, 10)
+	recs := newest(s.dir, audit.Filter{Hosts: []string{h.Alias}, Source: audit.SourceCLI}, 10)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "host": view, "policy": policy, "sessions": live, "audit": recs,
 	})
@@ -360,7 +366,6 @@ func (s *service) batchExecAPI(w http.ResponseWriter, r *http.Request) {
 		dec := guard.Decide(eff, body.Command)
 		if !dec.Allowed {
 			why := decisionText(dec)
-			s.writeAudit(h, audit.OpPolicyCheck, body.Command, "", "", audit.StatusDenied, 0, why, why, true, time.Now())
 			denied = append(denied, map[string]any{"alias": h.Alias, "ok": false, "error": why, "status": audit.StatusDenied})
 			continue
 		}

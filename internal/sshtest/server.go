@@ -6,9 +6,13 @@ import (
 	"crypto/elliptic"
 	"crypto/rand"
 	"fmt"
+	"io"
 	"net"
 	"os/exec"
+	"strconv"
 	"sync"
+	"sync/atomic"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -16,15 +20,26 @@ import (
 
 // Server is a password-authenticated SSH server on 127.0.0.1.
 type Server struct {
-	Addr   string
-	Signer ssh.Signer
-	User   string
-	ln     net.Listener
-	wg     sync.WaitGroup
-	closed chan struct{}
-	pass   string
-	mu     sync.Mutex
-	conns  map[net.Conn]struct{}
+	Addr     string
+	Signer   ssh.Signer
+	User     string
+	ln       net.Listener
+	wg       sync.WaitGroup
+	closed   chan struct{}
+	pass     string
+	mu       sync.Mutex
+	conns    map[net.Conn]struct{}
+	sessions atomic.Int64
+}
+
+// Sessions is the number of shell and exec channels accepted.
+// direct-tcpip tunnels are not counted. A jump host that only
+// forwards a connection stays at zero.
+func (s *Server) Sessions() int64 {
+	if s == nil {
+		return 0
+	}
+	return s.sessions.Load()
 }
 
 // Start listens and serves until Close.
@@ -113,16 +128,59 @@ func (s *Server) handle(conn net.Conn, cfg *ssh.ServerConfig) {
 	defer sc.Close()
 	go ssh.DiscardRequests(reqs)
 	for ch := range chans {
-		if ch.ChannelType() != "session" {
+		switch ch.ChannelType() {
+		case "session":
+			channel, requests, err := ch.Accept()
+			if err != nil {
+				continue
+			}
+			go s.session(channel, requests)
+		case "direct-tcpip":
+			go s.directTCP(ch)
+		default:
 			_ = ch.Reject(ssh.UnknownChannelType, "unknown channel")
-			continue
 		}
-		channel, requests, err := ch.Accept()
-		if err != nil {
-			continue
-		}
-		go s.session(channel, requests)
 	}
+}
+
+func (s *Server) directTCP(newChan ssh.NewChannel) {
+	var msg struct {
+		DestAddr string
+		DestPort uint32
+		OrigAddr string
+		OrigPort uint32
+	}
+	if err := ssh.Unmarshal(newChan.ExtraData(), &msg); err != nil {
+		_ = newChan.Reject(ssh.ConnectionFailed, "bad open")
+		return
+	}
+	dst, err := net.DialTimeout("tcp", net.JoinHostPort(msg.DestAddr, strconv.Itoa(int(msg.DestPort))), 5*time.Second)
+	if err != nil {
+		_ = newChan.Reject(ssh.ConnectionFailed, "dial failed")
+		return
+	}
+	channel, requests, err := newChan.Accept()
+	if err != nil {
+		_ = dst.Close()
+		return
+	}
+	go ssh.DiscardRequests(requests)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(channel, dst)
+		_ = channel.CloseWrite()
+	}()
+	go func() {
+		defer wg.Done()
+		_, _ = io.Copy(dst, channel)
+	}()
+	go func() {
+		wg.Wait()
+		_ = dst.Close()
+		_ = channel.Close()
+	}()
 }
 
 func (s *Server) session(channel ssh.Channel, requests <-chan *ssh.Request) {
@@ -132,6 +190,7 @@ func (s *Server) session(channel ssh.Channel, requests <-chan *ssh.Request) {
 		case "pty-req", "window-change":
 			_ = req.Reply(true, nil)
 		case "shell":
+			s.sessions.Add(1)
 			_ = req.Reply(true, nil)
 			go runLoginShell(channel)
 		case "exec":
@@ -140,6 +199,7 @@ func (s *Server) session(channel ssh.Channel, requests <-chan *ssh.Request) {
 				_ = req.Reply(false, nil)
 				return
 			}
+			s.sessions.Add(1)
 			_ = req.Reply(true, nil)
 			cmd := exec.Command("sh", "-c", msg.Command)
 			cmd.Stdin = channel

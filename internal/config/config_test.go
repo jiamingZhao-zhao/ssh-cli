@@ -3,6 +3,8 @@ package config
 import (
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 )
@@ -274,5 +276,89 @@ func TestResolveDirEnv(t *testing.T) {
 	got, err = ResolveDir("/override")
 	if err != nil || got != "/override" {
 		t.Fatalf("flag override: %q %v", got, err)
+	}
+}
+
+func TestViaChainRules(t *testing.T) {
+	host := func(addr, via string) *Host {
+		return &Host{Host: addr, User: "ops", Auth: "password", PasswordRef: "g.x", Via: via}
+	}
+	cfg := &Config{
+		Version: 1,
+		Envs:    map[string]*Env{"dev": {MaxMode: ModeStandard}},
+		Groups: map[string]*Group{
+			"g": {Env: "dev", Hosts: map[string]*Host{
+				"jump": host("192.0.2.1", ""),
+				"box":  host("192.0.2.2", "jump"),
+			}},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	direct := cfg.Groups["g"].Hosts["jump"].ConnFingerprint()
+	jumped := cfg.Groups["g"].Hosts["box"].ConnFingerprint()
+	cfg.Groups["g"].Hosts["box"].Via = ""
+	if cfg.Groups["g"].Hosts["box"].ConnFingerprint() == jumped {
+		t.Fatal("clearing via must change the connection fingerprint")
+	}
+	cfg.Groups["g"].Hosts["box"].Via = "jump"
+	if cfg.Groups["g"].Hosts["box"].ConnFingerprint() == direct {
+		t.Fatal("via must change the connection fingerprint")
+	}
+	box, ok := cfg.Find("box")
+	if !ok {
+		t.Fatal("missing box")
+	}
+	chain, err := cfg.ViaChainFrom(box)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(chain) != 2 || chain[0].Alias != "jump" || chain[1].Alias != "box" {
+		t.Fatalf("chain %#v", chain)
+	}
+	jump, ok := cfg.Find("jump")
+	if !ok {
+		t.Fatal("missing jump")
+	}
+	alone, err := cfg.ViaChainFrom(jump)
+	if err != nil || len(alone) != 1 || alone[0].Alias != "jump" {
+		t.Fatalf("direct chain %#v %v", alone, err)
+	}
+
+	cfg.Groups["g"].Hosts["jump"].Via = "box"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "cycle") {
+		t.Fatalf("cycle: %v", err)
+	}
+	cfg.Groups["g"].Hosts["jump"].Via = ""
+	cfg.Groups["g"].Hosts["box"].Via = "missing"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "does not exist") {
+		t.Fatalf("missing: %v", err)
+	}
+	cfg.Groups["g"].Hosts["box"].Via = "box"
+	if err := cfg.Validate(); err == nil || !strings.Contains(err.Error(), "invalid jump") {
+		t.Fatalf("self: %v", err)
+	}
+
+	long := &Config{
+		Version: 1,
+		Envs:    map[string]*Env{"dev": {MaxMode: ModeStandard}},
+		Groups:  map[string]*Group{"g": {Env: "dev", Hosts: map[string]*Host{}}},
+	}
+	for i := 0; i < MaxViaHops; i++ {
+		name := string(rune('a' + i))
+		via := ""
+		if i > 0 {
+			via = string(rune('a' + i - 1))
+		}
+		long.Groups["g"].Hosts[name] = host("192.0.2."+strconv.Itoa(i+1), via)
+	}
+	if err := long.Validate(); err != nil {
+		t.Fatalf("chain of %d: %v", MaxViaHops, err)
+	}
+	extra := string(rune('a' + MaxViaHops))
+	long.Groups["g"].Hosts[extra] = host("192.0.2.40", string(rune('a'+MaxViaHops-1)))
+	if err := long.Validate(); err == nil || !strings.Contains(err.Error(), "longer than") {
+		t.Fatalf("overlong: %v", err)
 	}
 }

@@ -81,6 +81,16 @@ func QueryPage(dir string, f Filter, page, size int) (Page, error) {
 	return out, nil
 }
 
+// Count is how many records match f.
+func Count(dir string, f Filter) (int, error) {
+	n := 0
+	err := List(dir, f, func(Record) error {
+		n++
+		return nil
+	})
+	return n, err
+}
+
 // Stat reports file count, total bytes, and valid JSONL entries.
 func Stat(dir string) (Stats, error) {
 	files, err := dataFiles(dir)

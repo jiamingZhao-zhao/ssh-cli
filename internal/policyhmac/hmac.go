@@ -232,6 +232,7 @@ type hostCanon struct {
 	Port           int                  `json:"port,omitempty"`
 	User           string               `json:"user,omitempty"`
 	Auth           string               `json:"auth,omitempty"`
+	Via            string               `json:"via,omitempty"`
 	Policy         string               `json:"policy,omitempty"`
 	Allow          *[]string            `json:"allow,omitempty"`
 	Deny           []string             `json:"deny,omitempty"`
@@ -284,6 +285,7 @@ func canonical(cfg *config.Config) []byte {
 				}
 				gc.Hosts[alias] = hostCanon{
 					Host: strings.TrimSpace(h.Host), Port: h.PortOrDefault(), User: h.User, Auth: hostAuth(h),
+					Via:    strings.TrimSpace(h.Via),
 					Policy: h.Policy, Allow: copyAllow(h.Allow), Deny: nilEmpty(h.Deny),
 					Confirm: nilEmpty(h.Confirm), Capabilities: h.Capabilities, ProtectedPaths: nilEmpty(h.ProtectedPaths),
 				}

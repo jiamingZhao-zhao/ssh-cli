@@ -229,6 +229,8 @@ func TestRootHelpListsCommands(t *testing.T) {
 			"Check connectivity and basic host health",
 			"Check or change a remote service",
 			"List remote authorized keys or local known_hosts",
+			"List a remote directory",
+			"Read remote shell history",
 			"Import hosts and groups from a local inventory file",
 		} {
 			if !strings.Contains(text, fragment) {

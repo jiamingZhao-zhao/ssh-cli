@@ -33,8 +33,10 @@ type HostDraft struct {
 	Identity   string
 	Policy     string
 	Tags       []string
+	Via        string
 	SetDefault bool
 	ClearTags  bool
+	ClearVia   bool
 
 	HasGroup    bool
 	HasAddress  bool
@@ -44,6 +46,7 @@ type HostDraft struct {
 	HasIdentity bool
 	HasPolicy   bool
 	HasTags     bool
+	HasVia      bool
 }
 
 // AddHost creates one host. A password is stored through secrets.Store.
@@ -74,6 +77,10 @@ func addHost(dir string, cfg *config.Config, in HostDraft, opt Options) error {
 	if in.Password == "" && identity == "" {
 		return fmt.Errorf("password or identity is required")
 	}
+	via := strings.TrimSpace(in.Via)
+	if err := cfg.CheckJump(alias, via); err != nil {
+		return err
+	}
 	if _, ok := cfg.Find(alias); ok {
 		return fmt.Errorf("host %q already exists", alias)
 	}
@@ -90,6 +97,7 @@ func addHost(dir string, cfg *config.Config, in HostDraft, opt Options) error {
 		Port:   normalizePortPtr(in.Port),
 		Tags:   cleanList(in.Tags),
 		Policy: in.Policy,
+		Via:    via,
 	}
 	if identity != "" {
 		h.Auth = "key"
@@ -138,12 +146,16 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) ([]co
 		return nil, err
 	}
 	changed := in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
-		in.HasPassword || in.HasPolicy || in.HasTags || in.SetDefault || in.ClearTags
+		in.HasPassword || in.HasPolicy || in.HasTags || in.HasVia || in.ClearVia ||
+		in.SetDefault || in.ClearTags
 	if !changed {
 		return nil, fmt.Errorf("no changes given")
 	}
 	if in.ClearTags && in.HasTags {
 		return nil, fmt.Errorf("use only one of tags and clearTags")
+	}
+	if in.ClearVia && in.HasVia {
+		return nil, fmt.Errorf("use only one of via and clearVia")
 	}
 	found, ok := cfg.Find(alias)
 	if !ok {
@@ -198,6 +210,16 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) ([]co
 	}
 	if in.ClearTags {
 		h.Tags = nil
+	}
+	if in.ClearVia {
+		h.Via = ""
+	}
+	if in.HasVia {
+		via := strings.TrimSpace(in.Via)
+		if err := cfg.CheckJump(alias, via); err != nil {
+			return nil, err
+		}
+		h.Via = via
 	}
 	if in.SetDefault {
 		cfg.Default = alias
@@ -277,6 +299,9 @@ func removeHost(dir string, cfg *config.Config, alias string, opt Options) error
 	found, ok := cfg.Find(alias)
 	if !ok {
 		return fmt.Errorf("host %q not found", alias)
+	}
+	if deps := cfg.JumpDependents(alias); len(deps) > 0 {
+		return fmt.Errorf("host %q is the jump host for %s", alias, strings.Join(deps, ", "))
 	}
 	ref := found.Host.PasswordRef
 	delete(found.GroupDef.Hosts, alias)

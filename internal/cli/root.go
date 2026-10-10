@@ -131,7 +131,7 @@ func (a *App) command() *cobra.Command {
 Print this build with "ssh-cli version", "ssh-cli --version", "ssh-cli -V", or "ssh-cli -version".
 Install a newer GitHub release with "ssh-cli update" (opt-in; nothing updates in the background).
 
-status, service, and keys use the same host selection and policy engine as exec.
+status, service, keys, ls, and history use the same host selection and policy engine as exec.
 import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the same hosts.yaml.`,
 		Example: `  ssh-cli version
   ssh-cli -h
@@ -186,6 +186,8 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 		a.statusCmd(),
 		a.serviceCmd(),
 		a.keysCmd(),
+		a.lsCmd(),
+		a.historyCmd(),
 		a.importCmd(),
 		a.configCmd(),
 		a.relayCmd(),

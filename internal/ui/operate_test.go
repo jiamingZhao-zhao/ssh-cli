@@ -61,9 +61,9 @@ func TestUIExecUploadDownload(t *testing.T) {
 	if rr.Code != 200 || !strings.Contains(rr.Body.String(), "hi") {
 		t.Fatalf("exec %d %s", rr.Code, rr.Body.String())
 	}
-	text := auditText(t, dir)
-	if !strings.Contains(text, `"actor":"ui"`) || !strings.Contains(text, `"op":"exec"`) || strings.Contains(text, "ui-secret") {
-		t.Fatalf("audit\n%s", text)
+	text := readAuditMaybe(t, dir)
+	if strings.Contains(text, `"op":"exec"`) || strings.Contains(text, "ui-secret") {
+		t.Fatalf("ui exec must stay out of the audit log\n%s", text)
 	}
 
 	remote := filepath.Join(t.TempDir(), "up.txt")
@@ -156,6 +156,19 @@ func TestUIExecUploadDownload(t *testing.T) {
 func mustJSON(t *testing.T, s string) string {
 	t.Helper()
 	b, err := json.Marshal(s)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}
+
+func readAuditMaybe(t *testing.T, dir string) string {
+	t.Helper()
+	matches, err := filepath.Glob(filepath.Join(dir, "audit", "*.jsonl"))
+	if err != nil || len(matches) == 0 {
+		return ""
+	}
+	b, err := os.ReadFile(matches[len(matches)-1])
 	if err != nil {
 		t.Fatal(err)
 	}

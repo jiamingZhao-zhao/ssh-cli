@@ -35,6 +35,9 @@ const (
 	OpSession      = "session"
 	OpRelay        = "relay"
 	OpTerminal     = "terminal"
+	OpHistory      = "history"
+	OpList         = "list"
+	OpMetrics      = "metrics"
 
 	// SourceCLI and SourceUI record who drove the operation.
 	// cli is the command line and agents. ui is the localhost page.
@@ -106,7 +109,7 @@ func ValidStatus(s string) bool {
 // ValidOp reports whether s is a known operation filter value.
 func ValidOp(s string) bool {
 	switch s {
-	case OpExec, OpUpload, OpDownload, OpPolicyCheck, OpStatus, OpService, OpKeys, OpConfigChange, OpSession, OpRelay, OpTerminal:
+	case OpExec, OpUpload, OpDownload, OpPolicyCheck, OpStatus, OpService, OpKeys, OpConfigChange, OpSession, OpRelay, OpTerminal, OpHistory, OpList, OpMetrics:
 		return true
 	default:
 		return false
@@ -273,6 +276,12 @@ var (
 	flagRE = regexp.MustCompile(`(?i)(--(?:password|pass|master-key|token|secret|api-key|access-token|auth-token|bearer))(\s+|=)(?:"[^"]*"|'[^']*'|\S+)`)
 	urlRE  = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@`)
 )
+
+// Scrub redacts obvious secrets using the same patterns as the audit log.
+// History lines and metric notes call it before they are shown. Patterns cover
+// PEM private keys, password=/token= assignments, common secret flags, and
+// userinfo in URLs. Short flags such as -psecret are not recognized.
+func Scrub(s string) string { return scrub(s) }
 
 func scrub(s string) string {
 	if s == "" {

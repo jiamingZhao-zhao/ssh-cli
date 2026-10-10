@@ -6,6 +6,7 @@ import (
 	"net"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
@@ -48,6 +49,19 @@ func (s *service) reconcile() {
 }
 
 func (s *service) dialResolved(ctx context.Context, h config.ResolvedHost) (*sshclient.Client, error) {
+	if h.Host == nil {
+		return nil, fmt.Errorf("host %s is missing", h.Alias)
+	}
+	if strings.TrimSpace(h.Host.Via) == "" {
+		return s.dialDirect(ctx, h)
+	}
+	return s.dialVia(ctx, h)
+}
+
+// dialDirect is one TCP connection to the saved address. Pool reuse, SFTP,
+// and the terminal PTY all share that client. A host without via never
+// dials a jump host.
+func (s *service) dialDirect(ctx context.Context, h config.ResolvedHost) (*sshclient.Client, error) {
 	auth, err := s.authMethods(h)
 	if err != nil {
 		return nil, err
@@ -60,6 +74,45 @@ func (s *service) dialResolved(ctx context.Context, h config.ResolvedHost) (*ssh
 	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	c, err := sshclient.Dial(cctx, addr, h.Host.User, auth, kh, 20*time.Second)
+	if err != nil {
+		return nil, sshclient.Wrap(err)
+	}
+	return c, nil
+}
+
+// dialVia returns an SSH client whose sessions run on the destination.
+// Earlier hops stay open only as direct-tcpip carriers and are closed with
+// that client. The pool stores this one client under the destination alias.
+func (s *service) dialVia(ctx context.Context, h config.ResolvedHost) (*sshclient.Client, error) {
+	cfg, err := config.Load(s.dir)
+	if err != nil {
+		return nil, err
+	}
+	chain, err := cfg.ViaChainFrom(h)
+	if err != nil {
+		return nil, err
+	}
+	kh := sshclient.HostKeyCallback(filepath.Join(s.dir, config.KnownHostsName), false)
+	hops := make([]sshclient.Hop, 0, len(chain))
+	for _, hop := range chain {
+		auth, err := s.authMethods(hop)
+		if err != nil {
+			return nil, err
+		}
+		hops = append(hops, sshclient.Hop{
+			Name:    hop.Alias,
+			Addr:    net.JoinHostPort(hop.Host.Host, strconv.Itoa(hop.Host.PortOrDefault())),
+			User:    hop.Host.User,
+			Auth:    auth,
+			HostKey: kh,
+		})
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	cctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+	defer cancel()
+	c, err := sshclient.DialHops(cctx, hops, 20*time.Second)
 	if err != nil {
 		return nil, sshclient.Wrap(err)
 	}
