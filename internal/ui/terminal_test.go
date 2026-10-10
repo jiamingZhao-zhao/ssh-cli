@@ -624,7 +624,7 @@ func TestTerminalTabAliasIsNotNestedButton(t *testing.T) {
 		i = j + k
 	}
 	style := get("/app.css")
-	for _, s := range []string{".term-tab.active", ".term-tab button", "background: #0052cc", "color: #172b4d", "background-color: transparent", "color: inherit"} {
+	for _, s := range []string{".term-tab.active", ".term-tab button", ".term-tab-label", "background-color: transparent", "color: inherit", "#0052cc", "border-bottom-color"} {
 		if !strings.Contains(style, s) {
 			t.Fatalf("app.css missing %s", s)
 		}

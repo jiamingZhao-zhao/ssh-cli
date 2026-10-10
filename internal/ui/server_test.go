@@ -257,6 +257,12 @@ func TestUILayout(t *testing.T) {
 	if strings.Contains(body, "tabbar") {
 		t.Fatal("top tab bar still present")
 	}
+	if strings.Contains(body, `<span class="btn btn-sm"`) || strings.Contains(body, `class="btn btn-sm p-0 border-0"`) {
+		t.Fatal("terminal tab still nests a button inside a button")
+	}
+	if !strings.Contains(body, `class="term-tab"`) || !strings.Contains(body, `class="term-tab-label"`) {
+		t.Fatal("terminal tab alias control missing")
+	}
 	if strings.Count(body, `data-view="known"`) != 2 {
 		t.Fatalf("known nav count %d", strings.Count(body, `data-view="known"`))
 	}
@@ -275,6 +281,9 @@ func TestUILayout(t *testing.T) {
 	style := get("/app.css")
 	if strings.Contains(style, ".tabbar") || !strings.Contains(style, "margin: auto") || !strings.Contains(style, "justify-content: flex-end") {
 		t.Fatal("css missing centered dialog or bottom-right pager")
+	}
+	if !strings.Contains(style, "#0052cc") || !strings.Contains(style, ".term-tab-label") || !strings.Contains(style, "--mh-page: #f5f5f7") {
+		t.Fatal("memory hub theme tokens missing")
 	}
 }
 
