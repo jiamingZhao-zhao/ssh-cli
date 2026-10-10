@@ -196,8 +196,13 @@ body,
   color: #fff;
 }
 .navbar-vertical .nav-link.active .badge {
-  background-color: rgba(255, 255, 255, 0.22) !important;
-  color: #fff !important;
+  background-color: #fff !important;
+  color: var(--mh-blue) !important;
+  border-color: transparent !important;
+}
+[data-bs-theme="dark"] .bg-blue-lt {
+  color: #d6e8ff !important;
+  background-color: #1c3d73 !important;
   border-color: transparent !important;
 }
 
@@ -308,18 +313,18 @@ body,
   border-color: var(--mh-blue-hover);
 }
 .btn-outline-primary {
-  --tblr-btn-color: var(--mh-blue);
+  --tblr-btn-color: var(--mh-link);
   --tblr-btn-bg: transparent;
-  --tblr-btn-border-color: color-mix(in srgb, var(--mh-blue) 45%, var(--mh-line));
+  --tblr-btn-border-color: color-mix(in srgb, var(--mh-link) 55%, var(--mh-line));
   --tblr-btn-hover-color: #fff;
   --tblr-btn-hover-bg: var(--mh-blue);
   --tblr-btn-hover-border-color: var(--mh-blue);
   --tblr-btn-active-color: #fff;
   --tblr-btn-active-bg: var(--mh-blue-hover);
   --tblr-btn-box-shadow: none;
-  color: var(--mh-blue);
+  color: var(--mh-link);
   background: transparent;
-  border-color: color-mix(in srgb, var(--mh-blue) 45%, var(--mh-line));
+  border-color: color-mix(in srgb, var(--mh-link) 55%, var(--mh-line));
 }
 .btn-outline-primary:hover,
 .btn-outline-primary:focus-visible,
@@ -495,8 +500,8 @@ body,
   color: var(--mh-muted);
 }
 .term-tab.active {
-  color: var(--mh-blue);
-  border-bottom-color: var(--mh-blue);
+  color: var(--mh-link);
+  border-bottom-color: var(--mh-link);
   background: transparent;
 }
 .term-tab-name,
@@ -533,7 +538,7 @@ body,
 .term-tab.active .term-tab-close:hover,
 .term-tab.active .term-tab-close:focus-visible {
   background: var(--mh-blue-soft);
-  color: var(--mh-blue);
+  color: var(--mh-link);
 }
 .term-screen {
   background: #1d1d1f;
@@ -560,9 +565,9 @@ body,
 }
 .chart-box { position: relative; height: 220px; }
 
-.steps { --tblr-steps-color: var(--mh-blue); }
+.steps { --tblr-steps-color: var(--mh-link); }
 .step-item { color: var(--mh-ink); font-weight: 600; }
-.step-item.active { color: var(--mh-blue); }
+.step-item.active { color: var(--mh-link); }
 .step-item.active ~ .step-item { color: var(--mh-muted); }
 
 pre {
