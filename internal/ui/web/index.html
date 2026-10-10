@@ -137,13 +137,14 @@
               <div class="ws-overview-head">
                 <div class="ws-kicker">主机</div>
                 <div class="ws-host" x-text="activeTermAlias() || '未选择'"></div>
-                <div class="text-secondary small" x-text="overviewAddr()"></div>
+                <div class="ws-addr" x-text="overviewAddr()"></div>
                 <div class="ws-via" x-show="viaOf(activeTermAlias())" x-text="viaOf(activeTermAlias())"></div>
               </div>
               <div class="ws-status" x-show="activeTermAlias()">
                 <span :class="metrics.connected ? 'badge bg-green-lt' : 'badge bg-secondary-lt'" x-text="metrics.connected ? '在线' : '未连接'"></span>
-                <span class="text-secondary small" x-text="metrics.hostname"></span>
+                <span class="ws-quiet mb-0" x-text="metrics.hostname"></span>
               </div>
+              <p class="ws-quiet" x-show="metricsPending()">正在读取概况…</p>
               <div class="alert alert-warning py-2" role="alert" x-show="errors.metrics" x-text="errors.metrics"></div>
               <dl class="ws-metrics">
                 <div><dt>运行</dt><dd x-text="metrics.uptime || '—'"></dd></div>
@@ -163,7 +164,7 @@
               </div>
               <div class="ws-block">
                 <div class="ws-kicker">进程</div>
-                <p class="text-secondary small mb-1" x-show="procEmpty()">没有进程数据</p>
+                <p class="ws-quiet" x-show="procEmpty() && !metricsPending()">没有进程数据</p>
                 <table class="table table-sm table-vcenter ws-proc mb-0" x-show="!procEmpty()">
                   <tbody>
                     <template x-for="p in metrics.procs" :key="p.pid + '-' + p.comm">
@@ -174,14 +175,15 @@
               </div>
               <div class="ws-block">
                 <div class="ws-kicker">网络</div>
-                <svg class="ws-spark" viewBox="0 0 160 36" role="img" aria-label="网络流量">
-                  <polyline fill="none" stroke="#0052cc" stroke-width="2" :points="sparkPoints()"></polyline>
+                <svg class="ws-spark" viewBox="0 0 160 40" role="img" aria-label="网络流量">
+                  <line class="ws-spark-base" x1="0" y1="34" x2="160" y2="34"></line>
+                  <polyline fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" :points="sparkPoints()"></polyline>
                 </svg>
-                <div class="text-secondary small" x-text="netText()"></div>
+                <div class="ws-quiet mb-0" x-text="netText()"></div>
               </div>
               <div class="ws-block">
                 <div class="ws-kicker">磁盘</div>
-                <p class="text-secondary small mb-1" x-show="diskEmpty()">没有磁盘数据</p>
+                <p class="ws-quiet" x-show="diskEmpty() && !metricsPending()">没有磁盘数据</p>
                 <template x-for="d in metrics.disks" :key="d.mount">
                   <div class="ws-disk">
                     <div class="ws-meter-label"><span x-text="d.mount"></span><span x-text="d.percent || '—'"></span></div>
@@ -189,7 +191,7 @@
                   </div>
                 </template>
               </div>
-              <p class="text-secondary small mb-0" x-show="noteText()" x-text="noteText()"></p>
+              <p class="ws-quiet mb-0" x-show="noteText()" x-text="noteText()"></p>
             </aside>
             <div class="ws-gutter ws-gutter-v" role="separator" aria-orientation="vertical" aria-label="调整概况宽度" @mousedown.prevent="beginSplit('side', $event)"></div>
               <section class="ws-stage" data-drop="workspace" @dragenter.prevent="dragEnter($event)" @dragover.prevent="dragOver($event, '')" @dragleave="dragLeave($event)" @drop.prevent="dropFiles($event, '')">
@@ -208,8 +210,8 @@
                     <button class="btn btn-outline-secondary" type="button" @click="closeWorkspaceHost()">断开</button>
                   </div>
                 </div>
-                <p class="ws-session text-secondary small" x-text="workspaceSession()"></p>
-                <div class="px-2" x-show="termTabs.length > 0">
+                <p class="ws-session ws-quiet" x-text="workspaceSession()"></p>
+                <div class="ws-tabs" x-show="termTabs.length > 0">
                   <div class="term-tabs" role="tablist">
                     <template x-for="tab in termTabs" :key="tab.id">
                       <div class="term-tab" role="presentation" :class="{ active: tab.id === termActive }">
@@ -221,7 +223,7 @@
                     </template>
                   </div>
                 </div>
-                <div class="px-3 pt-2" x-show="errors.terminal">
+                <div class="ws-banner" x-show="errors.terminal">
                   <div class="alert alert-danger mb-0" role="alert" x-text="errors.terminal"></div>
                 </div>
                 <div class="empty" x-show="termTabs.length === 0">
@@ -246,7 +248,7 @@
                     <button class="btn btn-outline-secondary btn-sm" type="button" @click="loadHistory(activeTermAlias())">刷新</button>
                   </div>
                 </div>
-                <div class="alert alert-danger mx-3 mt-2 mb-0" role="alert" x-show="errors.files" x-text="errors.files"></div>
+                <div class="alert alert-danger ws-banner mb-0" role="alert" x-show="errors.files" x-text="errors.files"></div>
                 <div x-show="files.mode !== 'history'" class="ws-file-body" @contextmenu.prevent="openMenu($event, null)">
                   <div class="ws-crumbs" x-show="(files.crumbs || []).length">
                     <template x-for="c in files.crumbs" :key="c.path">
@@ -259,7 +261,7 @@
                       <template x-for="d in dirEntries()" :key="d.path">
                         <button type="button" class="ws-tree-item" :class="{ 'is-drop': drop.target === d.path }" @click="listFiles(d.path)" @dragover.prevent.stop="dragOver($event, d.path)" @drop.prevent.stop="dropFiles($event, d.path)" x-text="d.name"></button>
                       </template>
-                      <p class="text-secondary small px-2" x-show="!files.path">选择主机后列出目录。</p>
+                      <p class="ws-quiet px-2" x-show="!files.path">选择主机后列出目录。</p>
                     </div>
                     <div class="ws-table-wrap">
                       <table class="table table-sm table-vcenter card-table">
@@ -275,8 +277,8 @@
                           </template>
                         </tbody>
                       </table>
-                      <p class="text-secondary small px-3" x-show="files.truncated">只显示前 2000 项。</p>
-                      <p class="text-secondary small px-3" x-show="files.path && !(files.entries || []).length && !errors.files">这个目录是空的。可以把本机文件拖进来。</p>
+                      <p class="ws-quiet px-3" x-show="files.truncated">只显示前 2000 项。</p>
+                      <p class="ws-quiet px-3" x-show="files.path && !(files.entries || []).length && !errors.files">这个目录是空的。可以把本机文件拖进来。</p>
                     </div>
                   </div>
                   <div class="ws-download-lane" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载到本机。浏览器不能直接拖进系统文件夹。</div>
@@ -292,7 +294,7 @@
                   </div>
                 </div>
                 <div x-show="files.mode === 'history'" class="ws-history" data-pane="history-body">
-                  <p class="text-secondary small mb-2" x-text="historyCaption()"></p>
+                  <p class="ws-quiet" x-text="historyCaption()"></p>
                   <pre class="history-pre mb-0" x-text="historyText()"></pre>
                 </div>
               </div>

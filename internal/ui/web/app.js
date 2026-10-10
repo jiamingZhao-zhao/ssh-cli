@@ -952,9 +952,15 @@ function sshui() {
           app.ws.lower = Math.max(160, Math.min(520, baseLower - (e.clientY - startY)));
         }
       };
+      const prevCursor = document.body.style.cursor;
+      const prevSelect = document.body.style.userSelect;
+      document.body.style.cursor = which === "side" ? "col-resize" : "row-resize";
+      document.body.style.userSelect = "none";
       const up = () => {
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", up);
+        document.body.style.cursor = prevCursor;
+        document.body.style.userSelect = prevSelect;
         app.saveSplit();
         app.fitActive();
       };
@@ -1042,7 +1048,7 @@ function sshui() {
     sparkPoints() {
       const alias = this.activeTermAlias();
       const series = (this.netSeries && this.netSeries[alias]) || [];
-      if (series.length < 2) return "0,32 160,32";
+      if (series.length < 2) return "0,34 160,34";
       const rates = [];
       for (let i = 1; i < series.length; i++) {
         const d = (series[i].rx - series[i - 1].rx) + (series[i].tx - series[i - 1].tx);
@@ -1053,7 +1059,7 @@ function sshui() {
       const pts = [];
       for (let i = 0; i < rates.length; i++) {
         const x = rates.length === 1 ? 0 : (160 * i) / (rates.length - 1);
-        const y = 32 - (28 * rates[i]) / max;
+        const y = 34 - (28 * rates[i]) / max;
         pts.push(x.toFixed(1) + "," + y.toFixed(1));
       }
       return pts.join(" ");
@@ -1082,6 +1088,9 @@ function sshui() {
 
     diskEmpty() { return !this.metrics || !this.metrics.disks || this.metrics.disks.length === 0; },
     procEmpty() { return !this.metrics || !this.metrics.procs || this.metrics.procs.length === 0; },
+    metricsPending() {
+      return !!this.activeTermAlias() && !(this.errors && this.errors.metrics) && !(this.metrics && this.metrics.connected);
+    },
 
     noteText() {
       const notes = (this.metrics && this.metrics.notes) || [];
