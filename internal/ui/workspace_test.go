@@ -59,16 +59,49 @@ func TestWorkspaceChrome(t *testing.T) {
 	if strings.Contains(chunk, ">命令<") || strings.Contains(chunk, `data-pane="commands"`) {
 		t.Fatal("command tab is out of scope")
 	}
+	if strings.Contains(body, "不套用允许") || strings.Contains(body, "不记按键") {
+		t.Fatal("terminal policy blurb should be gone")
+	}
+	for _, s := range []string{"收起菜单", "展开菜单", "navCollapsed", `x-show="!is('terminal')"`, "is-terminal"} {
+		if !strings.Contains(body, s) {
+			t.Fatalf("shell missing %s", s)
+		}
+	}
 	jsReq := httptest.NewRequest(http.MethodGet, "/app.js", nil)
 	jsReq.RemoteAddr = "127.0.0.1:9"
 	jsReq.Host = "127.0.0.1"
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}
+	}
+	if strings.Contains(script, "await res.json()") || strings.Contains(script, "res.json()") {
+		t.Fatal("app.js still parses responses with res.json()")
+	}
+	cssReq := httptest.NewRequest(http.MethodGet, "/app.css", nil)
+	cssReq.RemoteAddr = "127.0.0.1:9"
+	cssReq.Host = "127.0.0.1"
+	cssRR := httptest.NewRecorder()
+	h.ServeHTTP(cssRR, cssReq)
+	style := cssRR.Body.String()
+	for _, s := range []string{"--mh-grid", "border-inline-end: 1px solid var(--mh-grid)", "navbar-folded", "is-terminal .ws", "max-width: none"} {
+		if !strings.Contains(style, s) {
+			t.Fatalf("app.css missing %s", s)
+		}
+	}
+	procAt := strings.Index(style, ".ws-proc td")
+	if procAt < 0 {
+		t.Fatal("process table rule missing")
+	}
+	proc := style[procAt:]
+	if end := strings.Index(proc, "}"); end >= 0 {
+		proc = proc[:end]
+	}
+	if strings.Contains(proc, "transparent") {
+		t.Fatal("process table still hides grid lines")
 	}
 }
 

@@ -21,6 +21,13 @@ func (s *service) ensureSessions() {
 }
 
 func (s *service) apiSession(w http.ResponseWriter, r *http.Request) {
+	// A live cookie keeps its token. The terminal workspace fires metrics,
+	// files, and history together; minting a new cookie on every call would
+	// make the other in-flight POST send a token the browser no longer holds.
+	if csrf, ok := s.sessionCSRF(r); ok {
+		writeJSON(w, http.StatusOK, map[string]any{"ok": true, "csrf": csrf})
+		return
+	}
 	sid, csrf := newToken(), newToken()
 	s.mu.Lock()
 	s.ensureSessions()
@@ -34,6 +41,21 @@ func (s *service) apiSession(w http.ResponseWriter, r *http.Request) {
 		SameSite: http.SameSiteStrictMode,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "csrf": csrf})
+}
+
+func (s *service) sessionCSRF(r *http.Request) (string, bool) {
+	c, err := r.Cookie(sessionCookie)
+	if err != nil || c.Value == "" {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.ensureSessions()
+	csrf := s.sessions[c.Value]
+	if csrf == "" {
+		return "", false
+	}
+	return csrf, true
 }
 
 func newToken() string {

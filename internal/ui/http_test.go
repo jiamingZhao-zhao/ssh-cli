@@ -43,3 +43,48 @@ func attachCSRF(t *testing.T, h http.Handler, req *http.Request) {
 		req.Header.Set("Content-Type", "application/json")
 	}
 }
+
+func TestSessionReusesCSRF(t *testing.T) {
+	h := Handler(t.TempDir(), false)
+	first := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	first.Host = "127.0.0.1"
+	first.RemoteAddr = "127.0.0.1:9"
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, first)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("session %d %s", rr.Code, rr.Body.String())
+	}
+	var body struct {
+		CSRF string `json:"csrf"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil || body.CSRF == "" {
+		t.Fatalf("csrf %v %s", err, rr.Body.String())
+	}
+	var cookie *http.Cookie
+	for _, c := range rr.Result().Cookies() {
+		if c.Name == sessionCookie {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("missing session cookie")
+	}
+	again := httptest.NewRequest(http.MethodGet, "/api/session", nil)
+	again.Host = "127.0.0.1"
+	again.RemoteAddr = "127.0.0.1:9"
+	again.AddCookie(cookie)
+	rr2 := httptest.NewRecorder()
+	h.ServeHTTP(rr2, again)
+	var body2 struct {
+		CSRF string `json:"csrf"`
+	}
+	if err := json.Unmarshal(rr2.Body.Bytes(), &body2); err != nil {
+		t.Fatal(err)
+	}
+	if body2.CSRF != body.CSRF {
+		t.Fatalf("session rotated csrf %q -> %q", body.CSRF, body2.CSRF)
+	}
+	if len(rr2.Result().Cookies()) != 0 {
+		t.Fatalf("reuse set a new cookie: %#v", rr2.Result().Cookies())
+	}
+}

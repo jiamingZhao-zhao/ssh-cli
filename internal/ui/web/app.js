@@ -11,6 +11,17 @@ function pad2(n) {
   return String(n).padStart(2, "0");
 }
 
+function plainBodyMessage(text, statusText) {
+  const raw = String(text || "").replace(/\s+/g, " ").trim();
+  if (raw.toLowerCase().indexOf("csrf") >= 0) return "请求被拒绝：缺少 CSRF，请刷新页面";
+  if (raw) return raw.slice(0, 180);
+  return statusText || "请求失败";
+}
+
+function friendlyError(message, statusText) {
+  return plainBodyMessage(message, statusText);
+}
+
 function stamp(value) {
   if (!value) return "";
   const d = new Date(value);
@@ -120,6 +131,8 @@ function sshui() {
   return {
     view: "home",
     navOpen: false,
+    navCollapsed: false,
+    _sessionWait: null,
     currentHost: "",
     csrf: "",
     seq: 0,
@@ -233,6 +246,7 @@ function sshui() {
       this.policyForm = this.blankPolicy();
       this.envForm = this.blankEnv();
       this.applyStored();
+      this.ensureSession();
       const parsed = this.readHash(location.hash.replace(/^#/, ""));
       this.show(parsed.view || "home");
       this.loadCatalog();
@@ -272,6 +286,7 @@ function sshui() {
       this.draft.relayCrossEnv = !!prefs.relayCrossEnv;
       this.theme = this.draft.theme;
       this.density = this.draft.density;
+      this.navCollapsed = !!prefs.navCollapsed;
       if (prefs.wsSide >= 220 && prefs.wsSide <= 460) this.ws.side = prefs.wsSide;
       if (prefs.wsLower >= 160 && prefs.wsLower <= 520) this.ws.lower = prefs.wsLower;
       this.exec.timeout = this.draft.commandTimeout;
@@ -306,6 +321,15 @@ function sshui() {
       this.draft.density = this.density === "compact" ? "comfortable" : "compact";
       this.applyLook();
       this.savePrefs({ density: this.draft.density });
+    },
+
+    toggleNav() {
+      this.navCollapsed = !this.navCollapsed;
+      this.savePrefs({ navCollapsed: this.navCollapsed });
+      const app = this;
+      setTimeout(() => {
+        if (app.view === "terminal") app.fitActive();
+      }, 200);
     },
 
     applyLook() {
@@ -402,6 +426,8 @@ function sshui() {
 
     async api(url, options) {
       const opts = Object.assign({ credentials: "same-origin" }, options || {});
+      const method = String(opts.method || "GET").toUpperCase();
+      if (method !== "GET" && method !== "HEAD" && !this.csrf) await this.ensureSession();
       const headers = Object.assign({}, opts.headers || {});
       const token = sessionStorage.getItem("sshCliBearer") || "";
       if (token) headers.Authorization = "Bearer " + token;
@@ -419,16 +445,39 @@ function sshui() {
       return res;
     },
 
+    async parseJSON(res) {
+      const text = await res.text();
+      const trimmed = String(text || "").trim();
+      if (!trimmed) {
+        if (!res.ok) throw new Error(res.statusText || "请求失败");
+        return {};
+      }
+      try {
+        return JSON.parse(trimmed);
+      } catch (err) {
+        throw new Error(plainBodyMessage(trimmed, res.statusText));
+      }
+    },
+
     async readJSON(res) {
-      const data = await res.json();
-      if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);
+      const data = await this.parseJSON(res);
+      if (!res.ok || data.ok === false) throw new Error(friendlyError(data && data.error, res.statusText));
       return data;
     },
 
     async ensureSession() {
       if (this.csrf) return;
-      const data = await this.readJSON(await this.api("/api/session"));
-      this.csrf = data.csrf || "";
+      if (!this._sessionWait) {
+        const app = this;
+        this._sessionWait = (async () => {
+          const data = await app.readJSON(await app.api("/api/session"));
+          app.csrf = data.csrf || "";
+          if (!app.csrf) throw new Error("请求被拒绝：缺少 CSRF，请刷新页面");
+        })().finally(() => {
+          app._sessionWait = null;
+        });
+      }
+      await this._sessionWait;
     },
 
     replaceRead(key) {
@@ -465,7 +514,7 @@ function sshui() {
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(payload)
         });
-        const data = await res.json();
+        const data = await this.parseJSON(res);
         if (res.status === 409 && data.needsConfirm) {
           const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + (data.confirm || ""));
           if (typed == null) throw new Error(data.error || "已取消");
@@ -474,7 +523,7 @@ function sshui() {
           payload.humanConfirm = payload.humanConfirm || typed;
           continue;
         }
-        if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);
+        if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
         return data;
       }
       throw new Error("确认失败");
@@ -691,8 +740,8 @@ function sshui() {
       try {
         const res = await this.api("/api/audit/export?" + params.toString());
         if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || res.statusText);
+          const data = await this.parseJSON(res);
+          throw new Error(friendlyError(data.error, res.statusText));
         }
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -1266,7 +1315,17 @@ function sshui() {
           };
           xhr.onload = () => {
             let data = {};
-            try { data = JSON.parse(xhr.responseText || "{}"); } catch (err) { data = {}; }
+            const raw = String(xhr.responseText || "").trim();
+            try {
+              data = raw ? JSON.parse(raw) : {};
+            } catch (err) {
+              item.active = false;
+              item.label = "失败";
+              transferCtl.delete(id);
+              app.toast(file.name + "：" + plainBodyMessage(raw, xhr.statusText), "bad");
+              resolve();
+              return;
+            }
             if (xhr.status === 409 && data.needsConfirm && !confirmText) {
               const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + (data.confirm || alias));
               if (typed == null) {
@@ -1315,8 +1374,8 @@ function sshui() {
           body: JSON.stringify({ alias: alias, path: entry.path })
         });
         if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || res.statusText);
+          const data = await this.parseJSON(res);
+          throw new Error(friendlyError(data.error, res.statusText));
         }
         const total = Number(res.headers.get("Content-Length")) || 0;
         item.total = total;
@@ -2047,15 +2106,15 @@ function sshui() {
       const fd = new FormData(ev.target);
       try {
         let res = await this.api("/api/upload", { method: "POST", body: fd });
-        let data = await res.json();
+        let data = await this.parseJSON(res);
         if (res.status === 409 && data.needsConfirm) {
           const typed = window.prompt(data.error + "\n请输入：" + data.confirm);
           if (typed == null) throw new Error(data.error);
           fd.set("confirm", typed);
           res = await this.api("/api/upload", { method: "POST", body: fd });
-          data = await res.json();
+          data = await this.parseJSON(res);
         }
-        if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);
+        if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
         ev.target.reset();
         this.operateOut = "上传完成";
         this.loadAudit();
@@ -2075,8 +2134,8 @@ function sshui() {
           body: JSON.stringify({ alias: fd.get("alias"), path: fd.get("path") })
         });
         if (!res.ok) {
-          const data = await res.json();
-          throw new Error(data.error || res.statusText);
+          const data = await this.parseJSON(res);
+          throw new Error(friendlyError(data.error, res.statusText));
         }
         const blob = await res.blob();
         const url = URL.createObjectURL(blob);
@@ -2167,7 +2226,7 @@ function sshui() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           });
-          data = await res.json();
+          data = await this.parseJSON(res);
           if (res.status === 409 && data.needsConfirm) {
             if (data.confirmField === "outflowConfirm") {
               const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + data.confirm);
@@ -2185,7 +2244,7 @@ function sshui() {
             }
             continue;
           }
-          if (!res.ok || data.ok === false) throw new Error(data.error || res.statusText);
+          if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
           break;
         }
         const lines = (data.results || []).map((row) => {
