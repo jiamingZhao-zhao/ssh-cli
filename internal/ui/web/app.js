@@ -36,6 +36,34 @@ function destroyCharts() {
   }
 }
 
+function chartTheme() {
+  const dark = document.documentElement.getAttribute("data-bs-theme") === "dark";
+  return {
+    ink: dark ? "#f4f5f7" : "#1d2129",
+    grid: dark ? "rgba(244,245,247,0.14)" : "rgba(29,33,41,0.08)"
+  };
+}
+
+function restyleCharts() {
+  const theme = chartTheme();
+  if (chartDays) {
+    const legend = chartDays.options.plugins && chartDays.options.plugins.legend;
+    if (legend && legend.labels) legend.labels.color = theme.ink;
+    ["x", "y"].forEach((axis) => {
+      const scale = chartDays.options.scales && chartDays.options.scales[axis];
+      if (!scale) return;
+      scale.ticks = Object.assign({}, scale.ticks, { color: theme.ink });
+      scale.grid = Object.assign({}, scale.grid, { color: theme.grid });
+    });
+    chartDays.update();
+  }
+  if (chartOps) {
+    const legend = chartOps.options.plugins && chartOps.options.plugins.legend;
+    if (legend && legend.labels) legend.labels.color = theme.ink;
+    chartOps.update();
+  }
+}
+
 function paintOverview(ov, attempt) {
   if (typeof Chart === "undefined") return;
   const daysEl = document.getElementById("chart-days");
@@ -48,21 +76,25 @@ function paintOverview(ov, attempt) {
   destroyCharts();
   const days = (ov && ov.days) || [];
   const ops = (ov && ov.ops) || [];
+  const theme = chartTheme();
   chartDays = new Chart(daysEl, {
     type: "bar",
     data: {
       labels: days.map((d) => d.date),
       datasets: [
-        { label: "成功", data: days.map((d) => d.ok || 0), backgroundColor: "#34c759", borderRadius: 6, stack: "a" },
-        { label: "拒绝", data: days.map((d) => d.denied || 0), backgroundColor: "#ff3b30", borderRadius: 6, stack: "a" },
-        { label: "其他", data: days.map((d) => d.other || 0), backgroundColor: "#ff9f0a", borderRadius: 6, stack: "a" }
+        { label: "成功", data: days.map((d) => d.ok || 0), backgroundColor: "#36b37e", borderRadius: 6, stack: "a" },
+        { label: "拒绝", data: days.map((d) => d.denied || 0), backgroundColor: "#de350b", borderRadius: 6, stack: "a" },
+        { label: "其他", data: days.map((d) => d.other || 0), backgroundColor: "#ffab00", borderRadius: 6, stack: "a" }
       ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      plugins: { legend: { position: "bottom" } },
-      scales: { x: { stacked: true }, y: { stacked: true, beginAtZero: true, ticks: { precision: 0 } } }
+      plugins: { legend: { position: "bottom", labels: { color: theme.ink } } },
+      scales: {
+        x: { stacked: true, ticks: { color: theme.ink }, grid: { color: theme.grid } },
+        y: { stacked: true, beginAtZero: true, ticks: { precision: 0, color: theme.ink }, grid: { color: theme.grid } }
+      }
     }
   });
   chartOps = new Chart(opsEl, {
@@ -71,11 +103,11 @@ function paintOverview(ov, attempt) {
       labels: ops.map((item) => item.op),
       datasets: [{
         data: ops.map((item) => item.count || 0),
-        backgroundColor: ["#0071e3", "#34c759", "#ff9f0a", "#ff3b30", "#5e5ce6", "#64d2ff", "#ac8e68", "#8e8e93"],
+        backgroundColor: ["#0052cc", "#36b37e", "#ffab00", "#de350b", "#6554c0", "#00b8d9", "#5c6370", "#97a0af"],
         borderWidth: 0
       }]
     },
-    options: { responsive: true, maintainAspectRatio: false, cutout: "62%", plugins: { legend: { position: "bottom" } } }
+    options: { responsive: true, maintainAspectRatio: false, cutout: "62%", plugins: { legend: { position: "bottom", labels: { color: theme.ink } } } }
   });
 }
 
@@ -265,6 +297,7 @@ function sshui() {
       this.density = this.draft.density === "compact" ? "compact" : "comfortable";
       document.documentElement.setAttribute("data-bs-theme", this.theme);
       document.documentElement.setAttribute("data-theme", this.theme);
+      restyleCharts();
     },
 
     tableClass() {

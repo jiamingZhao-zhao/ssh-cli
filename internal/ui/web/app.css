@@ -1,44 +1,553 @@
-/* Small hooks around Tabler. Layout, cards, tables, modals, and pagination come from tabler.min.css. */
+/* Memory Hub (Hermes-Home) light theme on Tabler tokens.
+   Layout, cards, tables, modals, and pagination still come from tabler.min.css.
+   Primary blue is #0052cc. Page surface is #f5f5f7. Cards stay white. */
 [x-cloak] { display: none !important; }
 .modal-dialog { margin: auto; }
+
+:root {
+  --mh-blue: #0052cc;
+  --mh-blue-hover: #0747a6;
+  --mh-blue-soft: #e9f2ff;
+  --mh-danger: #de350b;
+  --tblr-primary: #0052cc;
+  --tblr-primary-fg: #ffffff;
+  --tblr-primary-darken: #0747a6;
+  --tblr-blue: #0052cc;
+  --tblr-blue-fg: #ffffff;
+  --tblr-link-color: #0052cc;
+  --tblr-link-hover-color: #0747a6;
+  --tblr-font-sans-serif: "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Helvetica Neue", "Segoe UI", sans-serif;
+  --tblr-font-monospace: "SF Mono", "SFMono-Regular", Menlo, Consolas, monospace;
+  --tblr-body-font-size: 14px;
+  --tblr-border-radius: 8px;
+  --tblr-border-radius-lg: 10px;
+  --tblr-btn-border-radius: 6px;
+  --tblr-focus-ring-color: rgba(0, 82, 204, 0.35);
+}
+
+:root,
+[data-bs-theme="light"] {
+  --mh-page: #f5f5f7;
+  --mh-card: #ffffff;
+  --mh-ink: #1d2129;
+  --mh-muted: #5c6370;
+  --mh-line: #e4e6eb;
+  --mh-fill: #f4f5f7;
+  --mh-header: #f7f8fa;
+  --mh-link: #0052cc;
+  --mh-link-hover: #0747a6;
+  --tblr-body-bg: #f5f5f7;
+  --tblr-body-color: #1d2129;
+  --tblr-secondary: #5c6370;
+  --tblr-secondary-fg: #ffffff;
+  --tblr-border-color: #e4e6eb;
+  --tblr-border-color-translucent: #e4e6eb;
+  --tblr-border-active-color: #c5cad3;
+  --tblr-bg-surface: #ffffff;
+  --tblr-bg-surface-secondary: #f4f5f7;
+  --tblr-bg-surface-tertiary: #f7f8fa;
+  --tblr-navbar-bg: #ffffff;
+  --tblr-navbar-color: #5c6370;
+  --tblr-navbar-hover-color: #1d2129;
+  --tblr-navbar-active-bg: #0052cc;
+  --tblr-navbar-active-color: #ffffff;
+  --tblr-navbar-border-color: #e4e6eb;
+  --tblr-card-bg: #ffffff;
+  --tblr-card-color: #1d2129;
+  --tblr-card-border-color: #e4e6eb;
+  --tblr-card-cap-bg: #ffffff;
+  --tblr-shadow-card: none;
+  --tblr-shadow-card-hover: none;
+  --tblr-table-bg: transparent;
+  --tblr-table-striped-bg: #f7f8fa;
+  --tblr-table-border-color: #e4e6eb;
+  --tblr-pagination-bg: #ffffff;
+  --tblr-pagination-border-color: #e4e6eb;
+  --tblr-pagination-hover-bg: #e9f2ff;
+  --tblr-pagination-active-bg: #0052cc;
+  --tblr-pagination-active-border-color: #0052cc;
+  --tblr-pagination-color: #0052cc;
+  --tblr-emphasis-color: #1d2129;
+  --tblr-disabled-color: #6b7280;
+  --tblr-modal-bg: #ffffff;
+  --tblr-modal-border-color: #e4e6eb;
+}
+
+[data-bs-theme="dark"] {
+  --mh-page: #16181d;
+  --mh-card: #1e2128;
+  --mh-ink: #f4f5f7;
+  --mh-muted: #b7beca;
+  --mh-line: #343844;
+  --mh-fill: #2a2e38;
+  --mh-header: #262a33;
+  --mh-link: #4c9aff;
+  --mh-link-hover: #85b8ff;
+  --mh-blue-soft: rgba(76, 154, 255, 0.16);
+  --mh-danger: #ff8f73;
+  --tblr-body-bg: #16181d;
+  --tblr-body-color: #f4f5f7;
+  --tblr-secondary: #b7beca;
+  --tblr-secondary-fg: #16181d;
+  --tblr-border-color: #343844;
+  --tblr-border-color-translucent: #343844;
+  --tblr-border-active-color: #4a5160;
+  --tblr-bg-surface: #1e2128;
+  --tblr-bg-surface-secondary: #2a2e38;
+  --tblr-bg-surface-tertiary: #262a33;
+  --tblr-navbar-bg: #1e2128;
+  --tblr-navbar-color: #b7beca;
+  --tblr-navbar-hover-color: #f4f5f7;
+  --tblr-navbar-active-bg: #0052cc;
+  --tblr-navbar-active-color: #ffffff;
+  --tblr-navbar-border-color: #343844;
+  --tblr-card-bg: #1e2128;
+  --tblr-card-color: #f4f5f7;
+  --tblr-card-border-color: #343844;
+  --tblr-card-cap-bg: #1e2128;
+  --tblr-link-color: #4c9aff;
+  --tblr-link-hover-color: #85b8ff;
+  --tblr-shadow-card: none;
+  --tblr-table-bg: transparent;
+  --tblr-table-striped-bg: #262a33;
+  --tblr-table-border-color: #343844;
+  --tblr-pagination-bg: #1e2128;
+  --tblr-pagination-border-color: #343844;
+  --tblr-pagination-hover-bg: rgba(76, 154, 255, 0.16);
+  --tblr-pagination-active-bg: #0052cc;
+  --tblr-pagination-active-border-color: #0052cc;
+  --tblr-emphasis-color: #f4f5f7;
+  --tblr-disabled-color: #9aa3b2;
+  --tblr-modal-bg: #1e2128;
+  --tblr-modal-border-color: #343844;
+}
+
+body,
+.page {
+  background: var(--mh-page);
+  color: var(--mh-ink);
+}
+.page { min-height: 100vh; }
+.page-title {
+  color: var(--mh-ink);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+}
+.page-header { background: transparent; }
+
+.navbar-vertical {
+  background: var(--mh-card);
+  border-inline-end: 1px solid var(--mh-line);
+  backdrop-filter: none;
+  box-shadow: none;
+}
+.navbar-vertical .navbar-brand {
+  padding-inline: 0.85rem;
+  margin-bottom: 0.35rem;
+}
+.navbar-vertical .navbar-brand a {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.55rem;
+  color: var(--mh-ink);
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  text-decoration: none;
+}
+.navbar-vertical .navbar-brand a::before {
+  content: "S";
+  width: 1.65rem;
+  height: 1.65rem;
+  border-radius: 6px;
+  background: var(--mh-blue);
+  color: #fff;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+.navbar-vertical .navbar-nav {
+  gap: 0.15rem;
+}
+.navbar-vertical .nav-link {
+  color: var(--mh-muted);
+  border-radius: 8px;
+  font-weight: 500;
+}
+.navbar-vertical .nav-link-icon {
+  color: var(--mh-muted);
+}
+.navbar-vertical .nav-link:hover {
+  background: var(--mh-fill);
+  color: var(--mh-ink);
+}
+.navbar-vertical .nav-link:hover .nav-link-icon {
+  color: var(--mh-ink);
+}
+.navbar-vertical .nav-link.active,
+.navbar-vertical .nav-link.active:hover {
+  background: var(--mh-blue);
+  color: #fff;
+}
+.navbar-vertical .nav-link.active .nav-link-icon,
+.navbar-vertical .nav-link.active .nav-link-title,
+.navbar-vertical .nav-link.active:hover .nav-link-icon {
+  color: #fff;
+}
+.navbar-vertical .nav-link.active .badge {
+  background-color: #fff !important;
+  color: var(--mh-blue) !important;
+  border-color: transparent !important;
+}
+[data-bs-theme="dark"] .bg-blue-lt {
+  color: #d6e8ff !important;
+  background-color: #1c3d73 !important;
+  border-color: transparent !important;
+}
+
+.card {
+  border: 1px solid var(--mh-line);
+  border-radius: 10px;
+  box-shadow: none;
+  background: var(--mh-card);
+  color: var(--mh-ink);
+}
+.card-header,
+.card-footer,
+.modal-header,
+.modal-footer {
+  background: transparent;
+}
+.card-header {
+  border-bottom: 1px solid var(--mh-line);
+}
+.card-title {
+  color: var(--mh-ink);
+  font-weight: 650;
+}
 .card-footer {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 0.75rem;
   justify-content: flex-end;
+  border-top: 1px solid var(--mh-line);
+}
+.subheader {
+  color: var(--mh-muted);
+  font-weight: 600;
+  letter-spacing: 0;
+  text-transform: none;
+}
+.row-deck .h1,
+.h1 {
+  color: var(--mh-ink);
+  font-weight: 650;
+  letter-spacing: -0.03em;
 }
 
-:root {
-  --tblr-font-sans-serif: "SF Pro Text", "SF Pro Display", "PingFang SC", "Hiragino Sans GB", "Noto Sans SC", "Helvetica Neue", "Segoe UI", sans-serif;
-  --tblr-body-font-size: 15px;
-  --tblr-primary: #0071e3;
-  --tblr-border-radius: 16px;
+.datagrid {
+  gap: 0.75rem;
 }
-[data-bs-theme="light"] {
-  --tblr-body-bg: #f5f5f7;
-  --tblr-body-color: #1d1d1f;
-  --tblr-secondary: #6e6e73;
-  --tblr-border-color: rgba(0, 0, 0, 0.08);
+.datagrid > div {
+  background: var(--mh-fill);
+  border-radius: 8px;
+  padding: 0.85rem 1rem;
 }
-.page { background: var(--tblr-body-bg, #f5f5f7); }
-.card {
-  border: 0;
-  border-radius: 16px;
-  box-shadow: 0 1px 2px rgba(0, 0, 0, 0.04), 0 8px 24px rgba(0, 0, 0, 0.06);
+.datagrid-title {
+  color: var(--mh-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 12px;
 }
-.navbar-vertical {
-  backdrop-filter: saturate(180%) blur(20px);
+
+.table {
+  color: var(--mh-ink);
 }
-.navbar-vertical .nav-link.active {
-  background: #0071e3;
+.table thead th {
+  background: var(--mh-header);
+  color: var(--mh-muted);
+  text-transform: none;
+  letter-spacing: 0;
+  font-size: 13px;
+  font-weight: 600;
+  border-bottom: 1px solid var(--mh-line);
+}
+.table > :not(caption) > * > * {
+  border-bottom-color: var(--mh-line);
+}
+.table > tbody > tr:nth-child(even):not(.table-danger):not(.table-warning) > * {
+  background-color: var(--mh-fill);
+}
+.table > tbody > tr:not(.table-danger):not(.table-warning):hover > * {
+  background-color: var(--mh-blue-soft);
+}
+
+.btn,
+.form-control,
+.form-select {
+  border-radius: 8px;
+  box-shadow: none;
+}
+.btn-primary {
+  --tblr-btn-color: #fff;
+  --tblr-btn-bg: var(--mh-blue);
+  --tblr-btn-border-color: var(--mh-blue);
+  --tblr-btn-hover-color: #fff;
+  --tblr-btn-hover-bg: var(--mh-blue-hover);
+  --tblr-btn-hover-border-color: var(--mh-blue-hover);
+  --tblr-btn-active-color: #fff;
+  --tblr-btn-active-bg: var(--mh-blue-hover);
+  --tblr-btn-active-border-color: var(--mh-blue-hover);
+  --tblr-btn-box-shadow: none;
   color: #fff;
-  border-radius: 10px;
+  background-color: var(--mh-blue);
+  border-color: var(--mh-blue);
 }
-.btn, .form-control, .form-select { border-radius: 10px; }
-.btn:focus-visible, .form-control:focus, .form-select:focus {
-  box-shadow: 0 0 0 4px rgba(0, 113, 227, 0.28);
+.btn-primary:hover,
+.btn-primary:focus-visible,
+.btn-primary:active {
+  color: #fff;
+  background-color: var(--mh-blue-hover);
+  border-color: var(--mh-blue-hover);
 }
+.btn-outline-primary {
+  --tblr-btn-color: var(--mh-link);
+  --tblr-btn-bg: transparent;
+  --tblr-btn-border-color: color-mix(in srgb, var(--mh-link) 55%, var(--mh-line));
+  --tblr-btn-hover-color: #fff;
+  --tblr-btn-hover-bg: var(--mh-blue);
+  --tblr-btn-hover-border-color: var(--mh-blue);
+  --tblr-btn-active-color: #fff;
+  --tblr-btn-active-bg: var(--mh-blue-hover);
+  --tblr-btn-box-shadow: none;
+  color: var(--mh-link);
+  background: transparent;
+  border-color: color-mix(in srgb, var(--mh-link) 55%, var(--mh-line));
+}
+.btn-outline-primary:hover,
+.btn-outline-primary:focus-visible,
+.btn-outline-primary:active {
+  color: #fff;
+  background: var(--mh-blue);
+  border-color: var(--mh-blue);
+}
+.btn-outline-secondary {
+  --tblr-btn-color: var(--mh-ink);
+  --tblr-btn-bg: var(--mh-card);
+  --tblr-btn-border-color: color-mix(in srgb, var(--mh-ink) 18%, var(--mh-line));
+  --tblr-btn-hover-color: var(--mh-blue);
+  --tblr-btn-hover-bg: var(--mh-blue-soft);
+  --tblr-btn-hover-border-color: var(--mh-blue);
+  --tblr-btn-active-color: var(--mh-blue);
+  --tblr-btn-active-bg: var(--mh-blue-soft);
+  --tblr-btn-box-shadow: none;
+  color: var(--mh-ink);
+  background: var(--mh-card);
+  border-color: color-mix(in srgb, var(--mh-ink) 18%, var(--mh-line));
+}
+.btn-outline-secondary:hover,
+.btn-outline-secondary:focus-visible,
+.btn-outline-secondary:active {
+  color: var(--mh-blue);
+  background: var(--mh-blue-soft);
+  border-color: var(--mh-blue);
+}
+.btn-outline-danger {
+  --tblr-btn-color: var(--mh-danger);
+  --tblr-btn-bg: transparent;
+  --tblr-btn-border-color: color-mix(in srgb, var(--mh-danger) 45%, var(--mh-line));
+  --tblr-btn-hover-color: #fff;
+  --tblr-btn-hover-bg: var(--mh-danger);
+  --tblr-btn-hover-border-color: var(--mh-danger);
+  --tblr-btn-box-shadow: none;
+  color: var(--mh-danger);
+  background: transparent;
+}
+.btn-outline-danger:hover,
+.btn-outline-danger:focus-visible,
+.btn-outline-danger:active {
+  color: #fff;
+  background: var(--mh-danger);
+  border-color: var(--mh-danger);
+}
+.btn-link,
+.btn-ghost-secondary {
+  --tblr-btn-color: var(--mh-link);
+  --tblr-btn-hover-color: var(--mh-link-hover);
+  --tblr-btn-bg: transparent;
+  --tblr-btn-hover-bg: transparent;
+  --tblr-btn-box-shadow: none;
+  color: var(--mh-link);
+  box-shadow: none;
+}
+.btn:focus-visible,
+.form-control:focus,
+.form-select:focus {
+  border-color: var(--mh-blue);
+  box-shadow: 0 0 0 3px rgba(0, 82, 204, 0.22);
+}
+.form-control,
+.form-select {
+  background: var(--mh-card);
+  color: var(--mh-ink);
+  border-color: color-mix(in srgb, var(--mh-ink) 16%, var(--mh-line));
+}
+.form-label {
+  color: var(--mh-ink);
+  font-weight: 600;
+}
+.form-hint { color: var(--mh-muted); }
+
+/* Row actions match Memory Hub text links (复制 / 删除), not filled chips.
+   Input groups inside a cell keep their own outline button. */
+.table td > .btn-outline-primary,
+.table td > .btn-outline-secondary,
+.table td > .btn-outline-danger,
+.table td > .btn-ghost-secondary,
+.table td > .btn-link {
+  --tblr-btn-color: var(--mh-link);
+  --tblr-btn-bg: transparent;
+  --tblr-btn-border-color: transparent;
+  --tblr-btn-hover-color: var(--mh-link-hover);
+  --tblr-btn-hover-bg: var(--mh-blue-soft);
+  --tblr-btn-hover-border-color: transparent;
+  --tblr-btn-active-color: var(--mh-link-hover);
+  --tblr-btn-active-bg: var(--mh-blue-soft);
+  --tblr-btn-box-shadow: none;
+  color: var(--mh-link);
+  background: transparent;
+  border-color: transparent;
+  box-shadow: none;
+  font-weight: 500;
+}
+.table td > .btn-outline-primary:hover,
+.table td > .btn-outline-secondary:hover,
+.table td > .btn-outline-danger:hover,
+.table td > .btn-ghost-secondary:hover,
+.table td > .btn-link:hover,
+.table td > .btn-outline-primary:focus-visible,
+.table td > .btn-outline-secondary:focus-visible,
+.table td > .btn-outline-danger:focus-visible,
+.table td > .btn-ghost-secondary:focus-visible,
+.table td > .btn-link:focus-visible {
+  color: var(--mh-link-hover);
+  background: var(--mh-blue-soft);
+  border-color: transparent;
+}
+.table td > .btn + .btn { margin-inline-start: 0.15rem; }
+
+.page-item.active .page-link {
+  background: var(--mh-blue);
+  border-color: var(--mh-blue);
+  color: #fff;
+}
+.page-link {
+  color: var(--mh-link);
+  background: var(--mh-card);
+  border-color: var(--mh-line);
+}
+.page-item.disabled .page-link {
+  color: var(--mh-muted);
+  background: var(--mh-card);
+}
+
+.alert { border-radius: 8px; }
+.alert-danger { color: #7a271a; background: #ffebe6; border-color: #ffbdad; }
+.alert-success { color: #0d4f32; background: #e3fcef; border-color: #abf5d1; }
+.alert-warning { color: #7a4f01; background: #fff7e6; border-color: #ffe380; }
+.alert-info { color: #0747a6; background: #e9f2ff; border-color: #b3d4ff; }
+[data-bs-theme="dark"] .alert-danger { color: #ffd2cc; background: #3d201c; border-color: #6b3228; }
+[data-bs-theme="dark"] .alert-success { color: #c6f6d9; background: #163528; border-color: #1f6b48; }
+[data-bs-theme="dark"] .alert-warning { color: #ffe7b3; background: #3a2e14; border-color: #7a5b12; }
+[data-bs-theme="dark"] .alert-info { color: #d6e6ff; background: #1a2c4a; border-color: #2458a6; }
+
+.empty-title { color: var(--mh-ink); font-weight: 650; }
+.empty-subtitle { color: var(--mh-muted); }
+
+.modal-content {
+  background: var(--mh-card);
+  color: var(--mh-ink);
+  border: 1px solid var(--mh-line);
+  border-radius: 12px;
+  box-shadow: 0 16px 40px rgba(23, 43, 77, 0.16);
+}
+.modal-title { color: var(--mh-ink); font-weight: 650; }
+.btn-close { opacity: 0.7; }
+[data-bs-theme="dark"] .btn-close { filter: invert(1); opacity: 0.8; }
+
+.badge { font-weight: 600; }
+
+/* Terminal tabs are not buttons-inside-buttons. Nested .btn inherits
+   Tabler's variant color and can paint the alias white on white. */
+.term-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  gap: 0.25rem 0.15rem;
+  border-bottom: 1px solid var(--mh-line);
+}
+.term-tab {
+  display: inline-flex;
+  align-items: center;
+  max-width: 18rem;
+  margin-bottom: -1px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  border-radius: 8px 8px 0 0;
+  background: transparent;
+  color: var(--mh-muted);
+}
+.term-tab.active {
+  color: var(--mh-link);
+  border-bottom-color: var(--mh-link);
+  background: transparent;
+}
+.term-tab-name,
+.term-tab-label,
+.term-tab-close {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  line-height: 1.3;
+  cursor: pointer;
+}
+.term-tab-name,
+.term-tab-label {
+  padding: 0.45rem 0.2rem 0.45rem 0.75rem;
+  max-width: 14rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.term-tab-close {
+  width: 1.6rem;
+  height: 1.6rem;
+  margin-inline-end: 0.2rem;
+  border-radius: 6px;
+  font-size: 1rem;
+}
+.term-tab-close:hover,
+.term-tab-close:focus-visible {
+  background: var(--mh-fill);
+  color: var(--mh-ink);
+}
+.term-tab.active .term-tab-close:hover,
+.term-tab.active .term-tab-close:focus-visible {
+  background: var(--mh-blue-soft);
+  color: var(--mh-link);
+}
+.term-screen {
+  background: #1d1d1f;
+  min-height: 440px;
+  padding: 8px 8px 12px;
+}
+.term-pane { display: none; height: 420px; }
+.term-pane.active { display: block; }
+
 .clip {
   display: inline-block;
   max-width: 24rem;
@@ -50,48 +559,24 @@
 .detail-pre {
   white-space: pre-wrap;
   word-break: break-word;
-  font-family: "SF Mono", Menlo, Consolas, monospace;
+  font-family: var(--tblr-font-monospace);
   font-size: 13px;
+  color: var(--mh-ink);
 }
 .chart-box { position: relative; height: 220px; }
-.term-screen {
-  background: #1d1d1f;
-  min-height: 440px;
-  padding: 8px 8px 12px;
-}
-.term-pane { display: none; height: 420px; }
-.term-pane.active { display: block; }
-/* Terminal chips are not .btn. A nested Tabler button face is light and hides the alias. */
-.term-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  margin: 0;
-  padding: 0.3rem 0.75rem;
-  border: 1px solid #dfe1e6;
+
+.steps { --tblr-steps-color: var(--mh-link); }
+.step-item { color: var(--mh-ink); font-weight: 600; }
+.step-item.active { color: var(--mh-link); }
+.step-item.active ~ .step-item { color: var(--mh-muted); }
+
+pre {
+  color: var(--mh-ink);
+  background: var(--mh-fill);
   border-radius: 8px;
-  background: #f4f5f7;
-  color: #172b4d;
-  font-size: 13px;
-  font-weight: 500;
-  line-height: 1.25rem;
-  box-shadow: none;
+  padding: 0.85rem 1rem;
 }
-.term-tab.active {
-  background: #0052cc;
-  border-color: #0052cc;
-  color: #fff;
-}
-.term-tab:hover {
-  background: #ebecf0;
-  border-color: #c1c7d0;
-  color: #172b4d;
-}
-.term-tab.active:hover {
-  background: #0747a6;
-  border-color: #0747a6;
-  color: #fff;
-}
+/* Tab faces inside a tab inherit the label color. A nested .btn paints a light face and hides the alias. */
 .term-tab button {
   appearance: none;
   -webkit-appearance: none;
@@ -99,15 +584,10 @@
   background-color: transparent;
   border: 0;
   box-shadow: none;
-  margin: 0;
-  padding: 0;
   color: inherit;
   font: inherit;
   line-height: inherit;
   cursor: pointer;
-}
-.term-tab .term-tab-close {
-  padding-inline: 0.1rem;
 }
 .term-tab button:hover,
 .term-tab button:focus,
