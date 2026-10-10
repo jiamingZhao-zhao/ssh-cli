@@ -233,6 +233,7 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		AllowSet bool     `json:"allowSet"`
 		Deny     []string `json:"deny,omitempty"`
 		Confirm  []string `json:"confirm,omitempty"`
+		Via      string   `json:"via,omitempty"`
 		Default  bool     `json:"default,omitempty"`
 	}
 	var envs []envView
@@ -265,6 +266,7 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 			Alias: alias, Group: h.Group, Env: h.EnvName,
 			Host: h.Host.Host, Port: h.Host.PortOrDefault(), User: h.Host.User,
 			Auth: authOf(h.Host), Tags: h.Host.Tags, Policy: h.Host.Policy,
+			Via:     strings.TrimSpace(h.Host.Via),
 			Default: cfg.Default == alias,
 		}
 		fillRules(&view.Allow, &view.AllowSet, &view.Deny, &view.Confirm, h.Host.Allow, h.Host.Deny, h.Host.Confirm)
@@ -515,6 +517,12 @@ func draftFromMap(raw map[string]json.RawMessage) (HostDraft, error) {
 	if v, ok := raw["identity"]; ok {
 		d.HasIdentity = true
 		_ = json.Unmarshal(v, &d.Identity)
+	}
+	if v, ok := raw["via"]; ok {
+		d.HasVia = true
+		if err := json.Unmarshal(v, &d.Via); err != nil {
+			return HostDraft{}, fmt.Errorf("invalid via")
+		}
 	}
 	if v, ok := raw["policy"]; ok {
 		d.HasPolicy = true

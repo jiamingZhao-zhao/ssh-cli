@@ -125,6 +125,19 @@ func dialBudget(commandTimeout time.Duration) time.Duration {
 }
 
 func (a *App) dial(h config.ResolvedHost, commandTimeout time.Duration) (*sshclient.Client, error) {
+	if h.Host == nil {
+		return nil, exitcode.New(exitcode.Usage, "host %s is missing", h.Alias)
+	}
+	if strings.TrimSpace(h.Host.Via) == "" {
+		return a.dialDirect(h, commandTimeout)
+	}
+	return a.dialVia(h, commandTimeout)
+}
+
+// dialDirect is the pre-jump path: one TCP connection and one SSH handshake.
+// Hosts without via stay on this path so exec, upload, download, session, and
+// relay keep the same dial errors and do not open a second config read.
+func (a *App) dialDirect(h config.ResolvedHost, commandTimeout time.Duration) (*sshclient.Client, error) {
 	auth, err := a.auth(h)
 	if err != nil {
 		return nil, err
@@ -135,6 +148,43 @@ func (a *App) dial(h config.ResolvedHost, commandTimeout time.Duration) (*sshcli
 	ctx, cancel := context.WithTimeout(context.Background(), limit)
 	defer cancel()
 	c, err := sshclient.Dial(ctx, addr, h.Host.User, auth, kh, limit)
+	if err != nil {
+		return nil, sshclient.Wrap(err)
+	}
+	return c, nil
+}
+
+// dialVia SSHes to the destination through already registered jump hosts.
+// Each earlier hop carries only a direct-tcpip channel. The returned client
+// is the destination, so exec and PTY sessions are not opened on a jump host.
+func (a *App) dialVia(h config.ResolvedHost, commandTimeout time.Duration) (*sshclient.Client, error) {
+	cfg, err := config.Load(a.Dir)
+	if err != nil {
+		return nil, exitcode.New(exitcode.Usage, "%s", err.Error())
+	}
+	chain, err := cfg.ViaChainFrom(h)
+	if err != nil {
+		return nil, exitcode.New(exitcode.Connect, "%s", err.Error())
+	}
+	kh := sshclient.HostKeyCallback(filepath.Join(a.Dir, config.KnownHostsName), a.Insecure)
+	hops := make([]sshclient.Hop, 0, len(chain))
+	for _, hop := range chain {
+		auth, err := a.auth(hop)
+		if err != nil {
+			return nil, err
+		}
+		hops = append(hops, sshclient.Hop{
+			Name:    hop.Alias,
+			Addr:    net.JoinHostPort(hop.Host.Host, strconv.Itoa(hop.Host.PortOrDefault())),
+			User:    hop.Host.User,
+			Auth:    auth,
+			HostKey: kh,
+		})
+	}
+	limit := dialBudget(commandTimeout)
+	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	defer cancel()
+	c, err := sshclient.DialHops(ctx, hops, limit)
 	if err != nil {
 		return nil, sshclient.Wrap(err)
 	}

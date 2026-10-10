@@ -28,6 +28,10 @@ const (
 	FileName = "hosts.yaml"
 	// KnownHostsName is the TOFU host key store.
 	KnownHostsName = "known_hosts"
+	// MaxViaHops is the longest jump chain, including the destination.
+	// The first hop is dialed directly. Later hops are SSH handshakes
+	// through the previous hop and never a shell on the jump host.
+	MaxViaHops = 8
 )
 
 // nameRe matches aliases, group names, env names, and policy names.
@@ -193,6 +197,10 @@ type Host struct {
 	Confirm        []string      `yaml:"confirm,omitempty"`
 	Capabilities   *Capabilities `yaml:"capabilities,omitempty"`
 	ProtectedPaths []string      `yaml:"protectedPaths,omitempty"`
+	// Via is the alias of an already registered jump host.
+	// Empty means a direct TCP connection. The interactive shell, exec,
+	// SFTP, and metrics all run on this host; Via is transport only.
+	Via string `yaml:"via,omitempty"`
 }
 
 // PortOrDefault returns the TCP port, defaulting to 22.
@@ -204,8 +212,8 @@ func (h *Host) PortOrDefault() int {
 }
 
 // ConnFingerprint identifies the SSH target a session is bound to.
-// Address, port, user, auth, identity, and passwordRef are included.
-// The password bytes are not.
+// Address, port, user, auth, identity, passwordRef, and via are included.
+// The password bytes are not. Changing the jump host drops a pooled session.
 func (h *Host) ConnFingerprint() string {
 	if h == nil {
 		return ""
@@ -221,6 +229,7 @@ func (h *Host) ConnFingerprint() string {
 		auth,
 		h.Identity,
 		h.PasswordRef,
+		strings.TrimSpace(h.Via),
 	}, "\x00")
 	sum := sha256.Sum256([]byte(canon))
 	return hex.EncodeToString(sum[:])
@@ -453,6 +462,7 @@ func (c *Config) Validate() error {
 		}
 	}
 	seen := map[string]string{}
+	hosts := map[string]*Host{}
 	for gname, g := range c.Groups {
 		if !ValidName(gname) {
 			return fmt.Errorf("invalid group name %q", gname)
@@ -497,7 +507,12 @@ func (c *Config) Validate() error {
 			if h.Policy != "" && !ValidName(h.Policy) {
 				return fmt.Errorf("host %q: invalid policy %q", alias, h.Policy)
 			}
+			h.Via = strings.TrimSpace(h.Via)
+			hosts[alias] = h
 		}
+	}
+	if err := validateVia(hosts); err != nil {
+		return err
 	}
 	if c.Default != "" {
 		if _, ok := seen[c.Default]; !ok {
@@ -536,6 +551,119 @@ func (c *Config) Index() map[string]ResolvedHost {
 func (c *Config) Find(alias string) (ResolvedHost, bool) {
 	h, ok := c.Index()[alias]
 	return h, ok
+}
+
+// CheckJump reports whether via can be saved as alias's jump host.
+// An empty via is a direct connection. The cycle and length checks run
+// in Validate once the host is in the document.
+func (c *Config) CheckJump(alias, via string) error {
+	via = strings.TrimSpace(via)
+	if via == "" {
+		return nil
+	}
+	if !ValidName(via) || via == strings.TrimSpace(alias) {
+		return fmt.Errorf("host %q: invalid jump host %q", alias, via)
+	}
+	if _, ok := c.Find(via); !ok {
+		return fmt.Errorf("host %q: jump host %q does not exist", alias, via)
+	}
+	return nil
+}
+
+// JumpDependents lists hosts whose via field is alias.
+func (c *Config) JumpDependents(alias string) []string {
+	var out []string
+	alias = strings.TrimSpace(alias)
+	if c == nil || alias == "" {
+		return out
+	}
+	for name, h := range c.Index() {
+		if h.Host == nil || name == alias {
+			continue
+		}
+		if strings.TrimSpace(h.Host.Via) == alias {
+			out = append(out, name)
+		}
+	}
+	sort.Strings(out)
+	return out
+}
+
+// ViaChainFrom returns the dial order for start: the outermost jump first
+// and start last. A direct host is a one-element chain. Later hops are
+// looked up in c. start itself is not replaced, so a planned destination
+// keeps the address and credentials the caller already resolved.
+func (c *Config) ViaChainFrom(start ResolvedHost) ([]ResolvedHost, error) {
+	if start.Host == nil {
+		return nil, fmt.Errorf("host %q is missing", start.Alias)
+	}
+	index := map[string]ResolvedHost{}
+	if c != nil {
+		index = c.Index()
+	}
+	var rev []ResolvedHost
+	cur := start
+	seen := map[string]bool{}
+	for {
+		if cur.Host == nil {
+			return nil, fmt.Errorf("host %q is missing", cur.Alias)
+		}
+		if seen[cur.Alias] {
+			return nil, fmt.Errorf("host %q: jump cycle", start.Alias)
+		}
+		seen[cur.Alias] = true
+		rev = append(rev, cur)
+		via := strings.TrimSpace(cur.Host.Via)
+		if via == "" {
+			break
+		}
+		if len(rev) >= MaxViaHops {
+			return nil, fmt.Errorf("host %q: jump chain longer than %d", start.Alias, MaxViaHops)
+		}
+		next, ok := index[via]
+		if !ok || next.Host == nil {
+			return nil, fmt.Errorf("host %q: jump host %q does not exist", cur.Alias, via)
+		}
+		cur = next
+	}
+	for i, j := 0, len(rev)-1; i < j; i, j = i+1, j-1 {
+		rev[i], rev[j] = rev[j], rev[i]
+	}
+	return rev, nil
+}
+
+func validateVia(hosts map[string]*Host) error {
+	for alias := range hosts {
+		cur := alias
+		seen := map[string]bool{}
+		hops := 0
+		for {
+			h := hosts[cur]
+			if h == nil {
+				return fmt.Errorf("host %q is null", cur)
+			}
+			via := strings.TrimSpace(h.Via)
+			if via == "" {
+				break
+			}
+			if !ValidName(via) || via == cur {
+				return fmt.Errorf("host %q: invalid jump host %q", cur, via)
+			}
+			if _, ok := hosts[via]; !ok {
+				return fmt.Errorf("host %q: jump host %q does not exist", cur, via)
+			}
+			if seen[cur] {
+				return fmt.Errorf("host %q: jump cycle", alias)
+			}
+			seen[cur] = true
+			hops++
+			if hops >= MaxViaHops {
+				return fmt.Errorf("host %q: jump chain longer than %d", alias, MaxViaHops)
+			}
+			cur = via
+		}
+	}
+	return nil
 }
 
 // Select resolves a selector to concrete hosts.

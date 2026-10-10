@@ -30,8 +30,10 @@ type hostFlags struct {
 	pwStdin  bool
 	policy   string
 	tags     []string
+	via      string
 	def      bool
 	clearTag bool
+	clearVia bool
 }
 
 func bindHostFlags(cmd *cobra.Command, f *hostFlags, add bool) {
@@ -47,9 +49,11 @@ func bindHostFlags(cmd *cobra.Command, f *hostFlags, add bool) {
 	cmd.Flags().BoolVar(&f.pwStdin, "password-stdin", false, "read the password from stdin")
 	cmd.Flags().StringVar(&f.policy, "policy", "", "named policy")
 	cmd.Flags().StringArrayVar(&f.tags, "tag", nil, "tag (repeatable; replaces tags on edit)")
+	cmd.Flags().StringVar(&f.via, "via", "", "already registered jump host; the shell still runs on this host")
 	cmd.Flags().BoolVar(&f.def, "set-default", false, "make this the default host")
 	if !add {
 		cmd.Flags().BoolVar(&f.clearTag, "clear-tags", false, "remove all tags")
+		cmd.Flags().BoolVar(&f.clearVia, "clear-via", false, "connect directly, without a jump host")
 	}
 }
 
@@ -78,6 +82,7 @@ func (a *App) hostAdd() *cobra.Command {
 				Identity:   f.identity,
 				Policy:     f.policy,
 				Tags:       splitList(f.tags),
+				Via:        strings.TrimSpace(f.via),
 				SetDefault: f.def,
 			}
 			if f.port != 0 {
@@ -130,6 +135,7 @@ func (a *App) hostList() *cobra.Command {
 				Port        int      `json:"port"`
 				User        string   `json:"user"`
 				Auth        string   `json:"auth"`
+				Via         string   `json:"via,omitempty"`
 				Tags        []string `json:"tags,omitempty"`
 				Policy      string   `json:"policy,omitempty"`
 				PasswordRef string   `json:"passwordRef,omitempty"`
@@ -140,7 +146,8 @@ func (a *App) hostList() *cobra.Command {
 				views = append(views, view{
 					Alias: alias, Group: h.Group, Env: h.EnvName,
 					Host: h.Host.Host, Port: h.Host.PortOrDefault(), User: h.Host.User,
-					Auth: authLabel(h.Host), Tags: h.Host.Tags, Policy: h.Host.Policy,
+					Auth: authLabel(h.Host), Via: strings.TrimSpace(h.Host.Via),
+					Tags: h.Host.Tags, Policy: h.Host.Policy,
 					PasswordRef: h.Host.PasswordRef,
 				})
 			}
@@ -149,9 +156,13 @@ func (a *App) hostList() *cobra.Command {
 			}
 			rows := make([][]string, len(views))
 			for i, v := range views {
-				rows[i] = []string{v.Alias, v.Group, v.Env, v.Host, fmt.Sprintf("%d", v.Port), v.User, v.Auth, strings.Join(v.Tags, ",")}
+				via := v.Via
+				if via == "" {
+					via = "-"
+				}
+				rows[i] = []string{v.Alias, v.Group, v.Env, v.Host, fmt.Sprintf("%d", v.Port), v.User, v.Auth, via, strings.Join(v.Tags, ",")}
 			}
-			a.table([]string{"ALIAS", "GROUP", "ENV", "HOST", "PORT", "USER", "AUTH", "TAGS"}, rows)
+			a.table([]string{"ALIAS", "GROUP", "ENV", "HOST", "PORT", "USER", "AUTH", "VIA", "TAGS"}, rows)
 			return nil
 		},
 	}
@@ -210,6 +221,16 @@ func (a *App) hostEdit() *cobra.Command {
 			}
 			if f.clearTag && cmd.Flags().Changed("tag") {
 				return exitcode.New(exitcode.Usage, "use only one of --tag and --clear-tags")
+			}
+			if f.clearVia && cmd.Flags().Changed("via") {
+				return exitcode.New(exitcode.Usage, "use only one of --via and --clear-via")
+			}
+			if cmd.Flags().Changed("via") {
+				draft.HasVia = true
+				draft.Via = f.via
+			}
+			if f.clearVia {
+				draft.ClearVia = true
 			}
 			if f.identity != "" && f.pwStdin {
 				return exitcode.New(exitcode.Usage, "pass only one of --identity and --password-stdin")

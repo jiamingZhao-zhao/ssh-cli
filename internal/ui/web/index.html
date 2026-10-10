@@ -31,7 +31,7 @@
             <li class="nav-item"><a class="nav-link" href="#policy" data-view="policy" :class="{ active: is('policy') }" @click.prevent="show('policy')"><span class="nav-link-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 3v6c0 5-3.4 7.8-8 9-4.6-1.2-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></svg></span><span class="nav-link-title">危险命令</span><span class="badge bg-blue-lt ms-auto" x-text="catalog.policies.length"></span></a></li>
             <li class="nav-item"><a class="nav-link" href="#known" data-view="known" :class="{ active: is('known') }" @click.prevent="show('known')"><span class="nav-link-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="8" cy="14" r="4"/><path d="M11.2 12.2L20 4M16 8l3 3M14 6l2 2"/></svg></span><span class="nav-link-title">已知主机密钥</span><span class="badge bg-blue-lt ms-auto" x-text="known.length"></span></a></li>
             <li class="nav-item"><a class="nav-link" href="#audit" data-view="audit" :class="{ active: is('audit') }" @click.prevent="show('audit')"><span class="nav-link-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M8 4h7l3 3v13H6V4h2z"/><path d="M9 11h6M9 15h6M9 19h4"/></svg></span><span class="nav-link-title">审计</span><span class="badge bg-blue-lt ms-auto" x-text="dashEntries()"></span></a></li>
-            <li class="nav-item"><a class="nav-link" href="#relay" data-view="relay" :class="{ active: is('relay') }" @click.prevent="show('relay')"><span class="nav-link-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h11l-3-3M17 16H6l3 3"/><path d="M18 8v3M6 16v-3"/></svg></span><span class="nav-link-title">中继</span></a></li>
+            <li class="nav-item"><a class="nav-link" href="#relay" data-view="relay" :class="{ active: is('relay') }" @click.prevent="show('relay')"><span class="nav-link-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 8h11l-3-3M17 16H6l3 3"/><path d="M18 8v3M6 16v-3"/></svg></span><span class="nav-link-title">跨机拷贝</span></a></li>
             <li class="nav-item"><a class="nav-link" href="#bundle" data-view="bundle" :class="{ active: is('bundle') }" @click.prevent="show('bundle')"><span class="nav-link-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8 4v10l-8 4-8-4V7z"/><path d="M12 11V3M12 11l8-4M12 11L4 7"/></svg></span><span class="nav-link-title">运维</span></a></li>
             <li class="nav-item"><a class="nav-link" href="#settings" data-view="settings" :class="{ active: is('settings') }" @click.prevent="show('settings')"><span class="nav-link-icon" aria-hidden="true"><svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6l1.5 1.5M16.9 16.9l1.5 1.5M18.4 5.6L16.9 7.1M7.1 16.9l-1.5 1.5"/></svg></span><span class="nav-link-title">设置</span></a></li>
           </ul>
@@ -138,6 +138,7 @@
                 <div class="ws-kicker">主机</div>
                 <div class="ws-host" x-text="activeTermAlias() || '未选择'"></div>
                 <div class="text-secondary small" x-text="overviewAddr()"></div>
+                <div class="text-secondary small" x-show="viaOf(activeTermAlias())" x-text="viaOf(activeTermAlias())"></div>
               </div>
               <div class="ws-status" x-show="activeTermAlias()">
                 <span :class="metrics.connected ? 'badge bg-green-lt' : 'badge bg-secondary-lt'" x-text="metrics.connected ? '在线' : '未连接'"></span>
@@ -200,7 +201,7 @@
                   </div>
                   <div class="btn-list">
                     <select class="form-select w-auto" x-model="termAlias" aria-label="终端主机">
-                      <template x-for="h in sortedHosts()" :key="'term-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
+                      <template x-for="h in sortedHosts()" :key="'term-' + h.alias"><option :value="h.alias" x-text="hostOption(h)"></option></template>
                     </select>
                     <button class="btn btn-primary" type="button" @click="openTerminal(termAlias)">打开</button>
                     <button class="btn btn-outline-secondary" type="button" @click="openWorkspaceHost()">连接</button>
@@ -213,6 +214,7 @@
                     <template x-for="tab in termTabs" :key="tab.id">
                       <div class="term-tab" role="presentation" :class="{ active: tab.id === termActive }">
                         <button class="term-tab-label" type="button" role="tab" :aria-selected="tab.id === termActive" @click="showPane(tab.id)" x-text="tab.alias"></button>
+                        <span class="term-tab-via" x-show="viaOf(tab.alias)" x-text="viaOf(tab.alias)"></span>
                         <span class="term-tab-busy" x-show="tabBusy(tab)" aria-hidden="true"></span>
                         <button class="term-tab-close" type="button" @click="closeTab(tab.id)" :aria-label="'关闭 ' + tab.alias">×</button>
                       </div>
@@ -347,7 +349,7 @@
                     <template x-for="h in filteredHosts()" :key="h.alias">
                       <tr>
                         <td><input class="form-check-input" type="checkbox" :checked="!!selected[h.alias]" @change="toggleHost(h.alias, $event.target.checked)" :aria-label="'选择 ' + h.alias"></td>
-                        <td><span x-text="h.alias"></span> <span class="badge bg-blue-lt" x-show="h.default">默认</span></td>
+                        <td><span x-text="h.alias"></span> <span class="badge bg-blue-lt" x-show="h.default">默认</span> <span class="badge bg-secondary-lt" x-show="h.via" x-text="'经由 ' + h.via"></span></td>
                         <td x-text="groupCaption(groupByName(h.group)) || h.group"></td>
                         <td x-text="h.env"></td>
                         <td x-text="h.host"></td>
@@ -401,6 +403,7 @@
                   <div><div class="datagrid-title">分组</div><div x-text="(detail.host.group || '') + (detail.host.groupLabel ? ' / ' + detail.host.groupLabel : '')"></div></div>
                   <div><div class="datagrid-title">环境</div><div x-text="(detail.host.env || '') + (detail.host.envLabel ? ' / ' + detail.host.envLabel : '') + (detail.host.maxMode ? ' / 天花板 ' + detail.host.maxMode : '')"></div></div>
                   <div><div class="datagrid-title">地址</div><div x-text="(detail.host.host || '') + ':' + (detail.host.port || '')"></div></div>
+                  <div><div class="datagrid-title">跳板</div><div x-text="detail.host.via ? ('经由 ' + detail.host.via) : '直连'"></div></div>
                   <div><div class="datagrid-title">用户</div><div x-text="detail.host.user"></div></div>
                   <div><div class="datagrid-title">认证</div><div x-text="detail.host.auth"></div></div>
                   <div><div class="datagrid-title">标签</div><div x-text="(detail.host.tags || []).join(', ') || '无'"></div></div>
@@ -408,7 +411,7 @@
                   <div><div class="datagrid-title">允许</div><div x-text="policySummary(detail.policy)"></div></div>
                   <div><div class="datagrid-title">拒绝</div><div x-text="joinList(detail.policy.deny, '无额外拒绝')"></div></div>
                   <div><div class="datagrid-title">需确认</div><div x-text="joinList(detail.policy.confirm, '无')"></div></div>
-                  <div><div class="datagrid-title">中继</div><div x-text="relayCap(detail.policy)"></div></div>
+                  <div><div class="datagrid-title">跨机拷贝</div><div x-text="relayCap(detail.policy)"></div></div>
                   <div><div class="datagrid-title">上传 / 下载</div><div x-text="capText(detail.policy)"></div></div>
                   <div><div class="datagrid-title">数据外流</div><div x-text="outflowText(detail.policy)"></div></div>
                 </div>
@@ -909,7 +912,7 @@
 
           <div x-show="is('relay')" data-view="relay">
             <form class="card" @submit.prevent="runRelay()">
-              <div class="card-header"><h3 class="card-title">中继</h3></div>
+              <div class="card-header"><h3 class="card-title">跨机拷贝</h3></div>
               <div class="card-body">
                 <p class="text-secondary">把一个远端文件经本机流转到另一台主机，并核对 sha256，没有 sha256sum 时改对 md5。不保存明文副本。</p>
                 <div class="alert alert-danger" role="alert" x-show="errors.relay" x-text="errors.relay"></div>
@@ -926,7 +929,7 @@
                   <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="relay.allowCrossEnv"><span class="form-check-label">允许跨环境</span></label></div>
                 </div>
               </div>
-              <div class="card-footer"><button class="btn btn-primary" type="submit">中继</button></div>
+              <div class="card-footer"><button class="btn btn-primary" type="submit">跨机拷贝</button></div>
             </form>
             <div class="card mt-3" x-show="operateOut"><div class="card-body"><pre class="mb-0" x-text="operateOut"></pre></div></div>
           </div>
@@ -980,7 +983,7 @@
             <form class="card" @submit.prevent="saveSettings()">
               <div class="card-header">
                 <h3 class="card-title">设置</h3>
-                <p class="text-secondary m-0">超时、分页、主题和中继默认值保存在这台浏览器里。会话空闲和最长寿命写入 hosts.yaml，和命令行 session 用的是同一组字段。不保存密码。</p>
+                <p class="text-secondary m-0">超时、分页、主题和跨机拷贝默认值保存在这台浏览器里。会话空闲和最长寿命写入 hosts.yaml，和命令行 session 用的是同一组字段。不保存密码。</p>
               </div>
               <div class="card-body">
                 <div class="alert alert-danger" role="alert" x-show="errors.settings" x-text="errors.settings"></div>
@@ -997,7 +1000,7 @@
                   </div>
                   <div class="col-md-4"><label class="form-label">会话空闲关闭</label><input class="form-control" x-model="draft.idle" placeholder="5m" autocomplete="off"></div>
                   <div class="col-md-4"><label class="form-label">会话最长寿命</label><input class="form-control" x-model="draft.maxLife" placeholder="60m" autocomplete="off"></div>
-                  <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="draft.relayCrossEnv"><span class="form-check-label">中继表单默认允许跨环境</span></label></div>
+                  <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="draft.relayCrossEnv"><span class="form-check-label">跨机拷贝表单默认允许跨环境</span></label></div>
                 </div>
                 <p class="text-secondary mt-3 mb-0" x-text="settingsNote"></p>
               </div>
@@ -1029,6 +1032,15 @@
               </div>
               <div class="col-md-8"><label class="form-label">地址</label><input class="form-control" x-model="hostForm.host" required placeholder="192.0.2.10" autocomplete="off"></div>
               <div class="col-md-4"><label class="form-label">端口</label><input class="form-control" type="number" min="0" max="65535" x-model="hostForm.port" placeholder="22"></div>
+              <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="hostForm.useVia"><span class="form-check-label">经跳板</span></label></div>
+              <div class="col-md-6" x-show="hostForm.useVia">
+                <label class="form-label">跳板主机</label>
+                <select class="form-select" x-model="hostForm.via">
+                  <option value="">选择已登记的主机</option>
+                  <template x-for="h in jumpChoices()" :key="'via-' + h.alias"><option :value="h.alias" x-text="h.alias + ' · ' + h.user + '@' + h.host"></option></template>
+                </select>
+                <p class="form-hint">先连这台已登记的跳板，再进入当前主机。终端、概况、文件和历史都是当前主机，跳板只负责把连接送过去。</p>
+              </div>
               <div class="col-md-6"><label class="form-label">用户</label><input class="form-control" x-model="hostForm.user" required autocomplete="off"></div>
               <div class="col-md-6"><label class="form-label">密码</label><input class="form-control" type="password" x-model="hostForm.password" autocomplete="new-password"></div>
               <div class="col-md-6"><label class="form-label">私钥路径</label><input class="form-control" x-model="hostForm.identity" placeholder="~/.ssh/id_ed25519" autocomplete="off"></div>

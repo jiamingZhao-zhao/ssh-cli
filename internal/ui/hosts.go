@@ -24,6 +24,7 @@ type HostDraft struct {
 	Identity   string
 	Policy     string
 	Tags       []string
+	Via        string
 	Allow      *[]string
 	Deny       []string
 	Confirm    []string
@@ -38,6 +39,7 @@ type HostDraft struct {
 	HasIdentity  bool
 	HasPolicy    bool
 	HasTags      bool
+	HasVia       bool
 	HasAllow     bool
 	HumanConfirm string
 	Actor        string
@@ -68,7 +70,11 @@ func AddHost(dir string, in HostDraft) error {
 	}
 	password := in.Password
 	in.Password = ""
+	via := strings.TrimSpace(in.Via)
 	return config.Update(dir, func(cfg *config.Config) error {
+		if err := cfg.CheckJump(alias, via); err != nil {
+			return err
+		}
 		if _, ok := cfg.Find(alias); ok {
 			return fmt.Errorf("host %q already exists", alias)
 		}
@@ -85,6 +91,7 @@ func AddHost(dir string, in HostDraft) error {
 			Port:    normalizePortPtr(in.Port),
 			Tags:    cleanTags(in.Tags),
 			Policy:  in.Policy,
+			Via:     via,
 			Allow:   cloneListPtr(in.Allow),
 			Deny:    append([]string(nil), in.Deny...),
 			Confirm: append([]string(nil), in.Confirm...),
@@ -123,7 +130,7 @@ func UpdateHost(dir string, in HostDraft) error {
 		return err
 	}
 	changed := in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
-		in.HasPassword || in.HasPolicy || in.HasTags || in.HasAllow || in.HasDeny || in.HasConfirm ||
+		in.HasPassword || in.HasPolicy || in.HasTags || in.HasVia || in.HasAllow || in.HasDeny || in.HasConfirm ||
 		in.SetDefault || in.ClearTags
 	if !changed {
 		return fmt.Errorf("no changes given")
@@ -189,6 +196,13 @@ func UpdateHost(dir string, in HostDraft) error {
 		}
 		if in.ClearTags {
 			h.Tags = nil
+		}
+		if in.HasVia {
+			via := strings.TrimSpace(in.Via)
+			if err := cfg.CheckJump(alias, via); err != nil {
+				return err
+			}
+			h.Via = via
 		}
 		if in.HasAllow {
 			h.Allow = cloneListPtr(in.Allow)
@@ -285,6 +299,9 @@ func RemoveHost(dir, alias string) error {
 		found, ok := cfg.Find(alias)
 		if !ok {
 			return fmt.Errorf("host %q not found", alias)
+		}
+		if deps := cfg.JumpDependents(alias); len(deps) > 0 {
+			return fmt.Errorf("host %q is the jump host for %s", alias, strings.Join(deps, ", "))
 		}
 		ref := found.Host.PasswordRef
 		delete(found.GroupDef.Hosts, alias)

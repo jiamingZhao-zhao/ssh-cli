@@ -523,6 +523,13 @@ body,
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.term-tab-via {
+  margin-inline-end: 0.35rem;
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--mh-muted);
+  white-space: nowrap;
+}
 .term-tab-close {
   width: 1.6rem;
   height: 1.6rem;

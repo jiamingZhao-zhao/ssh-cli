@@ -91,6 +91,7 @@ func (s *service) hostDetailAPI(w http.ResponseWriter, r *http.Request) {
 		"alias": h.Alias, "group": h.Group, "env": h.EnvName,
 		"host": h.Host.Host, "port": h.Host.PortOrDefault(), "user": h.Host.User,
 		"auth": authOf(h.Host), "tags": h.Host.Tags, "policy": h.Host.Policy,
+		"via":     strings.TrimSpace(h.Host.Via),
 		"default": cfg.Default == h.Alias,
 	}
 	fillRulesJSON(view, h.Host.Allow, h.Host.Deny, h.Host.Confirm)

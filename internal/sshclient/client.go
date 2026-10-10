@@ -15,9 +15,13 @@ import (
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 )
 
-// Client is one SSH connection.
+// Client is one SSH connection to the destination.
+// carriers are earlier jump connections that only forward direct-tcpip.
+// They are closed after conn so the destination handshake stays up
+// until the caller is done. No shell is opened on a carrier.
 type Client struct {
-	conn *ssh.Client
+	conn     *ssh.Client
+	carriers []*ssh.Client
 }
 
 // Dial connects and authenticates. timeout bounds the TCP dial and handshake.
@@ -48,12 +52,26 @@ func Dial(ctx context.Context, addr, user string, auth []ssh.AuthMethod, hk ssh.
 	return &Client{conn: ssh.NewClient(c, chans, reqs)}, nil
 }
 
-// Close closes the connection.
+// Close closes the destination, then the jump connections that carried it.
 func (c *Client) Close() error {
-	if c == nil || c.conn == nil {
+	if c == nil {
 		return nil
 	}
-	return c.conn.Close()
+	var err error
+	if c.conn != nil {
+		err = c.conn.Close()
+		c.conn = nil
+	}
+	for i := len(c.carriers) - 1; i >= 0; i-- {
+		if c.carriers[i] == nil {
+			continue
+		}
+		if e := c.carriers[i].Close(); err == nil {
+			err = e
+		}
+	}
+	c.carriers = nil
+	return err
 }
 
 // Raw returns the underlying client for SFTP.

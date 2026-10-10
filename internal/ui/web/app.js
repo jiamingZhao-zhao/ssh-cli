@@ -180,6 +180,7 @@ function sshui() {
     netSeries: {},
     metricsTimer: 0,
     metricsSeq: 0,
+    readAbort: {},
     files: { alias: "", mode: "files", path: "", parent: "", crumbs: [], entries: [], truncated: false },
     drop: { over: false, target: "", label: "" },
     transfers: [],
@@ -203,7 +204,7 @@ function sshui() {
       audit: "审计",
       sessions: "会话",
       operate: "执行",
-      relay: "中继",
+      relay: "跨机拷贝",
       bundle: "运维",
       settings: "设置"
     },
@@ -422,6 +423,31 @@ function sshui() {
       if (this.csrf) return;
       const data = await this.readJSON(await this.api("/api/session"));
       this.csrf = data.csrf || "";
+    },
+
+    replaceRead(key) {
+      this.abortRead(key);
+      if (typeof AbortController === "undefined") return undefined;
+      const ctrl = new AbortController();
+      this.readAbort[key] = ctrl;
+      return ctrl.signal;
+    },
+
+    abortRead(key) {
+      const ctrl = this.readAbort && this.readAbort[key];
+      if (ctrl) ctrl.abort();
+      if (this.readAbort) delete this.readAbort[key];
+    },
+
+    async postRead(url, body, signal) {
+      await this.ensureSession();
+      const res = await this.api(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body || {}),
+        signal: signal
+      });
+      return this.readJSON(res);
     },
 
     async postJSON(url, body) {
@@ -893,6 +919,23 @@ function sshui() {
       return (h.user || "") + "@" + (h.host || "") + ":" + (h.port || "");
     },
 
+    viaOf(alias) {
+      const h = this.hostByAlias(alias);
+      if (!h || !h.via) return "";
+      return "经由 " + h.via;
+    },
+
+    hostOption(h) {
+      if (!h) return "";
+      if (h.via) return h.alias + "（经由 " + h.via + "）";
+      return h.alias;
+    },
+
+    jumpChoices() {
+      const self = this.hostForm && this.hostForm.alias;
+      return this.sortedHosts().filter((h) => h.alias && h.alias !== self);
+    },
+
     sideStyle() { return "width:" + this.ws.side + "px"; },
     lowerStyle() { return "height:" + this.ws.lower + "px"; },
 
@@ -927,9 +970,11 @@ function sshui() {
       const alias = this.activeTermAlias();
       if (!alias) {
         this.stopMetrics();
+        this.abortRead("files");
         return;
       }
       if (this.files.alias !== alias) {
+        this.abortRead("files");
         this.files.alias = alias;
         this.files.path = "";
         this.files.parent = "";
@@ -957,6 +1002,7 @@ function sshui() {
     },
 
     stopMetrics() {
+      this.abortRead("metrics");
       if (this.metricsTimer) {
         window.clearInterval(this.metricsTimer);
         this.metricsTimer = 0;
@@ -967,8 +1013,9 @@ function sshui() {
       const alias = this.activeTermAlias();
       if (!alias || this.view !== "terminal") return;
       const seq = ++this.metricsSeq;
+      const signal = this.replaceRead("metrics");
       try {
-        const data = await this.postJSON("/api/metrics", { alias: alias });
+        const data = await this.postRead("/api/metrics", { alias: alias }, signal);
         if (seq !== this.metricsSeq || this.activeTermAlias() !== alias) return;
         data.procs = data.procs || [];
         data.disks = data.disks || [];
@@ -977,6 +1024,7 @@ function sshui() {
         this.pushNet(alias, data.netRx, data.netTx);
         this.setError("metrics", "");
       } catch (err) {
+        if (err && err.name === "AbortError") return;
         if (seq !== this.metricsSeq) return;
         this.metrics.connected = false;
         this.metrics.alias = alias;
@@ -1100,8 +1148,10 @@ function sshui() {
         return;
       }
       this.setError("files", "");
+      const signal = this.replaceRead("files");
       try {
-        const data = await this.postJSON("/api/files/list", { alias: alias, path: path || "." });
+        const data = await this.postRead("/api/files/list", { alias: alias, path: path || "." }, signal);
+        if (this.activeTermAlias() !== alias) return;
         this.files.alias = alias;
         this.files.path = data.path || "";
         this.files.parent = data.parent || "";
@@ -1109,6 +1159,8 @@ function sshui() {
         this.files.entries = data.entries || [];
         this.files.truncated = !!data.truncated;
       } catch (err) {
+        if (err && err.name === "AbortError") return;
+        if (this.activeTermAlias() !== alias) return;
         this.setError("files", err.message || "列目录失败");
       }
     },
@@ -1506,12 +1558,16 @@ function sshui() {
       }
       this.files.mode = "history";
       this.setError("files", "");
+      const signal = this.replaceRead("files");
       try {
-        const data = await this.postJSON("/api/history", { alias: name, lines: 100 });
+        const data = await this.postRead("/api/history", { alias: name, lines: 100 }, signal);
+        if (this.activeTermAlias() !== name) return;
         data.lines = data.lines || [];
         data.notes = data.notes || [];
         this.historyView = data;
       } catch (err) {
+        if (err && err.name === "AbortError") return;
+        if (this.activeTermAlias() !== name) return;
         this.historyView = { alias: name, found: false, status: "error", lines: [], notes: [], error: err.message || "读取历史失败" };
         this.setError("files", err.message || "读取历史失败");
       }
@@ -1610,7 +1666,7 @@ function sshui() {
     blankHost() {
       return {
         editing: false, alias: "", group: "", host: "", port: "", user: "", password: "", identity: "",
-        policy: "", tags: "", allowMode: "all", allow: [], deny: [], confirm: [], setDefault: false
+        policy: "", tags: "", useVia: false, via: "", allowMode: "all", allow: [], deny: [], confirm: [], setDefault: false
       };
     },
 
@@ -1645,6 +1701,8 @@ function sshui() {
           identity: "",
           policy: h.policy || "",
           tags: (h.tags || []).join(","),
+          useVia: !!h.via,
+          via: h.via || "",
           allowMode: h.allowSet ? "list" : "all",
           allow: this.rulesFrom(h.allow),
           deny: this.rulesFrom(h.deny),
@@ -1659,6 +1717,10 @@ function sshui() {
     async saveHost() {
       this.setError("hostForm", "");
       const form = this.hostForm;
+      if (form.useVia && !String(form.via || "").trim()) {
+        this.setError("hostForm", "请选择已登记的跳板主机。");
+        return;
+      }
       const body = Object.assign({
         alias: String(form.alias || "").trim(),
         group: form.group,
@@ -1666,6 +1728,7 @@ function sshui() {
         user: String(form.user || "").trim(),
         policy: form.policy || "",
         tags: this.commaList(form.tags),
+        via: form.useVia ? String(form.via || "").trim() : "",
         setDefault: !!form.setDefault
       }, this.rulePayload(form));
       if (String(form.port) !== "") body.port = Number(form.port);
@@ -2223,7 +2286,7 @@ function sshui() {
       const q = String(this.q.hosts || "").trim().toLowerCase();
       return this.sortedHosts().filter((h) => {
         if (!q) return true;
-        const blob = [h.alias, h.group, h.host, h.user, h.env, (h.tags || []).join(" ")].join(" ").toLowerCase();
+        const blob = [h.alias, h.group, h.host, h.user, h.env, h.via || "", (h.tags || []).join(" ")].join(" ").toLowerCase();
         return blob.indexOf(q) >= 0;
       });
     },
