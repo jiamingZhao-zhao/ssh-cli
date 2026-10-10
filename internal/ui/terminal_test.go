@@ -428,9 +428,8 @@ func TestTerminalTabAliasIsNotNestedButton(t *testing.T) {
 	}
 	chunk := rest[:end]
 	for _, s := range []string{
-		`class="term-tab btn btn-sm"`,
-		`btn-primary`,
-		`btn-outline-secondary`,
+		`class="term-tab"`,
+		`:class="{ active: tab.id === termActive }"`,
 		`x-text="tab.alias"`,
 		`showPane(tab.id)`,
 		`closeTab(tab.id)`,
@@ -442,8 +441,8 @@ func TestTerminalTabAliasIsNotNestedButton(t *testing.T) {
 			t.Fatalf("tab chrome missing %s: %s", s, chunk)
 		}
 	}
-	if strings.Contains(chunk, "text-white") {
-		t.Fatalf("text-white still depends on hover to reveal the alias: %s", chunk)
+	if strings.Contains(chunk, "btn") || strings.Contains(chunk, "text-white") {
+		t.Fatalf("tab still uses .btn or text-white: %s", chunk)
 	}
 	for i := 0; i < len(chunk); {
 		j := strings.Index(chunk[i:], "<button")
@@ -462,7 +461,7 @@ func TestTerminalTabAliasIsNotNestedButton(t *testing.T) {
 		i = j + k
 	}
 	style := get("/app.css")
-	for _, s := range []string{".term-tab.btn", ".term-tab button", "background-color: transparent", "color: inherit"} {
+	for _, s := range []string{".term-tab.active", ".term-tab button", "background: #0052cc", "color: #172b4d", "background-color: transparent", "color: inherit"} {
 		if !strings.Contains(style, s) {
 			t.Fatalf("app.css missing %s", s)
 		}
