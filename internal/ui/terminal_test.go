@@ -401,6 +401,74 @@ func TestTerminalUIDoesNotStickFalseBanner(t *testing.T) {
 	}
 }
 
+func TestTerminalTabAliasIsNotNestedButton(t *testing.T) {
+	dir := t.TempDir()
+	h := Handler(dir, false)
+	get := func(path string) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req.RemoteAddr = "127.0.0.1:9"
+		req.Host = "127.0.0.1"
+		rr := httptest.NewRecorder()
+		h.ServeHTTP(rr, req)
+		if rr.Code != http.StatusOK {
+			t.Fatalf("%s %d", path, rr.Code)
+		}
+		return rr.Body.String()
+	}
+	body := get("/")
+	start := strings.Index(body, `x-for="tab in termTabs"`)
+	if start < 0 {
+		t.Fatal("terminal tab template missing")
+	}
+	rest := body[start:]
+	end := strings.Index(rest, "</template>")
+	if end < 0 {
+		t.Fatal("terminal tab template not closed")
+	}
+	chunk := rest[:end]
+	for _, s := range []string{
+		`class="term-tab btn btn-sm"`,
+		`btn-primary`,
+		`btn-outline-secondary`,
+		`x-text="tab.alias"`,
+		`showPane(tab.id)`,
+		`closeTab(tab.id)`,
+		`class="term-tab-label"`,
+		`class="term-tab-close"`,
+		`关闭 `,
+	} {
+		if !strings.Contains(chunk, s) {
+			t.Fatalf("tab chrome missing %s: %s", s, chunk)
+		}
+	}
+	if strings.Contains(chunk, "text-white") {
+		t.Fatalf("text-white still depends on hover to reveal the alias: %s", chunk)
+	}
+	for i := 0; i < len(chunk); {
+		j := strings.Index(chunk[i:], "<button")
+		if j < 0 {
+			break
+		}
+		j += i
+		k := strings.Index(chunk[j:], ">")
+		if k < 0 {
+			t.Fatal("unclosed button in terminal tab")
+		}
+		open := chunk[j : j+k]
+		if strings.Contains(open, " btn") || strings.Contains(open, `class="btn`) {
+			t.Fatalf("nested .btn paints a light face over the alias: %s", open)
+		}
+		i = j + k
+	}
+	style := get("/app.css")
+	for _, s := range []string{".term-tab.btn", ".term-tab button", "background-color: transparent", "color: inherit"} {
+		if !strings.Contains(style, s) {
+			t.Fatalf("app.css missing %s", s)
+		}
+	}
+}
+
 func terminalConnectFailure(recs []audit.Record, reason string) bool {
 	for _, rec := range recs {
 		if rec.Op == audit.OpTerminal && rec.Host == "down" && rec.Status == audit.StatusConnect && rec.Reason == "open" && rec.ResultSummary == reason {

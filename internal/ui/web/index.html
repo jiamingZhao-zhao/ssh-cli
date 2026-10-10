@@ -151,9 +151,9 @@
               <div class="card-body border-bottom py-2" x-show="termTabs.length > 0">
                 <div class="btn-list">
                   <template x-for="tab in termTabs" :key="tab.id">
-                    <span class="btn btn-sm" :class="tab.id === termActive ? 'btn-primary' : 'btn-outline-secondary'">
-                      <button class="btn btn-sm p-0 border-0" type="button" :class="tab.id === termActive ? 'text-white' : ''" @click="showPane(tab.id)" x-text="tab.alias"></button>
-                      <button class="btn btn-sm p-0 border-0 ms-2" type="button" :class="tab.id === termActive ? 'text-white' : ''" @click="closeTab(tab.id)" :aria-label="'关闭 ' + tab.alias">×</button>
+                    <span class="term-tab btn btn-sm" :class="tab.id === termActive ? 'btn-primary' : 'btn-outline-secondary'">
+                      <button class="term-tab-label" type="button" @click="showPane(tab.id)" x-text="tab.alias"></button>
+                      <button class="term-tab-close" type="button" @click="closeTab(tab.id)" :aria-label="'关闭 ' + tab.alias">×</button>
                     </span>
                   </template>
                 </div>

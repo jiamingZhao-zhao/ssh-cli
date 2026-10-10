@@ -61,3 +61,40 @@
 }
 .term-pane { display: none; height: 420px; }
 .term-pane.active { display: block; }
+/* One Tabler .btn paints the chip. Nested .btn faces are light and hide the alias on btn-primary. */
+.term-tab.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: default;
+}
+.term-tab button {
+  appearance: none;
+  -webkit-appearance: none;
+  background: transparent;
+  background-color: transparent;
+  border: 0;
+  box-shadow: none;
+  margin: 0;
+  padding: 0;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+.term-tab .term-tab-close {
+  padding-inline: 0.1rem;
+}
+.term-tab button:hover,
+.term-tab button:focus,
+.term-tab button:focus-visible {
+  color: inherit;
+  background: transparent;
+  background-color: transparent;
+  box-shadow: none;
+}
+.term-tab button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  border-radius: 6px;
+}
