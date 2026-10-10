@@ -378,6 +378,12 @@ function sshui() {
       const m = String(msg || "");
       if (!m) return "操作没有完成。看审计里的最近失败，或回到概览。";
       const low = m.toLowerCase();
+      if (low.indexOf("jump cycle") >= 0) return "这几台主机会互相绕回去。改成直连，或换一台不会绕回来的跳板。";
+      if (low.indexOf("invalid jump host") >= 0) return "不能把这台主机自己当成跳板。选另一台已经保存的主机，或取消「经跳板」。";
+      if (low.indexOf("jump host") >= 0 && low.indexOf("does not exist") >= 0) return "跳板还没登记。先在主机页添加那台跳板，再回来选择。";
+      if (low.indexOf("is the jump host for") >= 0) return "还有别的主机要经过它才能连接。先编辑那些主机，取消「经跳板」或换一台，再删除。";
+      if (low.indexOf("jump chain longer") >= 0) return "跳板一层套一层，最多 8 台。改短一点再保存。";
+      if (low.indexOf("invalid via") >= 0) return "跳板没选对。从列表里选一台已经保存的主机。";
       if (/denied|policy|builtin/.test(low) || m.indexOf("拒绝") >= 0 || m.indexOf("拦截") >= 0) {
         return m + "。打开主机详情看命中的规则。内置硬拒绝不能在页面里关闭。";
       }
@@ -923,12 +929,6 @@ function sshui() {
       const h = this.hostByAlias(alias);
       if (!h || !h.via) return "";
       return "经由 " + h.via;
-    },
-
-    hostOption(h) {
-      if (!h) return "";
-      if (h.via) return h.alias + "（经由 " + h.via + "）";
-      return h.alias;
     },
 
     jumpChoices() {
@@ -1717,9 +1717,19 @@ function sshui() {
     async saveHost() {
       this.setError("hostForm", "");
       const form = this.hostForm;
-      if (form.useVia && !String(form.via || "").trim()) {
-        this.setError("hostForm", "请选择已登记的跳板主机。");
+      if (form.useVia && this.jumpChoices().length === 0) {
+        this.setError("hostForm", "还没有其他主机可以当跳板。先添加那台跳板并保存，再回来编辑。");
         return;
+      }
+      if (form.useVia && !String(form.via || "").trim()) {
+        this.setError("hostForm", "请选择一台已经保存的跳板。");
+        return;
+      }
+      if (form.editing) {
+        const prev = this.hostByAlias(String(form.alias || "").trim());
+        const nextVia = form.useVia ? String(form.via || "").trim() : "";
+        const prevVia = prev && prev.via ? prev.via : "";
+        if (nextVia !== prevVia && !window.confirm("跳板改了之后，这台主机已经打开的连接会断开。保存吗？")) return;
       }
       const body = Object.assign({
         alias: String(form.alias || "").trim(),

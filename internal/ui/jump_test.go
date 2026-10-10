@@ -56,7 +56,7 @@ func TestJumpHostUIAndDirectDial(t *testing.T) {
 
 	page := get("/")
 	body := page.Body.String()
-	for _, s := range []string{"经跳板", "跨机拷贝", "经由 ", "term-tab-via", `x-text="tab.alias"`} {
+	for _, s := range []string{"经跳板", "跨机拷贝", "经由 ", "先经过", "还没有其他主机可以当跳板", "ws-via", "jump-box", "term-tab-via", `x-text="tab.alias"`} {
 		if !strings.Contains(body, s) {
 			t.Fatalf("page missing %s", s)
 		}

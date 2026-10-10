@@ -50,6 +50,7 @@ func TestWorkspaceChrome(t *testing.T) {
 		"ws-download-lane",
 		"拖到这里下载到本机",
 		"复制路径",
+		"ws-via",
 	} {
 		if !strings.Contains(chunk, s) {
 			t.Fatalf("workspace missing %s", s)
@@ -64,7 +65,7 @@ func TestWorkspaceChrome(t *testing.T) {
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "abortRead", "postRead"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}
