@@ -8,11 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/metrics"
 )
 
 func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	var body struct {
 		Alias  string `json:"alias"`
 		Source string `json:"source"`
@@ -27,7 +30,7 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	human := s.workspaceHuman(r)
+	human := s.workspaceProbeExempt(r)
 	s.reconcile()
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
@@ -45,6 +48,7 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}, metrics.Options{Pause: 200 * time.Millisecond})
 	if runErr != nil {
+		s.writeAudit(h, audit.OpMetrics, "metrics", "", "", audit.StatusError, 1, runErr.Error(), runErr.Error(), false, started)
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"ok": false, "alias": h.Alias, "error": runErr.Error(), "connected": false,
 			"address": h.Host.Host, "port": h.Host.PortOrDefault(), "user": h.Host.User,
@@ -52,6 +56,7 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
+	s.writeAudit(h, audit.OpMetrics, "metrics", "", "", audit.StatusOK, 0, "metrics", "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "connected": true,
 		"address": h.Host.Host, "port": h.Host.PortOrDefault(), "user": h.Host.User,
@@ -85,17 +90,23 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	human := s.workspaceHuman(r)
+	probe := s.workspaceProbeExempt(r)
+	started := time.Now()
+	if !probe {
+		for _, command := range []string{argsCmd, cwdCmd} {
+			d := guard.Decide(eff, command)
+			if !d.Allowed {
+				text := decisionText(d)
+				s.writeAudit(h, audit.OpPolicyCheck, "proc", "", strings.TrimSpace(body.PID), audit.StatusDenied, exitcode.Denied, text, text, true, started)
+				writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
+				return
+			}
+		}
+	}
 	s.reconcile()
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 	run := func(command string) (string, string, error) {
-		if !human {
-			d := guard.Decide(eff, command)
-			if !d.Allowed {
-				return "", "", errString(decisionText(d))
-			}
-		}
 		stdout, stderr, code, runErr := s.poolRun(ctx, h, command, 8*time.Second)
 		if runErr != nil {
 			return "", "", runErr
@@ -112,13 +123,16 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		return stdout, "", nil
 	}
+	pid := strings.TrimSpace(body.PID)
 	argsOut, argsNote, err := run(argsCmd)
 	if err != nil {
+		s.writeAudit(h, audit.OpMetrics, "proc", "", pid, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
 	cwdOut, cwdNote, err := run(cwdCmd)
 	if err != nil {
+		s.writeAudit(h, audit.OpMetrics, "proc", "", pid, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -131,6 +145,7 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 			note = "读不到工作目录"
 		}
 	}
+	s.writeAudit(h, audit.OpMetrics, "proc", "", pid, audit.StatusOK, 0, "proc pid="+pid, "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "pid": strings.TrimSpace(body.PID),
 		"args": args, "cwd": cwd, "note": note, "argsNote": argsNote,

@@ -38,10 +38,12 @@ const (
 	OpHistory      = "history"
 	OpList         = "list"
 	OpMetrics      = "metrics"
+	OpFileChange   = "file_change"
 
 	// SourceCLI and SourceUI record who drove the operation.
 	// cli is the command line and agents. ui is the localhost page.
 	// Interactive terminal sessions are ui and do not apply command policy.
+	// Workspace file, history, and metric calls are also ui and are audited.
 	SourceCLI = "cli"
 	SourceUI  = "ui"
 
@@ -109,7 +111,7 @@ func ValidStatus(s string) bool {
 // ValidOp reports whether s is a known operation filter value.
 func ValidOp(s string) bool {
 	switch s {
-	case OpExec, OpUpload, OpDownload, OpPolicyCheck, OpStatus, OpService, OpKeys, OpConfigChange, OpSession, OpRelay, OpTerminal, OpHistory, OpList, OpMetrics:
+	case OpExec, OpUpload, OpDownload, OpPolicyCheck, OpStatus, OpService, OpKeys, OpConfigChange, OpSession, OpRelay, OpTerminal, OpHistory, OpList, OpMetrics, OpFileChange:
 		return true
 	default:
 		return false

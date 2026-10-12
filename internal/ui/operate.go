@@ -6,6 +6,7 @@ import (
 	"compress/gzip"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -20,6 +21,7 @@ import (
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/bundle"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/transfer"
 )
@@ -82,6 +84,7 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 			return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": err.Error(), "alias": h.Alias}}
 		}
 	}
+	started := time.Now()
 	phrase := strings.TrimSpace(body.Confirm)
 	if body.Confirms != nil {
 		if v := strings.TrimSpace(body.Confirms[h.Alias]); v != "" {
@@ -90,8 +93,10 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 	}
 	dec := guard.Decide(eff, body.Command)
 	if !dec.Allowed {
+		text := decisionText(dec)
+		s.writeAudit(h, audit.OpPolicyCheck, body.Command, "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
 		return execHit{status: http.StatusForbidden, payload: map[string]any{
-			"ok": false, "alias": h.Alias, "error": decisionText(dec), "status": audit.StatusDenied,
+			"ok": false, "alias": h.Alias, "error": text, "status": audit.StatusDenied,
 		}}
 	}
 	if dec.NeedsConfirm && phrase != h.Alias {
@@ -133,6 +138,7 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 		summary = guard.OutflowDiscarded
 	}
 	if err != nil {
+		s.writeAudit(h, audit.OpExec, body.Command, "", "", audit.StatusError, code, err.Error(), err.Error(), false, started)
 		return execHit{status: http.StatusBadRequest, payload: map[string]any{
 			"ok": false, "alias": h.Alias, "error": err.Error(), "exitCode": code, "status": audit.StatusError,
 		}}
@@ -141,6 +147,7 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 	if code != 0 {
 		status = audit.StatusError
 	}
+	s.writeAudit(h, audit.OpExec, body.Command, "", "", status, code, summary, "", false, started)
 	resp := map[string]any{
 		"ok": true, "alias": h.Alias, "exitCode": code, "stdout": stdout.String(), "stderr": stderr.String(),
 		"truncated": stdout.cut || stderr.cut, "status": status,
@@ -170,24 +177,14 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer file.Close()
+	started := time.Now()
 	_, h, eff, err := s.hostPlan(alias)
 	if err != nil {
 		writeFail(w, err)
 		return
 	}
-	human := s.workspaceHuman(r)
-	if !human {
-		dec := guard.DecideCapability(eff, "upload", remote)
-		if !dec.Allowed {
-			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec)})
-			return
-		}
-		if dec.NeedsConfirm && confirm != h.Alias {
-			writeJSON(w, http.StatusConflict, map[string]any{
-				"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": "type the host alias to confirm",
-			})
-			return
-		}
+	if !s.requireCapability(w, h, eff, "upload", remote, confirm, audit.OpUpload, started) {
+		return
 	}
 	name, err := cleanUploadName(hdr.Filename)
 	if err != nil {
@@ -215,27 +212,33 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 	s.reconcile()
 	client, err := s.dialResolved(r.Context(), h)
 	if err != nil {
+		s.writeAudit(h, audit.OpUpload, audit.OpUpload, "", remote, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
 	defer client.Close()
 	err = transfer.UploadChecked(client.Raw(), tmpName, remote, nil, func(dest string) error {
-		if human {
-			return nil
-		}
 		d := guard.DecideCapability(eff, "upload", dest)
 		if !d.Allowed {
-			return fmt.Errorf("%s", decisionText(d))
+			return capabilityError(decisionText(d))
 		}
-		if d.NeedsConfirm && confirm != h.Alias {
-			return fmt.Errorf("type the host alias to confirm")
+		if d.NeedsConfirm && strings.TrimSpace(confirm) != h.Alias {
+			return errString("type the host alias to confirm")
 		}
 		return nil
 	})
 	if err != nil {
+		var denied capabilityError
+		if errors.As(err, &denied) {
+			s.writeAudit(h, audit.OpPolicyCheck, audit.OpUpload, "", remote, audit.StatusDenied, exitcode.Denied, denied.Error(), denied.Error(), true, started)
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": denied.Error(), "status": "denied"})
+			return
+		}
+		s.writeAudit(h, audit.OpUpload, audit.OpUpload, "", remote, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
+	s.writeAudit(h, audit.OpUpload, audit.OpUpload, name, remote, audit.StatusOK, 0, "upload "+remote, "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -249,22 +252,20 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
+	started := time.Now()
 	_, h, eff, err := s.hostPlan(body.Alias)
 	if err != nil {
 		writeFail(w, err)
 		return
 	}
-	if !s.workspaceHuman(r) {
-		dec := guard.DecideCapability(eff, "download", body.Path)
-		if !dec.Allowed {
-			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec)})
-			return
-		}
+	if !s.requireCapability(w, h, eff, "download", body.Path, body.Confirm, audit.OpDownload, started) {
+		return
 	}
 	s.reconcile()
 	ctx := r.Context()
 	client, err := s.dialResolved(ctx, h)
 	if err != nil {
+		s.writeAudit(h, audit.OpDownload, audit.OpDownload, body.Path, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -283,12 +284,14 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	remote := transfer.RestoreRemotePath(body.Path)
 	sf, err := transfer.Client(client.Raw())
 	if err != nil {
+		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
 	defer sf.Close()
 	info, err := sf.Stat(remote)
 	if err != nil {
+		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -301,9 +304,11 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 		defer os.RemoveAll(tmp)
 		dest := filepath.Join(tmp, "payload")
 		if err := transfer.Download(client.Raw(), remote, dest, nil); err != nil {
+			s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 			writeFail(w, err)
 			return
 		}
+		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusOK, 0, "directory "+remote, "", false, started)
 		w.Header().Set("Content-Type", "application/gzip")
 		w.Header().Set("Content-Disposition", "attachment; filename=\"download.tar.gz\"")
 		_ = tarGz(w, dest)
@@ -311,6 +316,7 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	src, err := sf.Open(remote)
 	if err != nil {
+		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -320,8 +326,36 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
 	// Read in small chunks so cancel closes the client between packets.
 	// io.Copy would use sftp's concurrent WriteTo.
-	_ = copyWithCancel(ctx, w, src)
+	if err := copyWithCancel(ctx, w, src); err != nil {
+		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		return
+	}
+	s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusOK, 0, fmt.Sprintf("bytes=%d %s", info.Size(), remote), "", false, started)
 }
+
+// requireCapability applies upload and download checks for every caller,
+// including a request that looks like the localhost page. false means the
+// response was already written.
+func (s *service) requireCapability(w http.ResponseWriter, h config.ResolvedHost, eff guard.Effective, capability, remote, confirm, command string, started time.Time) bool {
+	dec := guard.DecideCapability(eff, capability, remote)
+	if !dec.Allowed {
+		text := decisionText(dec)
+		s.writeAudit(h, audit.OpPolicyCheck, command, "", remote, audit.StatusDenied, exitcode.Denied, text, text, true, started)
+		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
+		return false
+	}
+	if dec.NeedsConfirm && strings.TrimSpace(confirm) != h.Alias {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": "type the host alias to confirm",
+		})
+		return false
+	}
+	return true
+}
+
+type capabilityError string
+
+func (e capabilityError) Error() string { return string(e) }
 
 func contentDisposition(name string) string {
 	name = path.Base(strings.ReplaceAll(name, "\\", "/"))

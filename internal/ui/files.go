@@ -7,12 +7,16 @@ import (
 	"net/http"
 	"path"
 	"strings"
+	"time"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/transfer"
 )
 
 func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	var body struct {
 		Alias   string `json:"alias"`
 		Path    string `json:"path"`
@@ -34,10 +38,14 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	if !s.workspaceHuman(r) {
+	// noDataOut always applies. The ls text check is skipped only for a
+	// loopback page probe; --allow-non-loopback turns that exemption off.
+	if eff.NoDataOut || !s.workspaceProbeExempt(r) {
 		dec := listDecision(eff)
 		if !dec.Allowed {
-			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec), "status": "denied"})
+			text := decisionText(dec)
+			s.writeAudit(h, audit.OpPolicyCheck, "ls", remotePath, "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
 			return
 		}
 		if dec.NeedsConfirm && strings.TrimSpace(body.Confirm) != h.Alias {
@@ -51,6 +59,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 	fp := h.Host.ConnFingerprint()
 	ctx := r.Context()
 	if err := s.pool.OpenConn(ctx, h.Alias, fp); err != nil {
+		s.writeAudit(h, audit.OpList, "ls", remotePath, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -65,6 +74,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 		return lerr
 	})
 	if err != nil {
+		s.writeAudit(h, audit.OpList, "ls", remotePath, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -74,6 +84,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 	if listing.Crumbs == nil {
 		listing.Crumbs = []transfer.Crumb{}
 	}
+	s.writeAudit(h, audit.OpList, "ls", listing.Path, "", audit.StatusOK, 0, fmt.Sprintf("path=%s entries=%d", listing.Path, len(listing.Entries)), "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "path": listing.Path, "parent": listing.Parent,
 		"home":   listing.Home,
@@ -82,6 +93,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *service) fileChangeAPI(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	var body struct {
 		Alias   string `json:"alias"`
 		Op      string `json:"op"`
@@ -118,22 +130,13 @@ func (s *service) fileChangeAPI(w http.ResponseWriter, r *http.Request) {
 			target = path.Join(target, base)
 		}
 	}
-	if !s.workspaceHuman(r) {
-		dec := guard.DecideCapability(eff, "upload", target)
-		if !dec.Allowed {
-			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec), "status": "denied"})
-			return
-		}
-		if dec.NeedsConfirm && strings.TrimSpace(body.Confirm) != h.Alias {
-			writeJSON(w, http.StatusConflict, map[string]any{
-				"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": "type the host alias to confirm",
-			})
-			return
-		}
+	if !s.requireCapability(w, h, eff, "upload", target, body.Confirm, op, started) {
+		return
 	}
 	s.reconcile()
 	fp := h.Host.ConnFingerprint()
 	if err := s.pool.OpenConn(r.Context(), h.Alias, fp); err != nil {
+		s.writeAudit(h, audit.OpFileChange, op, body.Path, target, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -145,9 +148,11 @@ func (s *service) fileChangeAPI(w http.ResponseWriter, r *http.Request) {
 		return transfer.Change(client, op, body.Path, body.Name)
 	})
 	if err != nil {
+		s.writeAudit(h, audit.OpFileChange, op, body.Path, target, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
+	s.writeAudit(h, audit.OpFileChange, op, body.Path, target, audit.StatusOK, 0, op+" "+target, "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
