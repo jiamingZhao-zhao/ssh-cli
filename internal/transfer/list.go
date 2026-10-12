@@ -1,7 +1,9 @@
 package transfer
 
 import (
+	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path"
 	"sort"
@@ -79,6 +81,9 @@ func List(client *ssh.Client, remote string) (Listing, error) {
 	}
 	info, err := sf.Stat(target)
 	if err != nil {
+		if errors.Is(err, os.ErrNotExist) || errors.Is(err, fs.ErrNotExist) || strings.Contains(strings.ToLower(err.Error()), "not exist") || strings.Contains(strings.ToLower(err.Error()), "no such file") {
+			return Listing{}, fmt.Errorf("目录不存在：%s", target)
+		}
 		return Listing{}, err
 	}
 	if !info.IsDir() {

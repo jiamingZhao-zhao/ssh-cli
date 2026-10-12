@@ -263,10 +263,18 @@ func TestUILayout(t *testing.T) {
 	if !strings.Contains(body, `class="term-tab"`) || !strings.Contains(body, `class="term-tab-label"`) {
 		t.Fatal("terminal tab alias control missing")
 	}
-	if strings.Count(body, `data-view="known"`) != 2 {
-		t.Fatalf("known nav count %d", strings.Count(body, `data-view="known"`))
+	if strings.Contains(body, `data-view="known"`) || strings.Contains(body, `href="#known"`) {
+		t.Fatal("known hosts must not be a top-level page")
 	}
-	for _, id := range []string{"#hosts", "#group-rows", "#tag-rows", "#env-rows", "#policy-rows", "#known", "#session-rows"} {
+	for _, s := range []string{"已知主机密钥", "在本机导出（迁出）", "在本机导入（迁入）", "配置包在两台电脑之间传递"} {
+		if !strings.Contains(body, s) {
+			t.Fatalf("page missing %s", s)
+		}
+	}
+	if strings.Contains(body, "第一步") || strings.Contains(body, "第二步") || strings.Contains(body, "steps-counter") {
+		t.Fatal("ops page still numbers export and import as sequential steps")
+	}
+	for _, id := range []string{"#hosts", "#group-rows", "#tag-rows", "#env-rows", "#policy-rows", "#session-rows"} {
 		if !strings.Contains(body, `data-pager="`+id+`"`) {
 			t.Fatalf("missing pager for %s", id)
 		}

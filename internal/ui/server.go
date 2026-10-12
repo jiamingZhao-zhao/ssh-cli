@@ -66,6 +66,7 @@ func (s *service) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/exec", s.execAPI)
 	mux.HandleFunc("POST /api/history", s.historyAPI)
 	mux.HandleFunc("POST /api/files/list", s.listAPI)
+	mux.HandleFunc("POST /api/files/change", s.fileChangeAPI)
 	mux.HandleFunc("POST /api/metrics", s.metricsAPI)
 	mux.HandleFunc("POST /api/upload", s.uploadAPI)
 	mux.HandleFunc("POST /api/download", s.downloadAPI)

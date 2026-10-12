@@ -42,3 +42,52 @@ func remoteAbs(p string) bool {
 	}
 	return len(p) >= 3 && p[1] == ':' && ((p[0] >= 'A' && p[0] <= 'Z') || (p[0] >= 'a' && p[0] <= 'z'))
 }
+
+// NormalizeRemotePath turns a typed path into a clean absolute remote path.
+// Empty input is refused. Extra slashes collapse, so ///root is /root.
+// A relative path is joined onto base when base is absolute.
+func NormalizeRemotePath(base, raw string) (string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return "", fmt.Errorf("请输入要打开的路径")
+	}
+	if strings.ContainsRune(raw, 0) || strings.ContainsAny(raw, "\r\n") {
+		return "", fmt.Errorf("路径无效")
+	}
+	raw = RestoreRemotePath(slash(raw))
+	base = path.Clean(slash(strings.TrimSpace(base)))
+	switch {
+	case raw == "~":
+		if !remoteAbs(base) {
+			return "", fmt.Errorf("请输入绝对路径，例如 /root")
+		}
+		return base, nil
+	case strings.HasPrefix(raw, "~/"):
+		if !remoteAbs(base) {
+			return "", fmt.Errorf("请输入绝对路径，例如 /root")
+		}
+		raw = path.Join(base, raw[2:])
+	case !remoteAbs(raw):
+		if !remoteAbs(base) {
+			return "", fmt.Errorf("请输入绝对路径，例如 /root")
+		}
+		raw = path.Join(base, raw)
+	}
+	cleaned := path.Clean(raw)
+	if !remoteAbs(cleaned) {
+		return "", fmt.Errorf("路径无效")
+	}
+	return cleaned, nil
+}
+
+// EntryName checks a single file or directory name. It rejects slashes and dot segments.
+func EntryName(name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00\r\n") {
+		return "", fmt.Errorf("名称无效")
+	}
+	if len(name) > 255 {
+		return "", fmt.Errorf("名称过长")
+	}
+	return name, nil
+}

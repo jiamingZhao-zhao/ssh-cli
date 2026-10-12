@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 
@@ -80,6 +81,36 @@ type KnownHost struct {
 	Fingerprint string `json:"fingerprint"`
 	Comment     string `json:"comment,omitempty"`
 	Revoked     bool   `json:"revoked,omitempty"`
+}
+
+// KeysForHost returns known_hosts lines that belong to host and port.
+// Port 0 is treated as 22. Hashed markers are not reversed, so they do not match.
+func KeysForHost(path, host string, port int) ([]KnownHost, error) {
+	all, err := ListKnownHosts(path)
+	if err != nil {
+		return nil, err
+	}
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return []KnownHost{}, nil
+	}
+	if port <= 0 {
+		port = 22
+	}
+	query := host
+	if port != 22 {
+		query = net.JoinHostPort(host, strconv.Itoa(port))
+	}
+	var out []KnownHost
+	for _, entry := range all {
+		if hostMatches(entry.Marker, query) {
+			out = append(out, entry)
+		}
+	}
+	if out == nil {
+		out = []KnownHost{}
+	}
+	return out, nil
 }
 
 // ListKnownHosts reads path. A missing file is an empty list.

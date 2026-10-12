@@ -1,6 +1,9 @@
 package transfer
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestAbsRemoteJoinsHome(t *testing.T) {
 	got, err := AbsRemote("/home/user", "../../root/app")
@@ -14,6 +17,31 @@ func TestAbsRemoteJoinsHome(t *testing.T) {
 	got, err = AbsRemote("/home/user", "/root/app")
 	if err != nil || got != "/root/app" {
 		t.Fatalf("absolute %q %v", got, err)
+	}
+}
+
+func TestAbsRemoteCollapsesTripleSlash(t *testing.T) {
+	got, err := AbsRemote("/home/user", "///root")
+	if err != nil || got != "/root" {
+		t.Fatalf("triple %q %v", got, err)
+	}
+}
+
+func TestNormalizeRemotePath(t *testing.T) {
+	got, err := NormalizeRemotePath("", "///root")
+	if err != nil || got != "/root" {
+		t.Fatalf("collapse %q %v", got, err)
+	}
+	got, err = NormalizeRemotePath("/root", "app/file")
+	if err != nil || got != "/root/app/file" {
+		t.Fatalf("relative %q %v", got, err)
+	}
+	got, err = NormalizeRemotePath("/root/app", "../etc")
+	if err != nil || got != "/root/etc" {
+		t.Fatalf("parent %q %v", got, err)
+	}
+	if _, err := NormalizeRemotePath("/root", "  "); err == nil || !strings.Contains(err.Error(), "请输入要打开的路径") {
+		t.Fatalf("empty %v", err)
 	}
 }
 

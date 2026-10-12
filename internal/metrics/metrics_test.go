@@ -28,13 +28,34 @@ func TestParseSnapshotPieces(t *testing.T) {
 	if len(procs) != 2 || procs[1].Comm != "kthreadd extra" || procs[0].CPU != "0.1" {
 		t.Fatalf("procs %#v", procs)
 	}
-	aux := ParsePS("USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\nroot 1 0.0 0.1 1 1 ? Ss 00:00 0:01 init\n")
-	if len(aux) != 1 || aux[0].PID != "1" || aux[0].Comm != "init" {
+	aux := ParsePS("USER PID %CPU %MEM VSZ RSS TTY STAT START TIME COMMAND\nroot 1 0.0 0.1 1 2048 ? Ss 00:00 0:01 init\n")
+	if len(aux) != 1 || aux[0].PID != "1" || aux[0].Comm != "init" || aux[0].RSS != 2048 {
 		t.Fatalf("aux %#v", aux)
+	}
+	rss := ParsePS("PID USER %CPU RSS COMMAND\n9 root 1.3 762573 java\n")
+	if len(rss) != 1 || rss[0].RSS != 762573 || rss[0].CPU != "1.3" || rss[0].Comm != "java" {
+		t.Fatalf("rss %#v", rss)
 	}
 	rx, tx := NetBytes("Inter-|   Receive |  Transmit\n face |bytes packets errs drop fifo frame compressed multicast|bytes packets\n    lo: 9 0 0 0 0 0 0 0 9 0 0 0 0 0 0 0\n  eth0: 100 1 0 0 0 0 0 0 40 1 0 0 0 0 0 0\n")
 	if rx != 100 || tx != 40 {
 		t.Fatalf("net %d %d", rx, tx)
+	}
+}
+
+func TestChineseUptime(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"09:54:31 up 255 days, 23:49,  1 user,  load average: 0.01, 0.02, 0.05", "已运行 255 天 23 小时 49 分"},
+		{"10:03:02 up 255 days, 23:58,  0 users,  load average: 0.01, 0.07, 0.07", "已运行 255 天 23 小时 58 分"},
+		{"up 2 days", "已运行 2 天"},
+		{"up 1 day,  2:03,  2 users,  load average: 0.00, 0.01, 0.05", "已运行 1 天 2 小时 3 分"},
+		{"up 2:03,  1 user,  load average: 0.1, 0.2, 0.3", "已运行 2 小时 3 分"},
+		{"up 3 min,  1 user,  load average: 0, 0, 0", "已运行 3 分"},
+		{"up 23 hours, 49 minutes", "已运行 23 小时 49 分"},
+	}
+	for _, tc := range cases {
+		if got := ChineseUptime(tc.in); got != tc.want {
+			t.Errorf("ChineseUptime(%q) = %q, want %q", tc.in, got, tc.want)
+		}
 	}
 }
 
@@ -75,7 +96,7 @@ func TestCollectDegrades(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if snap.Uptime == "" || snap.Load != "0.31 0.25 0.23" || snap.Hostname != "" {
+	if !strings.Contains(snap.Uptime, "已运行") || !strings.Contains(snap.Uptime, "2 天") || snap.Load != "0.31 0.25 0.23" || snap.Hostname != "" {
 		t.Fatalf("identity %#v", snap)
 	}
 	if snap.Mem == nil || snap.Mem.Total != 1000 || len(snap.Disks) != 1 || len(snap.Procs) != 1 {

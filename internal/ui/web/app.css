@@ -1,9 +1,10 @@
 /* Memory Hub blue/white (and dark) on Tabler tokens.
-   v0.7.7 component chrome: table G (horizontal rules, centered cells),
+   v0.7.8 component chrome: table G (horizontal rules, centered cells),
    hard 4px tool inputs and buttons, bordered cards with a light shadow,
-   solid-blue nav, outlined 6px badges, 6px modals, icon-block empties,
-   square bottom-right pager with jump, square meters, browser terminal tabs,
-   and a soft 12px context menu. Primary blue is #0052cc. */
+   light-blue left-aligned nav on a narrower sidebar, outlined 6px badges,
+   6px modals, icon-block empties, square bottom-right pager with jump,
+   square meters, browser terminal tabs, and a soft 12px context menu.
+   Primary blue is #0052cc. */
 [x-cloak] { display: none !important; }
 .modal-dialog { margin: auto; }
 
@@ -138,7 +139,7 @@ body,
   background: var(--mh-page);
   color: var(--mh-ink);
 }
-.page { min-height: 100vh; max-width: none; }
+.page { min-height: 100vh; max-width: none; --tblr-sidebar-width: 12rem; }
 .page-title {
   color: var(--mh-ink);
   font-weight: 650;
@@ -306,20 +307,31 @@ body,
 .navbar-vertical .nav-link:hover .nav-link-icon {
   color: var(--mh-ink);
 }
-.navbar-vertical .nav-link.active,
-.navbar-vertical .nav-link.active:hover {
-  background: var(--mh-blue);
-  color: #fff;
+.navbar-vertical.navbar-expand-lg:not(.navbar-folded) .navbar-nav .nav-link {
+  justify-content: flex-start !important;
+  text-align: left;
+  padding-inline-end: 2.5rem;
+}
+.navbar-vertical.navbar-expand-lg:not(.navbar-folded) .nav-link-title,
+.navbar-vertical.navbar-expand-lg:not(.navbar-folded) .nav-intro {
+  text-align: left;
+}
+.navbar-vertical.navbar-expand-lg .navbar-nav .nav-link.active,
+.navbar-vertical.navbar-expand-lg .navbar-nav .nav-link.active:hover,
+.navbar-vertical[class*="navbar-expand"] .navbar-nav .nav-link.active,
+.navbar-vertical[class*="navbar-expand"] .navbar-nav .nav-link.active:hover {
+  background: var(--mh-blue-soft);
+  color: var(--mh-link);
 }
 .navbar-vertical .nav-link.active .nav-link-icon,
 .navbar-vertical .nav-link.active .nav-link-title,
 .navbar-vertical .nav-link.active:hover .nav-link-icon {
-  color: #fff;
+  color: var(--mh-link);
 }
 .navbar-vertical .nav-link.active .badge {
   background-color: #fff !important;
-  color: var(--mh-blue) !important;
-  border-color: transparent !important;
+  color: var(--mh-link) !important;
+  border-color: var(--mh-link) !important;
 }
 [data-bs-theme="dark"] .badge.bg-blue-lt {
   color: #93c5fd !important;
@@ -951,18 +963,43 @@ pre {
   overflow: hidden;
 }
 .ws-overview .ws-meter-track { background: var(--mh-page); }
-.ws-meter-bar { height: 100%; background: var(--mh-blue); border-radius: 4px; }
+.ws-meter-bar { height: 100%; width: 0; background: var(--mh-blue); border-radius: 4px; }
 .ws-meter-swap { background: #6554c0; }
 [data-bs-theme="dark"] .ws-meter-swap { background: #9b8cff; }
 .ws-block { margin-top: 0.9rem; }
-.ws-proc { font-size: 12px; margin-top: 0.35rem; }
+.ws-proc { font-size: 12px; margin-top: 0.35rem; width: 100%; }
+.ws-proc th {
+  padding: 0.22rem 0.35rem;
+  color: var(--mh-muted);
+  font-weight: 650;
+  text-align: center;
+  border-bottom: 1px solid var(--mh-line);
+  border-inline-end: 0;
+  white-space: nowrap;
+}
+.ws-proc th button {
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+  padding: 0;
+}
 .ws-proc td {
-  padding: 0.22rem 0.45rem;
+  padding: 0.22rem 0.35rem;
   color: var(--mh-ink);
   font-variant-numeric: tabular-nums;
   text-align: center;
   border-bottom: 1px solid var(--mh-line);
   border-inline-end: 0;
+}
+.ws-proc-mem,
+.ws-proc-cpu {
+  white-space: nowrap;
+  width: 1%;
+  overflow: visible;
+  text-overflow: clip;
 }
 .ws-proc tr:hover td { background: var(--mh-fill); }
 .ws-comm {
@@ -1046,14 +1083,58 @@ pre {
 .ws-crumb:hover { color: var(--mh-link-hover); }
 .ws-crumb:last-child { color: var(--mh-ink); font-weight: 650; }
 .ws-file-split { flex: 1 1 auto; min-height: 0; display: flex; }
+.ws-pathbar {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.45rem 0.75rem 0.15rem;
+}
+.ws-pathbar .form-control { flex: 1 1 auto; min-width: 0; }
+.ws-path-error {
+  margin: 0.15rem 0.85rem 0;
+  color: var(--mh-danger);
+  font-size: 12px;
+}
 .ws-tree {
-  width: 11rem;
+  width: 9.25rem;
   flex: 0 0 auto;
   overflow: auto;
   border-right: 1px solid var(--mh-line);
-  padding: 0.3rem 0;
+  padding: 0.25rem 0;
   background: var(--mh-header);
 }
+.ws-tree-row {
+  display: flex;
+  align-items: center;
+  gap: 0.05rem;
+  min-width: 0;
+}
+.ws-tree-row.is-current,
+.ws-tree-row.is-open { background: var(--mh-blue-soft); }
+.ws-tree-twist,
+.ws-tree-label {
+  border: 0;
+  background: transparent;
+  color: var(--mh-ink);
+  font: inherit;
+  cursor: pointer;
+}
+.ws-tree-twist {
+  flex: 0 0 auto;
+  width: 1.1rem;
+  padding: 0.22rem 0;
+  color: var(--mh-muted);
+}
+.ws-tree-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  text-align: left;
+  padding: 0.22rem 0.35rem 0.22rem 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-tree-label:hover { color: var(--mh-link); }
 .ws-tree-item {
   display: block;
   width: 100%;
@@ -1179,6 +1260,42 @@ pre {
 }
 .ws-menu button:hover,
 .ws-menu button:focus-visible { background: var(--mh-blue-soft); color: var(--mh-link); }
+.ws-menu button:disabled {
+  color: var(--mh-muted);
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.ws-menu button:disabled:hover { background: transparent; color: var(--mh-muted); }
+.ws-menu button.is-danger { color: var(--mh-danger); }
+.ws-menu-pop { margin: 0 0 0.15rem 0.85rem; padding-left: 0.35rem; border-left: 2px solid var(--mh-blue-soft); }
+.ws-queue {
+  flex: 0 0 auto;
+  align-self: flex-start;
+  width: min(28rem, calc(100% - 1.7rem));
+  max-height: 7.5rem;
+  overflow: auto;
+  margin: 0.35rem 0.85rem 0.5rem;
+  padding: 0.4rem 0.65rem 0.45rem;
+  border: 1px solid var(--mh-line);
+  border-radius: 12px;
+  background: var(--mh-header);
+  box-shadow: var(--mh-shadow-sm);
+}
+.ws-queue-row {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  font-size: 12px;
+  margin-top: 0.28rem;
+}
+.ws-queue-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-queue .ws-meter-track { flex: 0 0 4.5rem; height: 6px; }
 .ws-toasts {
   position: fixed;
   right: 1rem;
