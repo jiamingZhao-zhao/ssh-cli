@@ -63,18 +63,22 @@ func TestWorkspaceChrome(t *testing.T) {
 		"diskText",
 		"选择下载目录",
 		"ws-dl-empty-box",
-		"visibleDisks",
+		"diskMeters",
 		"diskMountLabel",
 		"pickDownloadDir",
 		"ws-file-status",
 		`x-show="hasFinishedTransfers()"`,
 		"ws-folder",
-		"详情",
 		"openProc",
 		"procShort",
-		"ws-row-detail",
+		"ws-proc-row",
+		"procRows",
+		"ws-proc-empty",
+		"ws-dl-foot",
+		"openDownloadFolder",
+		"打开所在目录",
 		"fileSize",
-		"ws-comm-row",
+		`@click="openProcRow(p)"`,
 	} {
 		if !strings.Contains(chunk, s) {
 			t.Fatalf("workspace missing %s", s)
@@ -101,6 +105,23 @@ func TestWorkspaceChrome(t *testing.T) {
 	if !strings.Contains(body, "启动命令") || strings.Contains(body, "进程详情") {
 		t.Fatal("row detail should show 启动命令 and not 进程详情")
 	}
+	if strings.Contains(chunk, "ws-row-detail") || strings.Contains(chunk, ">详情<") {
+		t.Fatal("process rows should open on row click, without a 详情 link")
+	}
+	if strings.Contains(chunk, `class="ws-meter" x-show="workspaceLive()"`) || strings.Contains(chunk, "没有磁盘数据") {
+		t.Fatal("cpu, memory, swap, and disk meters should stay in the fixed layout")
+	}
+	if strings.Contains(chunk, "在线") || strings.Contains(chunk, "badge bg-green-lt") || strings.Contains(chunk, "badge bg-secondary-lt") || strings.Contains(chunk, "ws-status") {
+		t.Fatal("overview title should not show an online status badge")
+	}
+	for _, s := range []string{`x-text="overviewTitle()"`, `x-text="overviewStatus()"`, `x-text="overviewIP()"`, `@click="copyOverviewIP()"`, `class="ws-ip"`, `class="ws-conn"`} {
+		if !strings.Contains(chunk, s) {
+			t.Fatalf("overview header missing %s", s)
+		}
+	}
+	if strings.Contains(chunk, `x-text="overviewAddr()"`) {
+		t.Fatal("overview header should not stack user@ip:port")
+	}
 	if strings.Contains(body, "不套用允许") || strings.Contains(body, "不记按键") {
 		t.Fatal("terminal policy blurb should be gone")
 	}
@@ -126,13 +147,16 @@ func TestWorkspaceChrome(t *testing.T) {
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "pickDownloadDir", "downloadDirLabel", "useDefaultDownloadDir", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "diskMountLabel", "visibleDisks", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端", `postJSON("/api/download-dir"`, "slice(0, 7)"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "pickDownloadDir", "downloadDirLabel", "useDefaultDownloadDir", "paintNetChart", "openProc", "openProcRow", "procRows", "canOpenDownload", "openDownloadFolder", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "diskMountLabel", "visibleDisks", "diskMeters", "overviewTitle", "overviewStatus", "overviewIP", "copyOverviewIP", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端", `postJSON("/api/download-dir"`, `postJSON("/api/download-dir/reveal"`, "slice(0, 5)"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}
 	}
 	if strings.Contains(script, "await res.json()") || strings.Contains(script, "res.json()") {
 		t.Fatal("app.js still parses responses with res.json()")
+	}
+	if strings.Contains(script, "slice(0, 7)") {
+		t.Fatal("process table still keeps seven rows")
 	}
 	if strings.Contains(script, "128 MiB") || strings.Contains(script, "63 MiB") || strings.Contains(script, "new Blob(chunks)") {
 		t.Fatal("ui still caps transfers in a browser blob")
@@ -158,6 +182,31 @@ func TestWorkspaceChrome(t *testing.T) {
 	}
 	if strings.Contains(proc, "transparent") {
 		t.Fatal("process table still hides grid lines")
+	}
+	sideAt := strings.Index(style, ".ws-side {")
+	if sideAt < 0 {
+		t.Fatal("side column rule missing")
+	}
+	side := style[sideAt:]
+	if end := strings.Index(side, "}"); end >= 0 {
+		side = side[:end]
+	}
+	if !strings.Contains(side, "grid-row: 1 / span 3") || !strings.Contains(side, "display: flex") {
+		t.Fatal("side column should stay full height so the transfer queue can sit at the bottom")
+	}
+	if !strings.Contains(style, ".ws-dl-foot") {
+		t.Fatal("transfer queue header should be a fixed footer")
+	}
+	railAt := strings.Index(style, ".ws-dl-rail {")
+	if railAt < 0 {
+		t.Fatal("transfer rail rule missing")
+	}
+	rail := style[railAt:]
+	if end := strings.Index(rail, "}"); end >= 0 {
+		rail = rail[:end]
+	}
+	if strings.Contains(rail, "grid-row") {
+		t.Fatal("transfer queue should follow the process table")
 	}
 }
 

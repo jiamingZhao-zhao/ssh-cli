@@ -102,7 +102,7 @@ test('file tree anchors at / and shows basenames', async () => {
   assert.equal(rows.some((row) => row.name === '/root'), false);
   assert.ok(paths.includes('/'));
 });
-test('overview shows disk bytes, top 7 memory rows, and a short command', () => {
+test('overview shows disk bytes, top 5 memory rows, and a short command', () => {
   const { app, sandbox } = fixture();
   const disk = { mount: '/', percent: '28%', used: '10485760', size: '41943040' };
   assert.equal(app.diskText(disk), '28% · 10.0 GB / 40.0 GB');
@@ -112,14 +112,54 @@ test('overview shows disk bytes, top 7 memory rows, and a short command', () => 
     app.metrics.procs.push({ pid: String(i + 1), rss: (i + 1) * 1000, cpu: '1', comm: '/usr/lib/jvm/java -jar /data/web/ag.jar', args: 'java -jar /data/web/ag.jar extra' });
   }
   const rows = app.sortedProcs();
-  assert.equal(rows.length, 7);
+  assert.equal(rows.length, 5);
   assert.equal(rows[0].rss, 8000);
-  assert.equal(rows[6].rss, 2000);
+  assert.equal(rows[4].rss, 4000);
   assert.equal(app.procShort(rows[0]), 'java');
   assert.equal(app.procShort({ comm: 'nginx: master process /usr/sbin/nginx' }), 'nginx:');
   const detail = app.transferDetail({ loaded: 3 * 1024 * 1024, total: 10 * 1024 * 1024, active: true, label: '下载中' });
   assert.equal(detail, '30% · 3.0 MB / 10.0 MB');
   assert.equal(sandbox.lastJSONObject('{"loaded":1,"total":2}\n{"ok":true,"local":"/tmp/a"}\n').local, '/tmp/a');
+});
+test('process table stays five rows when overview data is missing', () => {
+  const { app } = fixture();
+  app.metrics = { procs: [] };
+  let rows = app.procRows();
+  assert.equal(rows.length, 5);
+  assert.equal(rows.every((row) => row.empty), true);
+  app.metrics.procs = [{ pid: '9', rss: 1000, cpu: '1', comm: 'nginx' }];
+  rows = app.procRows();
+  assert.equal(rows.length, 5);
+  assert.equal(rows.filter((row) => !row.empty).length, 1);
+  assert.equal(rows[0].pid, '9');
+  assert.equal(app.canOpenDownload({ active: true, kind: 'download', local: '/tmp/a' }), false);
+  assert.equal(app.canOpenDownload({ active: false, kind: 'upload', local: '/tmp/a' }), false);
+  assert.equal(app.canOpenDownload({ active: false, kind: 'download', local: '/tmp/a' }), true);
+  app.metrics.disks = [];
+  const meters = app.diskMeters();
+  assert.equal(meters.length, 1);
+  assert.equal(app.diskText(meters[0]), '—');
+  assert.equal(app.memText(null), '—');
+  assert.equal(app.pct(null), '—');
+});
+test('overview header is hostname/user plus plain status and address', async () => {
+  const { app } = fixture();
+  app.catalog.hosts = [{ alias: 'hn-test-105', user: 'root', host: '10.4.85.105', port: 22 }];
+  app.termAlias = 'hn-test-105';
+  app.metrics = { alias: 'hn-test-105', connected: true, hostname: 'ecs-8025-0001', user: 'root', address: '10.4.85.105', port: 22 };
+  assert.equal(app.overviewTitle(), 'ecs-8025-0001/root');
+  assert.equal(app.overviewStatus(), '在线');
+  assert.equal(app.overviewIP(), '10.4.85.105');
+  assert.equal(app.overviewAddr(), 'root@10.4.85.105:22');
+  app.metrics.connected = false;
+  assert.equal(app.overviewStatus(), '未连接');
+  app.metrics.hostname = '';
+  assert.equal(app.overviewTitle(), 'hn-test-105/root');
+  app.termTabs = [{ id: 't1', alias: 'hn-test-105', state: 'closed' }];
+  app.termActive = 't1';
+  assert.equal(app.overviewStatus(), '已断开');
+  await app.copyOverviewIP();
+  assert.equal(app.toasts[0].text, '10.4.85.105');
 });
 test('clear button only applies when a transfer is finished', () => {
   const { app } = fixture();

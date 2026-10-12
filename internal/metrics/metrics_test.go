@@ -60,14 +60,14 @@ func TestParseSnapshotPieces(t *testing.T) {
 	}
 }
 
-func TestTopSevenByMemory(t *testing.T) {
+func TestTopFiveByMemory(t *testing.T) {
 	var b strings.Builder
 	b.WriteString("PID RSS COMMAND\n")
 	for i := 0; i < 10; i++ {
 		fmt.Fprintf(&b, "%d %d cmd-%d\n", i+1, (i+1)*1000, i+1)
 	}
 	procs := ParsePS(b.String())
-	if len(procs) != 7 || procs[0].RSS != 10000 || procs[6].RSS != 4000 {
+	if len(procs) != 5 || procs[0].RSS != 10000 || procs[4].RSS != 6000 {
 		t.Fatalf("top memory %#v", procs)
 	}
 	sorted := false

@@ -1510,6 +1510,49 @@ function sshui() {
       return (h.user || "") + "@" + (h.host || "") + ":" + (h.port || "");
     },
 
+    overviewTitle() {
+      const alias = this.panelAlias();
+      const host = this.hostByAlias(alias);
+      const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
+      const name = (live && live.hostname) || alias || "未选择";
+      const user = (live && live.user) || (host && host.user) || "";
+      return user ? name + "/" + user : name;
+    },
+
+    overviewStatus() {
+      const alias = this.panelAlias();
+      const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
+      if (live && live.connected) return "在线";
+      const tab = this.termTabs.find((item) => item.id === this.termActive);
+      if (tab) {
+        const label = { connecting: "连接中", closed: "已断开", expired: "已到期" }[tab.state];
+        if (label) return label;
+      }
+      if (this.metricsPending()) return "连接中";
+      return "未连接";
+    },
+
+    overviewIP() {
+      const alias = this.panelAlias();
+      const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
+      if (live && live.address) return String(live.address);
+      const host = this.hostByAlias(alias);
+      return host && host.host ? String(host.host) : "";
+    },
+
+    async copyOverviewIP() {
+      const ip = this.overviewIP();
+      if (!ip) return;
+      const clip = typeof navigator !== "undefined" && navigator.clipboard ? navigator.clipboard : null;
+      try {
+        if (!clip || !clip.writeText) throw new Error("clipboard");
+        await clip.writeText(ip);
+        this.toast("已复制 " + ip);
+      } catch (err) {
+        this.toast(ip);
+      }
+    },
+
     viaOf(alias) {
       const h = this.hostByAlias(alias);
       if (!h || !h.via) return "";
@@ -1682,6 +1725,7 @@ function sshui() {
     },
 
     pct(n) {
+      if (n == null || n === "") return "—";
       const v = Number(n);
       if (!isFinite(v)) return "—";
       return Math.round(v) + "%";
@@ -1731,7 +1775,20 @@ function sshui() {
         const bv = key === "mem" ? (Number(b.rss) || 0) : (Number(b.cpu) || 0);
         return (av - bv) * dir;
       });
-      return rows.slice(0, 7);
+      return rows.slice(0, 5);
+    },
+
+    procRows() {
+      const rows = this.sortedProcs();
+      const out = [];
+      for (let i = 0; i < rows.length && out.length < 5; i++) out.push(rows[i]);
+      while (out.length < 5) out.push({ empty: true, pid: "pad-" + out.length });
+      return out;
+    },
+
+    openProcRow(p) {
+      if (!p || p.empty) return;
+      return this.openProc(p);
     },
 
     diskMountLabel(mount) {
@@ -1744,6 +1801,12 @@ function sshui() {
     visibleDisks() {
       const disks = (this.metrics && this.metrics.disks) || [];
       return disks.filter((d) => this.diskMountLabel(d && d.mount) === "/");
+    },
+
+    diskMeters() {
+      const disks = this.visibleDisks();
+      if (disks.length) return disks;
+      return [{ mount: "/", percent: "", used: "", size: "" }];
     },
 
     procShort(p) {
@@ -1762,7 +1825,9 @@ function sshui() {
 
     diskBytes(text, bytes) {
       if (bytes != null && bytes !== "" && isFinite(Number(bytes))) return Number(bytes);
-      const n = Number(String(text || "").trim());
+      const raw = String(text == null ? "" : text).trim();
+      if (!raw) return null;
+      const n = Number(raw);
       if (!isFinite(n) || n < 0) return null;
       return n * 1024;
     },
@@ -2185,6 +2250,19 @@ function sshui() {
       this.transfers = (this.transfers || []).filter((t) => t.active);
     },
 
+    canOpenDownload(item) {
+      return !!(item && !item.active && item.kind === "download" && String(item.local || "").trim());
+    },
+
+    async openDownloadFolder(item) {
+      if (!this.canOpenDownload(item)) return;
+      try {
+        await this.postJSON("/api/download-dir/reveal", { path: item.local });
+      } catch (err) {
+        this.toast((err && err.message) || "打不开所在目录", "bad");
+      }
+    },
+
     transferDetail(item) {
       if (!item) return "";
       const loadedN = Number(item.loaded) || 0;
@@ -2390,8 +2468,8 @@ function sshui() {
           let totalBytes = Number(current.total) || known || 0;
           let loadedBytes = Number(current.loaded) || 0;
           if (totalBytes > 0) loadedBytes = totalBytes;
-          this.patchTransfer(id, { loaded: loadedBytes, total: totalBytes, active: false, label: label });
-          this.finishTransfer(id, { loaded: loadedBytes, total: totalBytes, label: label });
+          this.patchTransfer(id, { loaded: loadedBytes, total: totalBytes, active: false, label: label, local: saved, kind: "download" });
+          this.finishTransfer(id, { loaded: loadedBytes, total: totalBytes, label: label, local: saved, kind: "download" });
           if (saved) this.toast(label);
           return;
         }

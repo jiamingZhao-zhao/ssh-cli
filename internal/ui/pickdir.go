@@ -3,8 +3,10 @@ package ui
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -76,6 +78,77 @@ func runDirPicker(ctx context.Context, name string, args ...string) (string, err
 		return "", errPickCancelled
 	}
 	return cleanPickedDir(out)
+}
+
+// revealSpec is a local file or its folder, opened in the system file manager.
+type revealSpec struct {
+	path string
+	dir  string
+	file bool
+}
+
+// openLocal shows a finished download in Explorer, Finder, or the desktop file manager.
+// Tests replace it so the handler does not launch a GUI.
+var openLocal = openLocalOS
+
+func (s *service) revealDownloadAPI(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		Path string `json:"path"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
+		writeFail(w, err)
+		return
+	}
+	spec, err := revealTarget(body.Path)
+	if err != nil {
+		writeFail(w, err)
+		return
+	}
+	if err := openLocal(r.Context(), spec); err != nil {
+		writeFail(w, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": spec.dir})
+}
+
+func revealTarget(raw string) (revealSpec, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return revealSpec{}, fmt.Errorf("没有可打开的路径")
+	}
+	cleaned := filepath.Clean(raw)
+	if !filepath.IsAbs(cleaned) {
+		return revealSpec{}, fmt.Errorf("路径不是绝对路径")
+	}
+	st, err := os.Stat(cleaned)
+	if err != nil {
+		return revealSpec{}, fmt.Errorf("找不到这个文件")
+	}
+	if st.IsDir() {
+		return revealSpec{path: cleaned, dir: cleaned}, nil
+	}
+	return revealSpec{path: cleaned, dir: filepath.Dir(cleaned), file: true}, nil
+}
+
+func openLocalOS(ctx context.Context, spec revealSpec) error {
+	switch runtime.GOOS {
+	case "windows":
+		arg := spec.path
+		if spec.file {
+			arg = "/select," + spec.path
+		}
+		return exec.CommandContext(ctx, "explorer", arg).Start()
+	case "darwin":
+		if spec.file {
+			return exec.CommandContext(ctx, "open", "-R", spec.path).Start()
+		}
+		return exec.CommandContext(ctx, "open", spec.path).Start()
+	default:
+		if path, err := exec.LookPath("xdg-open"); err == nil {
+			return exec.CommandContext(ctx, path, spec.dir).Start()
+		}
+		return fmt.Errorf("没有可用的文件管理器")
+	}
 }
 
 func cleanPickedDir(dir string) (string, error) {

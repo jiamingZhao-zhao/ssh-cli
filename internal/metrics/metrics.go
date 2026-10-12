@@ -102,7 +102,7 @@ type Snapshot struct {
 }
 
 const (
-	maxProcs = 7
+	maxProcs = 5
 	maxDisks = 8
 )
 
