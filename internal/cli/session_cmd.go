@@ -122,7 +122,7 @@ func (a *App) sessionRunCommands(commands []string, idleRaw, maxRaw string, allo
 	if err != nil {
 		return exitcode.New(exitcode.Usage, "%s", err.Error())
 	}
-	fp := host.Host.ConnFingerprint()
+	fp := cfg.SessionFingerprint(host)
 	pool, err := session.New(idleD, maxD, func(ctx context.Context, alias, got string) (*sshclient.Client, error) {
 		if got != fp {
 			return nil, fmt.Errorf("session %s connection identity changed", alias)

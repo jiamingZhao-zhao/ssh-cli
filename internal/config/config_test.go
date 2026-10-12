@@ -362,3 +362,77 @@ func TestViaChainRules(t *testing.T) {
 		t.Fatalf("overlong: %v", err)
 	}
 }
+
+func TestSessionFingerprintFollowsJumpChain(t *testing.T) {
+	host := func(addr, user, via, identity string) *Host {
+		return &Host{Host: addr, Port: 22, User: user, Auth: "key", Identity: identity, Via: via}
+	}
+	cfg := &Config{
+		Version: 1,
+		Envs:    map[string]*Env{"dev": {MaxMode: ModeStandard}},
+		Groups: map[string]*Group{
+			"g": {Env: "dev", Hosts: map[string]*Host{
+				"jump":  host("192.0.2.1", "jumpuser", "", "/keys/jump"),
+				"mid":   host("192.0.2.2", "miduser", "jump", "/keys/mid"),
+				"box":   host("192.0.2.3", "boxuser", "mid", "/keys/box"),
+				"spare": host("192.0.2.9", "spare", "", "/keys/spare"),
+			}},
+		},
+	}
+	if err := cfg.Validate(); err != nil {
+		t.Fatal(err)
+	}
+	box, ok := cfg.Find("box")
+	if !ok {
+		t.Fatal("missing box")
+	}
+	base := cfg.SessionFingerprint(box)
+	if base == "" || base == box.Host.ConnFingerprint() {
+		t.Fatal("session fingerprint must include the resolved chain, not only the destination")
+	}
+	direct := cfg.SessionFingerprint(mustFind(t, cfg, "jump"))
+	if direct == base {
+		t.Fatal("a jumped host shares the direct hop fingerprint")
+	}
+
+	cfg.Groups["g"].Hosts["jump"].Host = "192.0.2.50"
+	if cfg.SessionFingerprint(mustFind(t, cfg, "box")) == base {
+		t.Fatal("changing the outer jump address kept the destination fingerprint")
+	}
+	cfg.Groups["g"].Hosts["jump"].Host = "192.0.2.1"
+	cfg.Groups["g"].Hosts["mid"].Port = 2222
+	if cfg.SessionFingerprint(mustFind(t, cfg, "box")) == base {
+		t.Fatal("changing the middle hop port kept the destination fingerprint")
+	}
+	cfg.Groups["g"].Hosts["mid"].Port = 22
+	cfg.Groups["g"].Hosts["jump"].Identity = "/keys/jump-new"
+	if cfg.SessionFingerprint(mustFind(t, cfg, "box")) == base {
+		t.Fatal("changing the jump identity file kept the destination fingerprint")
+	}
+	cfg.Groups["g"].Hosts["jump"].Identity = "/keys/jump"
+	cfg.Groups["g"].Hosts["jump"].User = "other"
+	if cfg.SessionFingerprint(mustFind(t, cfg, "box")) == base {
+		t.Fatal("changing the jump user kept the destination fingerprint")
+	}
+	cfg.Groups["g"].Hosts["jump"].User = "jumpuser"
+	cfg.Groups["g"].Hosts["spare"].Identity = "/keys/spare-new"
+	cfg.Groups["g"].Hosts["spare"].Host = "198.51.100.8"
+	if cfg.SessionFingerprint(mustFind(t, cfg, "box")) != base {
+		t.Fatal("an unrelated host changed the destination fingerprint")
+	}
+
+	delete(cfg.Groups["g"].Hosts, "jump")
+	deleted := cfg.SessionFingerprint(mustFind(t, cfg, "box"))
+	if deleted == base || deleted == "" {
+		t.Fatal("deleting the jump host kept the destination fingerprint")
+	}
+}
+
+func mustFind(t *testing.T, cfg *Config, alias string) ResolvedHost {
+	t.Helper()
+	h, ok := cfg.Find(alias)
+	if !ok {
+		t.Fatalf("missing %s", alias)
+	}
+	return h
+}

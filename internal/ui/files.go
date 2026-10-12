@@ -57,7 +57,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.reconcile()
-	fp := h.Host.ConnFingerprint()
+	fp := s.fingerprint(h)
 	ctx := r.Context()
 	if err := s.pool.OpenConn(ctx, h.Alias, fp); err != nil {
 		s.writeAudit(h, audit.OpList, "ls", remotePath, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
@@ -129,7 +129,7 @@ func (s *service) fileChangeAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.reconcile()
-	fp := h.Host.ConnFingerprint()
+	fp := s.fingerprint(h)
 	if err := s.pool.OpenConn(r.Context(), h.Alias, fp); err != nil {
 		s.writeAudit(h, audit.OpFileChange, op, body.Path, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)

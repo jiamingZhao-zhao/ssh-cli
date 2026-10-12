@@ -13,6 +13,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -39,6 +40,8 @@ type wsConn struct {
 	readMask  bool
 	readIdle  time.Duration
 	writeWait time.Duration
+	closeWait time.Duration
+	closing   atomic.Bool
 }
 
 // WebSocket idle timing. A browser answers ping with pong, which refreshes
@@ -48,6 +51,7 @@ var (
 	wsPingEvery = 30 * time.Second
 	wsReadIdle  = 90 * time.Second
 	wsWriteWait = 20 * time.Second
+	wsCloseWait = 2 * time.Second
 )
 
 func acceptWebSocket(w http.ResponseWriter, r *http.Request) (*wsConn, error) {
@@ -256,9 +260,19 @@ func (c *wsConn) Write(op byte, p []byte) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	if c.c != nil && c.writeWait > 0 {
-		_ = c.c.SetWriteDeadline(time.Now().Add(c.writeWait))
+	if c.c == nil {
+		return io.ErrClosedPipe
 	}
+	wait := c.writeWait
+	if wait <= 0 {
+		wait = wsWriteWait
+	}
+	_ = c.c.SetWriteDeadline(time.Now().Add(wait))
+	defer func() {
+		if c.c != nil {
+			_ = c.c.SetWriteDeadline(time.Time{})
+		}
+	}()
 	hdr := []byte{0x80 | op}
 	n := len(p)
 	switch {
@@ -291,11 +305,42 @@ func (c *wsConn) Write(op byte, p []byte) error {
 }
 
 func (c *wsConn) Close() error {
-	if c == nil || c.c == nil {
+	if c == nil {
 		return nil
 	}
-	_ = c.Write(wsClose, nil)
-	return c.c.Close()
+	// Do not take mu first. Write holds it for the whole network write, so a
+	// peer that stops reading would make Close wait on that lock and never
+	// reach the underlying socket.
+	conn := c.c
+	if conn == nil {
+		return nil
+	}
+	if !c.closing.CompareAndSwap(false, true) {
+		return conn.Close()
+	}
+	budget := c.closeWait
+	if budget <= 0 {
+		budget = wsCloseWait
+	}
+	done := make(chan struct{})
+	go func() {
+		_ = c.Write(wsClose, nil)
+		close(done)
+	}()
+	timer := time.NewTimer(budget)
+	select {
+	case <-done:
+		if !timer.Stop() {
+			select {
+			case <-timer.C:
+			default:
+			}
+		}
+	case <-timer.C:
+		_ = conn.Close()
+		<-done
+	}
+	return conn.Close()
 }
 
 // dialWebSocket is the test client. rawURL is http(s) or ws(s).

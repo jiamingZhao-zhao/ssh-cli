@@ -104,6 +104,8 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+	s.trackSocket(ws)
+	defer s.forgetSocket(ws)
 	defer ws.Close()
 	s.bridgeTerminal(r, ws, h, ticket.cols, ticket.rows)
 }
@@ -273,6 +275,44 @@ func (s *service) forgetTerm(ws *wsConn) {
 	s.mu.Unlock()
 }
 
+// trackSocket records an upgraded WebSocket so process exit can close it.
+// Hijacked connections are not closed by http.Server.Shutdown.
+func (s *service) trackSocket(ws *wsConn) {
+	if s == nil || ws == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.sockets == nil {
+		s.sockets = map[*wsConn]struct{}{}
+	}
+	s.sockets[ws] = struct{}{}
+}
+
+func (s *service) forgetSocket(ws *wsConn) {
+	if s == nil || ws == nil {
+		return
+	}
+	s.mu.Lock()
+	delete(s.sockets, ws)
+	s.mu.Unlock()
+}
+
+func (s *service) closeSockets() {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	all := make([]*wsConn, 0, len(s.sockets))
+	for ws := range s.sockets {
+		all = append(all, ws)
+	}
+	s.mu.Unlock()
+	for _, ws := range all {
+		_ = ws.Close()
+	}
+}
+
 // noteMaxLife runs before the pool closes the SSH client. The browser socket
 // is still open here; the PTY bridge closes it only after the client dies.
 func (s *service) noteMaxLife(alias, reason string) {
@@ -296,7 +336,7 @@ func (s *service) noteMaxLife(alias, reason string) {
 func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedHost, cols, rows int) {
 	s.trackTerm(h.Alias, ws)
 	defer s.forgetTerm(ws)
-	fp := h.Host.ConnFingerprint()
+	fp := s.fingerprint(h)
 	if err := s.pool.OpenConn(r.Context(), h.Alias, fp); err != nil {
 		s.auditTerminal(h, audit.StatusConnect, "open", err.Error(), time.Now(), 0, 0)
 		writeTermFail(ws, err)
