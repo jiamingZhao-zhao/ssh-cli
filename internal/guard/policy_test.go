@@ -544,6 +544,202 @@ func TestWrapperAndOptionBypass(t *testing.T) {
 	}
 }
 
+func TestExecFlagDoesNotSwallowCommand(t *testing.T) {
+	cfg, host := prodReadonlyHost("", nil)
+	ro := resolve(t, cfg, host, false)
+	stdEnv := &config.Env{MaxMode: config.ModeStandard, DefaultPolicy: "standard"}
+	g := &config.Group{Env: "dev", Policy: "standard"}
+	h := &config.Host{Host: "192.0.2.30", User: "root"}
+	std := resolve(t, &config.Config{Version: 1, Envs: map[string]*config.Env{"dev": stdEnv}, Groups: map[string]*config.Group{"g": g}},
+		config.ResolvedHost{Alias: "box", Group: "g", EnvName: "dev", Env: stdEnv, GroupDef: g, Host: h}, false)
+	adminEnv := &config.Env{MaxMode: config.ModeAdmin, DefaultPolicy: "admin"}
+	ag := &config.Group{Env: "dev"}
+	ah := &config.Host{Host: "192.0.2.30", User: "root"}
+	admin := resolve(t, &config.Config{Version: 1, Envs: map[string]*config.Env{"dev": adminEnv}, Groups: map[string]*config.Group{"g": ag}},
+		config.ResolvedHost{Alias: "d", Group: "g", EnvName: "dev", Env: adminEnv, GroupDef: ag, Host: ah}, false)
+
+	wrappedReboot := []string{
+		"exec -c reboot",
+		"exec -l reboot",
+		"exec -cl reboot",
+		"exec -lc reboot",
+		"exec -a init reboot",
+		"exec -c -a init reboot",
+		"exec -a init -c reboot",
+		"exec -cla init reboot",
+		"exec -cal reboot",
+		"exec -c -- reboot",
+		"exec -- reboot",
+		"exec -ac reboot",
+		"/bin/exec -c reboot",
+		"sudo exec -c reboot",
+		"command exec -c reboot",
+	}
+	for _, cmd := range wrappedReboot {
+		d := Decide(ro, cmd)
+		if d.Allowed || d.NeedsConfirm {
+			t.Errorf("readonly %s: %+v commands=%v", cmd, d.Findings, d.Commands)
+		}
+		if len(d.Commands) != 1 || !strings.Contains(d.Commands[0], "reboot") {
+			t.Errorf("readonly %s did not recover reboot: %v", cmd, d.Commands)
+		}
+	}
+	sameClass := []struct{ inner, wrapped string }{
+		{"reboot", "exec -c reboot"},
+		{"mkfs.ext4 /dev/review-placeholder", "exec -c mkfs.ext4 /dev/review-placeholder"},
+		{"systemctl restart nginx", "exec -c systemctl restart nginx"},
+		{"systemctl restart nginx", "exec -cl -a helper systemctl restart nginx"},
+		{"systemctl restart nginx", "exec -a helper -lc -- systemctl restart nginx"},
+		{"ss -K state established", "exec -c ss -K state established"},
+	}
+	for _, item := range sameClass {
+		for _, eff := range []Effective{ro, std, admin} {
+			inner := Decide(eff, item.inner)
+			wrapped := Decide(eff, item.wrapped)
+			if inner.Allowed != wrapped.Allowed || inner.NeedsConfirm != wrapped.NeedsConfirm {
+				t.Errorf("mode %s %q != %q\n inner allowed=%v confirm=%v %+v\n wrapped allowed=%v confirm=%v %+v",
+					eff.Mode, item.inner, item.wrapped, inner.Allowed, inner.NeedsConfirm, inner.Findings, wrapped.Allowed, wrapped.NeedsConfirm, wrapped.Findings)
+			}
+		}
+	}
+	if d := Decide(std, "exec -c mkfs.ext4 /dev/review-placeholder"); d.Allowed {
+		t.Fatalf("standard exec -c mkfs: %+v", d)
+	}
+	if d := Decide(std, "exec -c systemctl restart nginx"); !d.Allowed || !d.NeedsConfirm {
+		t.Fatalf("standard exec -c systemctl restart: %+v", d)
+	}
+	if d := Decide(ro, "exec -c"); !d.Allowed || d.NeedsConfirm || len(d.Commands) != 0 {
+		t.Fatalf("exec -c with no command: %+v", d)
+	}
+	for _, cmd := range []string{"exec -x reboot", "exec -a", "exec --help reboot", "exec $CMD"} {
+		if d := Decide(ro, cmd); d.Allowed {
+			t.Errorf("readonly unrecoverable %s: %+v", cmd, d)
+		}
+		if d := Decide(std, cmd); !d.NeedsConfirm {
+			t.Errorf("standard unrecoverable %s: %+v", cmd, d)
+		}
+		if d := Decide(admin, cmd); !d.NeedsConfirm {
+			t.Errorf("admin unrecoverable %s: %+v", cmd, d)
+		}
+	}
+	if d := Decide(ro, "exec -c echo /tmp"); d.Allowed {
+		t.Fatalf("readonly exec -c echo: %+v", d)
+	}
+	if d := Decide(std, "exec -c echo /tmp"); !d.Allowed || d.NeedsConfirm {
+		t.Fatalf("standard exec -c echo: %+v", d)
+	}
+}
+
+func TestSSKillAndDiagAreNotReadonly(t *testing.T) {
+	cfg, host := prodReadonlyHost("", nil)
+	ro := resolve(t, cfg, host, false)
+	stdEnv := &config.Env{MaxMode: config.ModeStandard, DefaultPolicy: "standard"}
+	g := &config.Group{Env: "dev", Policy: "standard"}
+	h := &config.Host{Host: "192.0.2.30", User: "root"}
+	std := resolve(t, &config.Config{Version: 1, Envs: map[string]*config.Env{"dev": stdEnv}, Groups: map[string]*config.Group{"g": g}},
+		config.ResolvedHost{Alias: "box", Group: "g", EnvName: "dev", Env: stdEnv, GroupDef: g, Host: h}, false)
+	adminEnv := &config.Env{MaxMode: config.ModeAdmin, DefaultPolicy: "admin"}
+	ag := &config.Group{Env: "dev"}
+	ah := &config.Host{Host: "192.0.2.30", User: "root"}
+	admin := resolve(t, &config.Config{Version: 1, Envs: map[string]*config.Env{"dev": adminEnv}, Groups: map[string]*config.Group{"g": ag}},
+		config.ResolvedHost{Alias: "d", Group: "g", EnvName: "dev", Env: adminEnv, GroupDef: ag, Host: ah}, false)
+
+	blocked := []string{
+		"ss -K state established",
+		"ss --kill state established",
+		"ss -D /tmp/review-placeholder",
+		"ss --diag /tmp/review-placeholder",
+		"ss --diag=/tmp/review-placeholder",
+		"ss -tnK",
+		"ss -lntK",
+		"ss -K",
+		"ss -D",
+		"ss -4K",
+		"ss -tD /tmp/review-placeholder",
+	}
+	for _, cmd := range blocked {
+		if d := Decide(ro, cmd); d.Allowed || d.NeedsConfirm {
+			t.Errorf("readonly %s: %+v", cmd, d)
+		}
+		if d := Decide(std, cmd); d.Allowed {
+			t.Errorf("standard %s: %+v", cmd, d)
+		}
+	}
+	if d := Decide(admin, "ss -K state established"); !d.Allowed || d.NeedsConfirm {
+		t.Fatalf("admin ss -K: %+v", d)
+	}
+	allowed := []string{"ss -lnt", "ss -ltnp", "ss -s", "ss -t state established", "ss -f inet", "ss -H -O -n"}
+	for _, cmd := range allowed {
+		if d := Decide(ro, cmd); !d.Allowed || d.NeedsConfirm {
+			t.Errorf("readonly %s: %+v", cmd, d)
+		}
+	}
+	if d := Decide(ro, "ss $FLAGS"); d.Allowed {
+		t.Fatalf("dynamic ss readonly: %+v", d)
+	}
+	if d := Decide(std, "ss $FLAGS"); d.Allowed {
+		t.Fatalf("dynamic ss standard: %+v", d)
+	}
+}
+
+func TestFileChangeProtectedSourceAndChildren(t *testing.T) {
+	env := &config.Env{MaxMode: config.ModeStandard, DefaultPolicy: "standard"}
+	g := &config.Group{Env: "dev", ProtectedPaths: []string{"/tmp/protected.txt", "/tmp/parent/protected-child.txt"}}
+	h := &config.Host{Host: "192.0.2.40", User: "root"}
+	cfg := &config.Config{Version: 1, Envs: map[string]*config.Env{"dev": env}, Groups: map[string]*config.Group{"g": g}}
+	eff := resolve(t, cfg, config.ResolvedHost{Alias: "box", Group: "g", EnvName: "dev", Env: env, GroupDef: g, Host: h}, false)
+
+	renamed := DecideFileChange(eff, "rename", []string{"/tmp/protected.txt", "/tmp/renamed.txt"}, nil)
+	if !renamed.Allowed || !renamed.NeedsConfirm {
+		t.Fatalf("rename protected source: %+v", renamed)
+	}
+	onto := DecideFileChange(eff, "rename", []string{"/tmp/other.txt", "/tmp/protected.txt"}, nil)
+	if !onto.Allowed || !onto.NeedsConfirm {
+		t.Fatalf("rename onto protected dest: %+v", onto)
+	}
+	parent := DecideFileChange(eff, "rename", []string{"/tmp/parent", "/tmp/renamed-dir"}, nil)
+	if !parent.NeedsConfirm {
+		t.Fatalf("rename directory over protected child: %+v", parent)
+	}
+	deleted := DecideFileChange(eff, "remove", []string{"/tmp/parent"}, nil)
+	if !deleted.Allowed || !deleted.NeedsConfirm {
+		t.Fatalf("delete parent: %+v", deleted)
+	}
+	plain := DecideFileChange(eff, "remove", []string{"/tmp/other"}, nil)
+	if !plain.Allowed || plain.NeedsConfirm {
+		t.Fatalf("delete unrelated: %+v", plain)
+	}
+	root := DecideFileChange(eff, "remove", []string{"/"}, nil)
+	if !root.NeedsConfirm {
+		t.Fatalf("delete root should intersect protected paths: %+v", root)
+	}
+	made := DecideFileChange(eff, "touch", []string{"/tmp/fresh.txt"}, nil)
+	if !made.Allowed || made.NeedsConfirm {
+		t.Fatalf("touch outside: %+v", made)
+	}
+	inside := DecideFileChange(eff, "mkdir", []string{"/tmp/parent/protected-child.txt"}, nil)
+	if !inside.NeedsConfirm {
+		t.Fatalf("mkdir protected path: %+v", inside)
+	}
+
+	roCfg, roHost := prodReadonlyHost("", nil)
+	ro := resolve(t, roCfg, roHost, false)
+	ro.Protected = []string{"/tmp/protected.txt"}
+	if d := DecideFileChange(ro, "remove", []string{"/tmp/other"}, nil); d.Allowed || d.NeedsConfirm {
+		t.Fatalf("readonly delete: %+v", d)
+	}
+	if d := DecideFileChange(ro, "rename", []string{"/tmp/a", "/tmp/b"}, nil); d.Allowed {
+		t.Fatalf("readonly rename: %+v", d)
+	}
+	term := DecideTerminal(ro)
+	if term.Allowed {
+		t.Fatalf("readonly terminal: %+v", term)
+	}
+	if d := DecideTerminal(eff); !d.Allowed || d.NeedsConfirm {
+		t.Fatalf("standard terminal: %+v", d)
+	}
+}
+
 func hasKind(d Decision, kind string) bool {
 	for _, f := range d.Findings {
 		if f.Kind == kind {

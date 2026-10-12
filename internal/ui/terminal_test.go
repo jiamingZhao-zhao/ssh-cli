@@ -73,15 +73,17 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 	}
 	mustOK("/api/groups", `{"name":"app","env":"prod"}`)
 	mustOK("/api/hosts", `{"alias":"box","group":"app","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
+	mustOK("/api/groups", `{"name":"lab","env":"dev"}`)
+	mustOK("/api/hosts", `{"alias":"lab","group":"lab","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
 
-	forged := post("/api/terminal/open", `{"alias":"box","source":"ui","cols":80,"rows":24}`, false)
+	forged := post("/api/terminal/open", `{"alias":"lab","source":"ui","cols":80,"rows":24}`, false)
 	forgedBody, _ := io.ReadAll(forged.Body)
 	forged.Body.Close()
 	if forged.StatusCode != http.StatusForbidden {
 		t.Fatalf("forged open %d %s", forged.StatusCode, forgedBody)
 	}
 
-	noCookie, err := http.NewRequest(http.MethodPost, web.URL+"/api/terminal/open", strings.NewReader(`{"alias":"box","source":"ui"}`))
+	noCookie, err := http.NewRequest(http.MethodPost, web.URL+"/api/terminal/open", strings.NewReader(`{"alias":"lab","source":"ui"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +105,14 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 		t.Fatalf("ui exec should still deny echo on prod: %d %s", denied.StatusCode, deniedBody)
 	}
 
-	opened := post("/api/terminal/open", `{"alias":"box","cols":80,"rows":24,"source":"cli"}`, true)
+	prodTerm := post("/api/terminal/open", `{"alias":"box","cols":80,"rows":24,"source":"ui"}`, true)
+	prodBody, _ := io.ReadAll(prodTerm.Body)
+	prodTerm.Body.Close()
+	if prodTerm.StatusCode != http.StatusForbidden || !strings.Contains(string(prodBody), "unrestricted terminal") {
+		t.Fatalf("forged browser headers opened a prod pty: %d %s", prodTerm.StatusCode, prodBody)
+	}
+
+	opened := post("/api/terminal/open", `{"alias":"lab","cols":80,"rows":24,"source":"cli"}`, true)
 	openBody, _ := io.ReadAll(opened.Body)
 	opened.Body.Close()
 	if opened.StatusCode != http.StatusOK {
@@ -152,7 +161,7 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 		}
 		time.Sleep(40 * time.Millisecond)
 	}
-	var sawOpen, sawClose, sawDeny bool
+	var sawOpen, sawClose, sawDeny, sawPTY bool
 	for _, rec := range recs {
 		blob := rec.Command + "\n" + rec.ResultSummary + "\n" + rec.Reason
 		if strings.Contains(blob, "ui-term-ok") {
@@ -165,7 +174,11 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 			sawDeny = true
 			continue
 		}
-		if rec.Op != audit.OpTerminal || rec.Host != "box" || rec.Source != audit.SourceUI || rec.Actor != "ui" {
+		if rec.Op == audit.OpPolicyCheck && rec.Command == "pty" && rec.Host == "box" && rec.Source == audit.SourceUI && rec.DeniedByPolicy {
+			sawPTY = true
+			continue
+		}
+		if rec.Op != audit.OpTerminal || rec.Host != "lab" || rec.Source != audit.SourceUI || rec.Actor != "ui" {
 			continue
 		}
 		if rec.Command != "pty" {
@@ -184,8 +197,8 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 			}
 		}
 	}
-	if !sawOpen || !sawClose || !sawDeny {
-		t.Fatalf("audit flags open=%v close=%v deny=%v %#v", sawOpen, sawClose, sawDeny, recs)
+	if !sawOpen || !sawClose || !sawDeny || !sawPTY {
+		t.Fatalf("audit flags open=%v close=%v deny=%v pty=%v %#v", sawOpen, sawClose, sawDeny, sawPTY, recs)
 	}
 }
 
@@ -372,7 +385,7 @@ func TestTerminalWebSocketWithoutFetchMetadata(t *testing.T) {
 			t.Fatalf("%s %d %s", path, res.StatusCode, raw)
 		}
 	}
-	mustOK("/api/groups", `{"name":"app","env":"prod"}`)
+	mustOK("/api/groups", `{"name":"app","env":"dev"}`)
 	mustOK("/api/hosts", `{"alias":"box","group":"app","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
 
 	opened := post("/api/terminal/open", `{"alias":"box","cols":80,"rows":24}`, true)
@@ -484,7 +497,7 @@ func TestTerminalDialFailureWritesReason(t *testing.T) {
 			t.Fatalf("%s %d %s", path, res.StatusCode, raw)
 		}
 	}
-	mustOK("/api/groups", `{"name":"app","env":"prod"}`)
+	mustOK("/api/groups", `{"name":"app","env":"dev"}`)
 	mustOK("/api/hosts", `{"alias":"down","group":"app","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
 
 	opened := post("/api/terminal/open", `{"alias":"down","cols":80,"rows":24}`, true)
