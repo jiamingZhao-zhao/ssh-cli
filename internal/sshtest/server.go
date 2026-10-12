@@ -43,6 +43,16 @@ func (s *Server) Sessions() int64 {
 	return s.sessions.Load()
 }
 
+// Connections is the number of accepted TCP connections still being served.
+func (s *Server) Connections() int {
+	if s == nil {
+		return 0
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return len(s.conns)
+}
+
 // KeepAlives is how many keepalive@openssh.com global requests this server has seen.
 func (s *Server) KeepAlives() int64 {
 	if s == nil {

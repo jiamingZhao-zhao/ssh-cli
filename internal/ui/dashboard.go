@@ -22,11 +22,10 @@ import (
 )
 
 const (
-	maxBatchHosts  = guard.MaxBatchHosts
-	maxParallel    = guard.MaxParallel
-	auditExportCap = 2000
-	dashRecent     = 8
-	dashScan       = 40
+	maxBatchHosts = guard.MaxBatchHosts
+	maxParallel   = guard.MaxParallel
+	dashRecent    = 8
+	dashScan      = 40
 )
 
 func (s *service) dashboardAPI(w http.ResponseWriter, r *http.Request) {
@@ -295,28 +294,30 @@ func (s *service) auditExportAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
+	// Stream every matching record. A fixed cap scanned oldest-first dropped
+	// newer rows and still returned HTTP 200 with no truncation marker.
 	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
 	w.Header().Set("Content-Disposition", `attachment; filename="audit.csv"`)
 	cw := csv.NewWriter(w)
-	_ = cw.Write([]string{"time", "status", "op", "host", "group", "env", "exit_code", "high_risk", "denied_by_policy", "command", "src", "dst", "reason", "actor"})
-	n := 0
-	errCap := errors.New("export cap")
+	if err := cw.Write([]string{"time", "status", "op", "host", "group", "env", "exit_code", "high_risk", "denied_by_policy", "command", "src", "dst", "reason", "actor"}); err != nil {
+		return
+	}
 	err = audit.List(s.dir, f, func(rec audit.Record) error {
-		if n >= auditExportCap {
-			return errCap
-		}
-		n++
 		exit := ""
 		if rec.ExitCode != nil {
 			exit = strconv.Itoa(*rec.ExitCode)
 		}
-		return cw.Write([]string{
+		if err := cw.Write([]string{
 			rec.Time, rec.Status, rec.Op, rec.Host, rec.Group, rec.Env, exit,
 			strconv.FormatBool(rec.HighRisk), strconv.FormatBool(rec.DeniedByPolicy),
 			rec.Command, rec.Src, rec.Dst, rec.Reason, rec.Actor,
-		})
+		}); err != nil {
+			return err
+		}
+		cw.Flush()
+		return cw.Error()
 	})
-	if err != nil && !errors.Is(err, errCap) {
+	if err != nil {
 		return
 	}
 	cw.Flush()
@@ -453,7 +454,39 @@ func (s *service) batchExecAPI(w http.ResponseWriter, r *http.Request) {
 	if denied != nil {
 		results = append(denied, results...)
 	}
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "parallel": parallel, "results": results})
+	failed := 0
+	for _, row := range results {
+		if resultFailed(row) {
+			failed++
+		}
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok": true, "parallel": parallel, "failed": failed, "count": len(results), "results": results,
+	})
+}
+
+// resultFailed reports a batch row the page should show as a failure.
+// ok means the request was handled. A non-zero exit or a non-ok status is
+// still a failed command.
+func resultFailed(row map[string]any) bool {
+	if row == nil {
+		return true
+	}
+	if ok, exists := row["ok"].(bool); exists && !ok {
+		return true
+	}
+	if status, _ := row["status"].(string); status != "" && status != audit.StatusOK {
+		return true
+	}
+	switch code := row["exitCode"].(type) {
+	case int:
+		return code != 0
+	case int64:
+		return code != 0
+	case float64:
+		return code != 0
+	}
+	return false
 }
 
 func uniqueAliases(in []string) []string {

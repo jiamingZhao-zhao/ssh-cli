@@ -135,6 +135,7 @@ func Serve(ctx context.Context, addr, dir string, allowRemote bool, bearer strin
 	policyhmac.Install()
 	confirmgate.Install()
 	s := newService(dir, allowRemote, bearer)
+	defer s.closeSockets()
 	loopCtx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	go s.pool.Loop(loopCtx)
@@ -148,6 +149,7 @@ func Serve(ctx context.Context, addr, dir string, allowRemote bool, bearer strin
 	go func() { errCh <- srv.ListenAndServe() }()
 	select {
 	case <-ctx.Done():
+		s.closeSockets()
 		shut, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 		defer cancel()
 		_ = srv.Shutdown(shut)
@@ -168,6 +170,7 @@ type service struct {
 	sessions    map[string]string
 	tickets     map[string]termTicket
 	terms       map[*wsConn]string
+	sockets     map[*wsConn]struct{}
 	pool        *session.Pool
 }
 

@@ -129,7 +129,7 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 		outW, errW = io.Discard, io.Discard
 	}
 	s.reconcile()
-	code, err := s.pool.Exec(runCtx, h.Alias, h.Host.ConnFingerprint(), body.Command, outW, errW)
+	code, err := s.pool.Exec(runCtx, h.Alias, s.fingerprint(h), body.Command, outW, errW)
 	summary := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
 	if stdout.cut || stderr.cut {
 		summary += "\n[truncated]"
@@ -471,7 +471,7 @@ func (s *service) sessionOpenAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	started := time.Now()
 	s.reconcile()
-	if err := s.pool.Open(r.Context(), h.Alias, h.Host.ConnFingerprint(), false); err != nil {
+	if err := s.pool.Open(r.Context(), h.Alias, s.fingerprint(h), false); err != nil {
 		s.writeAudit(h, audit.OpSession, "", "", "", audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return

@@ -23,6 +23,62 @@ function friendlyError(message, statusText) {
   return plainBodyMessage(message, statusText);
 }
 
+// pickHMAC chooses one HMAC object. An empty ops.hmac must not hide the
+// dashboard status: the home page loads dash.hmac before the ops page.
+function pickHMAC(opsHmac, dashHmac) {
+  if (opsHmac && opsHmac.status) return opsHmac;
+  if (dashHmac && dashHmac.status) return dashHmac;
+  return { status: "unsigned" };
+}
+
+function hmacView(opsHmac, dashHmac) {
+  const hmac = pickHMAC(opsHmac, dashHmac);
+  const status = hmac.status || "unsigned";
+  const map = {
+    ok: "HMAC 有效。policy.mac 和当前策略一致。",
+    unsigned: "还没有签名。需要时在命令行运行 ssh-cli policy sign。",
+    "needs-resign": "policy.mac 是旧版，不含连接信息。运行 ssh-cli policy sign 重签。",
+    missing: "配置标记为已签名，但 policy.mac 不在。恢复文件，或运行 ssh-cli policy unsign。",
+    mismatch: "HMAC 不一致，配置会被拒绝加载。先核对 policy.mac，不要继续放宽策略。",
+    error: "读不到 HMAC 状态。"
+  };
+  let className = "alert alert-danger";
+  if (status === "ok") className = "alert alert-success";
+  else if (status === "unsigned") className = "alert alert-info";
+  else if (status === "needs-resign") className = "alert alert-warning";
+  return {
+    status: status,
+    text: (map[status] || status) + (hmac.error ? " " + hmac.error : ""),
+    className: className
+  };
+}
+
+// batchRowFailed treats a handled request with a non-zero exit or a non-ok
+// status as a failure. row.ok only means the API accepted the row.
+function batchRowFailed(row) {
+  if (!row || row.ok === false) return true;
+  const status = row.status ? String(row.status) : "";
+  if (status && status !== "ok") return true;
+  if (row.exitCode !== undefined && row.exitCode !== null && row.exitCode !== "" && Number(row.exitCode) !== 0) return true;
+  return false;
+}
+
+function batchSummary(results) {
+  const rows = results || [];
+  let failed = 0;
+  const lines = rows.map((row) => {
+    const bad = batchRowFailed(row);
+    if (bad) failed++;
+    const exit = (row.exitCode === undefined || row.exitCode === null || row.exitCode === "") ? "" : " exit " + row.exitCode;
+    const head = (row.alias || "") + " " + (bad ? "失败" : "ok") + exit;
+    if (row.stdoutSuppressed) return head + "\n" + (row.notice || "输出已丢弃");
+    return head + (row.error ? "\n" + row.error : "") + (row.stdout ? "\n" + row.stdout : "") + (row.stderr ? "\n" + row.stderr : "");
+  });
+  if (!rows.length) return { failed: 0, total: 0, text: "没有结果" };
+  const summary = failed ? ("失败 " + failed + " / " + rows.length) : ("成功 " + rows.length);
+  return { failed: failed, total: rows.length, text: summary + "\n\n" + lines.join("\n\n") };
+}
+
 function blankMetrics() {
   return { alias: "", connected: false, address: "", port: "", user: "", hostname: "", uptime: "", load: "", cpuPercent: null, mem: null, swap: null, procs: [], disks: [], notes: [], netRx: 0, netTx: 0, netRxRate: 0, netTxRate: 0 };
 }
@@ -2934,12 +2990,7 @@ function sshui() {
           if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
           break;
         }
-        const lines = (data.results || []).map((row) => {
-          const head = (row.alias || "") + " " + (row.ok ? "ok" : "失败");
-          if (row.stdoutSuppressed) return head + "\n" + (row.notice || "输出已丢弃");
-          return head + (row.error ? "\n" + row.error : "") + (row.stdout ? "\n" + row.stdout : "") + (row.stderr ? "\n" + row.stderr : "");
-        });
-        this.batchOut = lines.join("\n\n") || "没有结果";
+        this.batchOut = batchSummary(data.results).text;
         this.loadAudit();
         this.loadDashboard();
       } catch (err) {
@@ -2990,25 +3041,11 @@ function sshui() {
     },
 
     hmacText() {
-      const hmac = this.ops.hmac || this.dash.hmac || {};
-      const status = hmac.status || "unsigned";
-      const map = {
-        ok: "HMAC 有效。policy.mac 和当前策略一致。",
-        unsigned: "还没有签名。需要时在命令行运行 ssh-cli policy sign。",
-        "needs-resign": "policy.mac 是旧版，不含连接信息。运行 ssh-cli policy sign 重签。",
-        missing: "配置标记为已签名，但 policy.mac 不在。恢复文件，或运行 ssh-cli policy unsign。",
-        mismatch: "HMAC 不一致，配置会被拒绝加载。先核对 policy.mac，不要继续放宽策略。",
-        error: "读不到 HMAC 状态。"
-      };
-      return (map[status] || status) + (hmac.error ? " " + hmac.error : "");
+      return hmacView(this.ops && this.ops.hmac, this.dash && this.dash.hmac).text;
     },
 
     hmacClass() {
-      const status = (this.ops.hmac && this.ops.hmac.status) || (this.dash.hmac && this.dash.hmac.status) || "unsigned";
-      if (status === "ok") return "alert alert-success";
-      if (status === "unsigned") return "alert alert-info";
-      if (status === "needs-resign") return "alert alert-warning";
-      return "alert alert-danger";
+      return hmacView(this.ops && this.ops.hmac, this.dash && this.dash.hmac).className;
     },
 
     anyDialog() {

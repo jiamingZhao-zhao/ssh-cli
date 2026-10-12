@@ -211,9 +211,10 @@ func (h *Host) PortOrDefault() int {
 	return h.Port
 }
 
-// ConnFingerprint identifies the SSH target a session is bound to.
-// Address, port, user, auth, identity, passwordRef, and via are included.
-// The password bytes are not. Changing the jump host drops a pooled session.
+// ConnFingerprint identifies this host's own connection fields.
+// Address, port, user, auth, identity, passwordRef, and the via alias are
+// included. Password bytes are not. Pooled sessions use SessionFingerprint,
+// which also covers every resolved jump hop. The via alias alone does not.
 func (h *Host) ConnFingerprint() string {
 	if h == nil {
 		return ""
@@ -233,6 +234,54 @@ func (h *Host) ConnFingerprint() string {
 	}, "\x00")
 	sum := sha256.Sum256([]byte(canon))
 	return hex.EncodeToString(sum[:])
+}
+
+// SessionFingerprint identifies the SSH route a pooled session is bound to.
+// It hashes this host and every hop in the resolved jump chain: alias,
+// address, port, user, auth mode, identity file, and passwordRef. Password
+// bytes are not included. Editing a jump host without renaming its alias
+// changes the fingerprint of every destination that reaches it. A chain that
+// no longer resolves does not match a chain that did, so deleting a jump
+// host drops those sessions.
+func (c *Config) SessionFingerprint(h ResolvedHost) string {
+	if h.Host == nil {
+		return ""
+	}
+	var parts []string
+	chain, err := c.ViaChainFrom(h)
+	if err != nil || len(chain) == 0 {
+		msg := ""
+		if err != nil {
+			msg = err.Error()
+		}
+		parts = []string{"unresolved", h.Alias, msg, hopCanon(h.Alias, h.Host), strings.TrimSpace(h.Host.Via)}
+	} else {
+		parts = make([]string, len(chain))
+		for i, hop := range chain {
+			parts[i] = hopCanon(hop.Alias, hop.Host)
+		}
+	}
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
+	return hex.EncodeToString(sum[:])
+}
+
+func hopCanon(alias string, h *Host) string {
+	if h == nil {
+		return alias
+	}
+	auth := h.Auth
+	if auth == "" {
+		auth = "password"
+	}
+	return strings.Join([]string{
+		alias,
+		strings.TrimSpace(h.Host),
+		strconv.Itoa(h.PortOrDefault()),
+		h.User,
+		auth,
+		h.Identity,
+		h.PasswordRef,
+	}, "\x1f")
 }
 
 // SessionDefaults is the in-process pool window. Empty fields use the built-in

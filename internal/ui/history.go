@@ -124,6 +124,6 @@ func (s *service) poolRun(ctx context.Context, h config.ResolvedHost, command st
 	defer cancel()
 	var stdout, stderr limitBuf
 	stdout.n, stderr.n = 1<<20, 64<<10
-	code, err := s.pool.Exec(runCtx, h.Alias, h.Host.ConnFingerprint(), command, &stdout, &stderr)
+	code, err := s.pool.Exec(runCtx, h.Alias, s.fingerprint(h), command, &stdout, &stderr)
 	return stdout.String(), stderr.String(), code, err
 }

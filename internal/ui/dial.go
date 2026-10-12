@@ -26,7 +26,7 @@ func (s *service) dialAlias(ctx context.Context, alias, fingerprint string) (*ss
 	if !ok {
 		return nil, fmt.Errorf("unknown host %s", alias)
 	}
-	if h.Host == nil || h.Host.ConnFingerprint() != fingerprint {
+	if h.Host == nil || cfg.SessionFingerprint(h) != fingerprint {
 		return nil, fmt.Errorf("host %s connection identity changed", alias)
 	}
 	return s.dialResolved(ctx, h)
@@ -42,7 +42,7 @@ func (s *service) reconcile() {
 	want := map[string]string{}
 	for alias, h := range cfg.Index() {
 		if h.Host != nil {
-			want[alias] = h.Host.ConnFingerprint()
+			want[alias] = cfg.SessionFingerprint(h)
 		}
 	}
 	s.pool.Retain(want)
@@ -150,6 +150,19 @@ func (s *service) authMethods(h config.ResolvedHost) ([]ssh.AuthMethod, error) {
 	default:
 		return nil, fmt.Errorf("host %s: unsupported auth %q", h.Alias, h.Host.Auth)
 	}
+}
+
+// fingerprint is the pooled session identity for h, including the resolved
+// jump chain. Callers pass it to the pool; dialAlias checks the same value.
+func (s *service) fingerprint(h config.ResolvedHost) string {
+	cfg, err := config.Load(s.dir)
+	if err != nil || cfg == nil {
+		return ""
+	}
+	if cur, ok := cfg.Find(h.Alias); ok && cur.Host != nil {
+		h = cur
+	}
+	return cfg.SessionFingerprint(h)
 }
 
 func (s *service) onSessionClose(alias, reason string) {

@@ -92,23 +92,59 @@ func clientHandshake(ctx context.Context, netConn net.Conn, hop Hop, timeout tim
 		_ = netConn.Close()
 		return nil, fmt.Errorf("host key callback is required")
 	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	// ssh.ClientConfig.Timeout only bounds ssh.Dial's TCP connect. It does
+	// not bound NewClientConn. A direct-tcpip channel returns
+	// "deadline not supported" from SetDeadline, so a peer that accepts TCP
+	// and never sends a banner would ignore both the context and timeout.
+	// Closing the channel is what unblocks the handshake.
+	hctx := ctx
+	stopTimeout := func() {}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		hctx, cancel = context.WithTimeout(ctx, timeout)
+		stopTimeout = cancel
+	}
+	defer stopTimeout()
+	if err := hctx.Err(); err != nil {
+		_ = netConn.Close()
+		return nil, err
+	}
 	deadline := time.Time{}
 	if timeout > 0 {
 		deadline = time.Now().Add(timeout)
 	}
-	if dl, ok := ctx.Deadline(); ok && (deadline.IsZero() || dl.Before(deadline)) {
+	if dl, ok := hctx.Deadline(); ok && (deadline.IsZero() || dl.Before(deadline)) {
 		deadline = dl
 	}
 	if !deadline.IsZero() {
 		_ = netConn.SetDeadline(deadline)
 	}
+	stopWatch := context.AfterFunc(hctx, func() {
+		_ = netConn.Close()
+	})
 	cfg := &ssh.ClientConfig{
 		User:            hop.User,
 		Auth:            hop.Auth,
 		HostKeyCallback: hop.HostKey,
-		Timeout:         timeout,
 	}
 	c, chans, reqs, err := ssh.NewClientConn(netConn, hop.Addr, cfg)
+	// Stop before using the connection. false means the callback already
+	// closed netConn, so a handshake that won the race must not be returned.
+	if !stopWatch() {
+		if c != nil {
+			_ = c.Close()
+		}
+		if hctx.Err() != nil {
+			return nil, hctx.Err()
+		}
+		if err != nil {
+			return nil, err
+		}
+		return nil, context.DeadlineExceeded
+	}
 	if err != nil {
 		return nil, err
 	}
