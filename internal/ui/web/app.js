@@ -22,6 +22,99 @@ function friendlyError(message, statusText) {
   return plainBodyMessage(message, statusText);
 }
 
+function blankMetrics() {
+  return { alias: "", connected: false, address: "", port: "", user: "", hostname: "", uptime: "", load: "", cpuPercent: null, mem: null, swap: null, procs: [], disks: [], notes: [], netRx: 0, netTx: 0, netRxRate: 0, netTxRate: 0 };
+}
+
+function cleanPosix(p) {
+  const abs = String(p || "").charAt(0) === "/";
+  const parts = String(p || "").split("/");
+  const out = [];
+  for (let i = 0; i < parts.length; i++) {
+    const s = parts[i];
+    if (s === "" || s === ".") continue;
+    if (s === "..") {
+      if (out.length) out.pop();
+      continue;
+    }
+    out.push(s);
+  }
+  if (!out.length) return abs ? "/" : ".";
+  return (abs ? "/" : "") + out.join("/");
+}
+
+// Breadcrumbs used to paint a slash before every segment, and the root segment
+// was already "/", so /root showed up as ///root. Typed paths are cleaned here.
+function normalizeRemotePath(base, raw) {
+  let p = String(raw || "").trim();
+  if (!p) return { error: "请输入要打开的路径。" };
+  if (p.indexOf("\0") >= 0 || /[\r\n]/.test(p)) return { error: "路径无效。" };
+  p = p.replace(/\\/g, "/");
+  if (p.indexOf("//") === 0 && p.indexOf("///") !== 0) p = p.slice(1);
+  const root = cleanPosix(base || "");
+  const rooted = root.charAt(0) === "/";
+  if (p === "~") {
+    if (!rooted) return { error: "请输入绝对路径，例如 /root。" };
+    return { path: root };
+  }
+  if (p.indexOf("~/") === 0) {
+    if (!rooted) return { error: "请输入绝对路径，例如 /root。" };
+    p = root.replace(/\/$/, "") + "/" + p.slice(2);
+  } else if (p.charAt(0) !== "/") {
+    if (!rooted) return { error: "请输入绝对路径，例如 /root。" };
+    p = root.replace(/\/$/, "") + "/" + p;
+  }
+  const cleaned = cleanPosix(p);
+  if (!cleaned || cleaned.charAt(0) !== "/") return { error: "路径无效。" };
+  return { path: cleaned };
+}
+
+function chineseUptime(raw) {
+  const s = String(raw || "").trim();
+  if (!s) return "—";
+  if (s.indexOf("已运行") >= 0) return s;
+  let body = s;
+  const up = s.indexOf(" up ");
+  if (up >= 0) body = s.slice(up + 4);
+  else if (s.indexOf("up ") === 0) body = s.slice(3);
+  const loadAt = body.toLowerCase().indexOf("load average");
+  if (loadAt >= 0) body = body.slice(0, loadAt);
+  let days = 0;
+  let hours = 0;
+  let mins = 0;
+  const dayM = body.match(/(\d+)\s+days?/);
+  if (dayM) days = parseInt(dayM[1], 10) || 0;
+  const hourM = body.match(/(\d+)\s+hours?/);
+  if (hourM) hours = parseInt(hourM[1], 10) || 0;
+  const minM = body.match(/(\d+)\s+mins?/);
+  if (minM) mins = parseInt(minM[1], 10) || 0;
+  if (!hours && !mins) {
+    const clock = body.match(/(\d+):(\d{2})/);
+    if (clock) {
+      hours = parseInt(clock[1], 10) || 0;
+      mins = parseInt(clock[2], 10) || 0;
+    }
+  }
+  if (!days && !hours && !mins && s.toLowerCase().indexOf("up") < 0) return "已运行";
+  let text = "已运行";
+  if (days) text += " " + days + " 天";
+  if (hours) text += " " + hours + " 小时";
+  if (mins || (!days && !hours)) text += " " + mins + " 分";
+  return text;
+}
+
+function formatKB(kb) {
+  const units = ["KB", "MB", "GB", "TB"];
+  let n = Number(kb) || 0;
+  let i = 0;
+  while (n >= 1024 && i < units.length - 1) {
+    n /= 1024;
+    i++;
+  }
+  const shown = (i === 0 || n >= 100) ? String(Math.round(n)) : n.toFixed(1);
+  return shown + " " + units[i];
+}
+
 function stamp(value) {
   if (!value) return "";
   const d = new Date(value);
@@ -162,7 +255,6 @@ function sshui() {
     tagDraft: {},
     tagBulk: {},
     dialog: { host: false, group: false, policy: false, env: false, batch: false, detail: false },
-    wizard: "export",
     bundleYaml: "",
     bundleImport: "",
     cleanupNote: "",
@@ -188,6 +280,12 @@ function sshui() {
     termTabs: [],
     termActive: "",
     termAlias: "",
+    explicitAlias: "",
+    procSort: { key: "cpu", dir: "desc" },
+    pathDraft: "",
+    pathError: "",
+    pathFocused: false,
+    tree: {},
     ws: { side: 280, lower: 280 },
     metrics: { alias: "", connected: false, address: "", port: "", user: "", hostname: "", uptime: "", load: "", cpuPercent: null, mem: null, swap: null, procs: [], disks: [], notes: [], netRx: 0, netTx: 0, netRxRate: 0, netTxRate: 0 },
     netSeries: {},
@@ -198,7 +296,7 @@ function sshui() {
     drop: { over: false, target: "", label: "" },
     transfers: [],
     toasts: [],
-    menu: { open: false, x: 0, y: 0, entry: null },
+    menu: { open: false, x: 0, y: 0, entry: null, newOpen: false },
     selectedPath: "",
     historyView: { alias: "", found: false, status: "", path: "", shell: "", lines: [], notes: [], truncated: false, error: "", suppressed: false },
     detailTitle: "",
@@ -231,7 +329,7 @@ function sshui() {
       tags: "tags",
       envs: "envs",
       policy: "policy",
-      known: "known",
+      known: "hosts",
       audit: "audit",
       sessions: "sessions",
       operate: "operate",
@@ -250,7 +348,6 @@ function sshui() {
       const parsed = this.readHash(location.hash.replace(/^#/, ""));
       this.show(parsed.view || "home");
       this.loadCatalog();
-      this.loadKnown();
       this.loadAudit();
       this.loadSessions();
       window.addEventListener("hashchange", () => {
@@ -415,7 +512,7 @@ function sshui() {
         return m + "。认证失败。在主机表单里更新密码或私钥路径后再连。密码不会出现在审计里。";
       }
       if (/connect|dial|refused|timeout|no route|network|known_hosts|host key|i\/o/.test(low)) {
-        return m + "。连接失败。核对地址和端口，确认本机能访问该主机。主机密钥变了就到「已知主机密钥」删除旧记录后再试。";
+        return m + "。连接失败。核对地址和端口，确认本机能访问该主机。主机密钥变了就打开这台主机的详情，清除信任后再连。";
       }
       return m;
     },
@@ -588,6 +685,8 @@ function sshui() {
         if (!this.detail.policy.capabilities) this.detail.policy.capabilities = {};
         if (!this.detail.audit) this.detail.audit = [];
         if (!this.detail.sessions) this.detail.sessions = [];
+        if (!this.detail.knownHosts) this.detail.knownHosts = [];
+        if (this.detail.knownError) this.setError("known", this.detail.knownError);
       } catch (err) {
         this.setError("host", err.message);
       }
@@ -979,12 +1078,55 @@ function sshui() {
       }
     },
 
-    activeTermAlias() {
+    tabAlias() {
       const tabs = this.termTabs || [];
       for (let i = 0; i < tabs.length; i++) {
         if (tabs[i].id === this.termActive) return tabs[i].alias;
       }
-      return this.termAlias || "";
+      return "";
+    },
+
+    panelAlias() {
+      return this.tabAlias() || this.termAlias || "";
+    },
+
+    liveAlias() {
+      const tab = this.tabAlias();
+      if (tab) return tab;
+      if (this.explicitAlias && this.explicitAlias === (this.termAlias || "")) return this.explicitAlias;
+      return "";
+    },
+
+    workspaceLive() {
+      return !!this.liveAlias();
+    },
+
+    activeTermAlias() {
+      return this.panelAlias();
+    },
+
+    onTermHost() {
+      if (this.tabAlias()) return;
+      if (this.explicitAlias && this.explicitAlias !== this.termAlias) this.explicitAlias = "";
+      this.syncWorkspace();
+    },
+
+    clearLivePanes() {
+      this.stopMetrics();
+      this.abortRead("files");
+      this.metricsSeq++;
+      this.metrics = blankMetrics();
+      this.files.alias = "";
+      this.files.path = "";
+      this.files.parent = "";
+      this.files.crumbs = [];
+      this.files.entries = [];
+      this.files.truncated = false;
+      this.tree = {};
+      if (!this.pathFocused) this.pathDraft = "";
+      this.pathError = "";
+      this.historyView = { alias: "", found: false, status: "", path: "", shell: "", lines: [], notes: [], truncated: false, error: "", suppressed: false };
+      this.netSeries = {};
     },
 
     hostByAlias(alias) {
@@ -996,9 +1138,10 @@ function sshui() {
     },
 
     overviewAddr() {
-      const live = this.metrics && this.metrics.alias === this.activeTermAlias() ? this.metrics : null;
+      const alias = this.panelAlias();
+      const live = this.workspaceLive() && this.metrics && this.metrics.alias === alias ? this.metrics : null;
       if (live && live.address) return live.user + "@" + live.address + ":" + live.port;
-      const h = this.hostByAlias(this.activeTermAlias());
+      const h = this.hostByAlias(alias);
       if (!h) return "选择主机后显示地址";
       return (h.user || "") + "@" + (h.host || "") + ":" + (h.port || "");
     },
@@ -1051,10 +1194,9 @@ function sshui() {
     },
 
     syncWorkspace() {
-      const alias = this.activeTermAlias();
+      const alias = this.liveAlias();
       if (!alias) {
-        this.stopMetrics();
-        this.abortRead("files");
+        this.clearLivePanes();
         return;
       }
       if (this.files.alias !== alias) {
@@ -1065,6 +1207,7 @@ function sshui() {
         this.files.crumbs = [];
         this.files.entries = [];
         this.files.truncated = false;
+        this.tree = {};
         if (this.files.mode !== "history") this.refreshFiles();
       }
       if (this.files.mode === "history" && this.historyView.alias !== alias) this.loadHistory(alias);
@@ -1094,13 +1237,13 @@ function sshui() {
     },
 
     async refreshMetrics() {
-      const alias = this.activeTermAlias();
+      const alias = this.liveAlias();
       if (!alias || this.view !== "terminal") return;
       const seq = ++this.metricsSeq;
       const signal = this.replaceRead("metrics");
       try {
         const data = await this.postRead("/api/metrics", { alias: alias }, signal);
-        if (seq !== this.metricsSeq || this.activeTermAlias() !== alias) return;
+        if (seq !== this.metricsSeq || this.liveAlias() !== alias) return;
         data.procs = data.procs || [];
         data.disks = data.disks || [];
         data.notes = data.notes || [];
@@ -1159,6 +1302,43 @@ function sshui() {
       return this.pct(mem.percent) + " · " + this.formatBytes(mem.used) + " / " + this.formatBytes(mem.total);
     },
 
+    uptimeText() {
+      return chineseUptime(this.metrics && this.metrics.uptime);
+    },
+
+    procMem(p) {
+      if (!p || p.rss == null || p.rss === "") return "—";
+      const kb = Number(p.rss);
+      if (!isFinite(kb) || kb < 0) return "—";
+      return formatKB(kb);
+    },
+
+    procCpu(p) {
+      const n = Number(p && p.cpu);
+      if (!isFinite(n)) return "—";
+      const shown = Math.round(n * 10) / 10;
+      const text = (shown % 1 === 0) ? String(shown) : shown.toFixed(1);
+      return text + "%";
+    },
+
+    sortProcs(key) {
+      if (this.procSort.key === key) this.procSort.dir = this.procSort.dir === "asc" ? "desc" : "asc";
+      else this.procSort = { key: key, dir: key === "comm" ? "asc" : "desc" };
+    },
+
+    sortedProcs() {
+      const rows = ((this.metrics && this.metrics.procs) || []).slice();
+      const key = (this.procSort && this.procSort.key) || "cpu";
+      const dir = this.procSort && this.procSort.dir === "asc" ? 1 : -1;
+      rows.sort((a, b) => {
+        if (key === "comm") return String(a.comm || "").localeCompare(String(b.comm || "")) * dir;
+        const av = key === "mem" ? (Number(a.rss) || 0) : (Number(a.cpu) || 0);
+        const bv = key === "mem" ? (Number(b.rss) || 0) : (Number(b.cpu) || 0);
+        return (av - bv) * dir;
+      });
+      return rows;
+    },
+
     diskPct(text) {
       const n = parseInt(String(text || ""), 10);
       return isFinite(n) ? n : null;
@@ -1167,7 +1347,7 @@ function sshui() {
     diskEmpty() { return !this.metrics || !this.metrics.disks || this.metrics.disks.length === 0; },
     procEmpty() { return !this.metrics || !this.metrics.procs || this.metrics.procs.length === 0; },
     metricsPending() {
-      return !!this.activeTermAlias() && !(this.errors && this.errors.metrics) && !(this.metrics && this.metrics.connected);
+      return this.workspaceLive() && !(this.errors && this.errors.metrics) && !(this.metrics && this.metrics.connected);
     },
 
     noteText() {
@@ -1203,53 +1383,211 @@ function sshui() {
     showFiles() {
       this.files.mode = "files";
       this.setError("files", "");
-      if (this.activeTermAlias() && !this.files.path) this.refreshFiles();
+      if (this.liveAlias() && !this.files.path) this.refreshFiles();
     },
 
     showHistory() {
       this.files.mode = "history";
       this.setError("files", "");
-      this.loadHistory(this.activeTermAlias());
+      if (this.liveAlias()) this.loadHistory(this.liveAlias());
     },
 
     async openHistory(alias) {
+      const name = alias || this.termAlias;
       this.files.mode = "history";
-      this.termAlias = alias || this.termAlias;
+      this.termAlias = name;
+      this.explicitAlias = name;
       this.show("terminal");
-      await this.loadHistory(alias || this.activeTermAlias());
+      await this.loadHistory(name);
     },
 
     async refreshFiles() {
-      const alias = this.activeTermAlias();
+      this.menu.open = false;
+      const alias = this.liveAlias();
       if (!alias) {
-        this.setError("files", "先选择一台主机。");
+        this.setError("files", "先打开终端或点「连接」。");
         return;
       }
       await this.listFiles(this.files.alias === alias && this.files.path ? this.files.path : ".");
     },
 
+    async jumpPath() {
+      const norm = normalizeRemotePath(this.files.path, this.pathDraft);
+      if (norm.error) {
+        this.pathError = norm.error;
+        return;
+      }
+      this.pathError = "";
+      this.pathDraft = norm.path;
+      await this.listFiles(norm.path);
+    },
+
     async listFiles(path) {
-      const alias = this.activeTermAlias();
+      const alias = this.liveAlias();
       if (!alias) {
-        this.setError("files", "先选择一台主机。");
+        this.setError("files", "先打开终端或点「连接」。");
         return;
       }
       this.setError("files", "");
       const signal = this.replaceRead("files");
       try {
         const data = await this.postRead("/api/files/list", { alias: alias, path: path || "." }, signal);
-        if (this.activeTermAlias() !== alias) return;
+        if (this.liveAlias() !== alias) return;
         this.files.alias = alias;
         this.files.path = data.path || "";
         this.files.parent = data.parent || "";
         this.files.crumbs = data.crumbs || [];
         this.files.entries = data.entries || [];
         this.files.truncated = !!data.truncated;
+        if (!this.pathFocused) this.pathDraft = this.files.path;
+        this.pathError = "";
+        this.noteTree(this.files.path, this.files.entries);
       } catch (err) {
         if (err && err.name === "AbortError") return;
-        if (this.activeTermAlias() !== alias) return;
-        this.setError("files", err.message || "列目录失败");
+        if (this.liveAlias() !== alias) return;
+        const msg = err.message || "列目录失败";
+        this.setError("files", msg);
+        if (msg.indexOf("不存在") >= 0 || msg.indexOf("not exist") >= 0 || msg.indexOf("no such file") >= 0) this.pathError = msg.indexOf("目录不存在") >= 0 ? msg : "目录不存在。";
       }
+    },
+
+    noteTree(abs, entries) {
+      let path = String(abs || "");
+      if (!path) return;
+      if (path.charAt(0) !== "/") path = "/" + path;
+      if (!this.tree["/"]) this.tree["/"] = { name: "/", open: true, loaded: false, dirs: [] };
+      const parts = path === "/" ? [] : path.split("/").filter(Boolean);
+      let parent = "/";
+      for (let i = 0; i < parts.length; i++) {
+        const cur = parent === "/" ? "/" + parts[i] : parent + "/" + parts[i];
+        if (!this.tree[parent]) this.tree[parent] = { name: parent === "/" ? "/" : parent.slice(parent.lastIndexOf("/") + 1), open: true, loaded: false, dirs: [] };
+        this.tree[parent].open = true;
+        const dirs = this.tree[parent].dirs || [];
+        let seen = false;
+        for (let j = 0; j < dirs.length; j++) if (dirs[j].path === cur) seen = true;
+        if (!seen) dirs.push({ name: parts[i], path: cur });
+        this.tree[parent].dirs = dirs;
+        if (!this.tree[cur]) this.tree[cur] = { name: parts[i], open: false, loaded: false, dirs: [] };
+        parent = cur;
+      }
+      const node = this.tree[path];
+      node.open = true;
+      node.loaded = true;
+      node.name = path === "/" ? "/" : parts[parts.length - 1];
+      node.dirs = [];
+      const list = entries || [];
+      for (let i = 0; i < list.length; i++) {
+        if (!list[i].dir) continue;
+        node.dirs.push({ name: list[i].name, path: list[i].path });
+        if (!this.tree[list[i].path]) this.tree[list[i].path] = { name: list[i].name, open: false, loaded: false, dirs: [] };
+      }
+      this.tree = Object.assign({}, this.tree);
+    },
+
+    treeRows() {
+      const rows = [];
+      const walk = (path, depth) => {
+        const node = this.tree[path];
+        if (!node) return;
+        rows.push({ path: path, name: node.name || "/", depth: depth, open: !!node.open });
+        if (!node.open) return;
+        const dirs = node.dirs || [];
+        for (let i = 0; i < dirs.length; i++) walk(dirs[i].path, depth + 1);
+      };
+      if (this.tree["/"]) walk("/", 0);
+      return rows;
+    },
+
+    async toggleTree(row) {
+      const node = this.tree[row.path];
+      if (node && node.open) {
+        node.open = false;
+        this.tree = Object.assign({}, this.tree);
+        return;
+      }
+      if (node && node.loaded) {
+        node.open = true;
+        this.tree = Object.assign({}, this.tree);
+        return;
+      }
+      const alias = this.liveAlias();
+      if (!alias) return;
+      try {
+        const data = await this.postJSON("/api/files/list", { alias: alias, path: row.path });
+        this.noteTree(data.path || row.path, data.entries || []);
+      } catch (err) {
+        this.toast(err.message || "无法展开目录", "bad");
+      }
+    },
+
+    async fileChange(op, path, name) {
+      this.menu.open = false;
+      const alias = this.liveAlias();
+      if (!alias) {
+        this.toast("先打开终端或点「连接」。", "bad");
+        return;
+      }
+      try {
+        await this.postJSON("/api/files/change", { alias: alias, op: op, path: path, name: name || "" });
+        const cur = this.files.path || path;
+        await this.listFiles(op === "remove" && path === cur ? (this.files.parent || "/") : cur);
+      } catch (err) {
+        this.toast(err.message || "操作失败", "bad");
+      }
+    },
+
+    async createEntry(kind) {
+      const parent = this.files.path;
+      this.menu.open = false;
+      if (!parent) {
+        this.toast("先打开一个目录。", "bad");
+        return;
+      }
+      const name = window.prompt(kind === "dir" ? "新建文件夹名称" : "新建文件名称");
+      if (name == null) return;
+      if (!String(name).trim()) {
+        this.toast("请输入名称。", "bad");
+        return;
+      }
+      await this.fileChange(kind === "dir" ? "mkdir" : "touch", parent, String(name).trim());
+    },
+
+    async renameEntry() {
+      const entry = this.menu.entry;
+      this.menu.open = false;
+      if (!entry || !entry.path) {
+        this.toast("先选中一项。", "bad");
+        return;
+      }
+      const name = window.prompt("重命名为", entry.name || "");
+      if (name == null) return;
+      if (!String(name).trim()) {
+        this.toast("请输入名称。", "bad");
+        return;
+      }
+      await this.fileChange("rename", entry.path, String(name).trim());
+    },
+
+    async deleteEntry() {
+      const entry = this.menu.entry;
+      this.menu.open = false;
+      if (!entry || !entry.path) {
+        this.toast("先选中一项。", "bad");
+        return;
+      }
+      if (!window.confirm("删除 " + (entry.name || entry.path) + " ？此操作不能撤销。")) return;
+      await this.fileChange("remove", entry.path, "");
+    },
+
+    openContext() {
+      const entry = this.menu.entry;
+      this.menu.open = false;
+      if (!entry) {
+        this.refreshFiles();
+        return;
+      }
+      if (entry.dir) this.listFiles(entry.path);
+      else this.wsDownload(entry);
     },
 
     dirEntries() {
@@ -1281,10 +1619,32 @@ function sshui() {
       await this.enqueueUploads(files, this.files.path);
     },
 
+    patchTransfer(id, patch) {
+      const next = [];
+      const items = this.transfers || [];
+      let found = false;
+      for (let i = 0; i < items.length; i++) {
+        if (items[i].id === id) {
+          found = true;
+          next.push(Object.assign({}, items[i], patch));
+        } else next.push(items[i]);
+      }
+      if (!found) next.push(Object.assign({ id: id }, patch));
+      this.transfers = next;
+    },
+
+    finishTransfer(id, patch) {
+      this.patchTransfer(id, Object.assign({ active: false }, patch));
+      const app = this;
+      setTimeout(() => {
+        app.transfers = (app.transfers || []).filter((t) => t.id !== id || t.active);
+      }, 6000);
+    },
+
     async enqueueUploads(fileList, remoteDir) {
-      const alias = this.activeTermAlias();
+      const alias = this.liveAlias();
       if (!alias) {
-        this.toast("先选择一台主机。", "bad");
+        this.toast("先打开终端或点「连接」。", "bad");
         return;
       }
       const dest = remoteDir || this.files.path;
@@ -1308,7 +1668,11 @@ function sshui() {
       const app = this;
       const id = "up" + Date.now().toString(36) + Math.floor(Math.random() * 1000);
       const item = { id: id, alias: alias, name: file.name, loaded: 0, total: file.size || 0, active: true, label: "上传中" };
-      this.transfers.push(item);
+      this.patchTransfer(id, item);
+      const commit = (patch) => {
+        Object.assign(item, patch);
+        app.patchTransfer(id, patch);
+      };
       return new Promise((resolve) => {
         const send = (confirmText) => {
           const xhr = new XMLHttpRequest();
@@ -1324,21 +1688,24 @@ function sshui() {
           if (token) xhr.setRequestHeader("Authorization", "Bearer " + token);
           xhr.upload.onprogress = (ev) => {
             if (ev.lengthComputable) {
-              item.loaded = ev.loaded;
-              item.total = ev.total;
-              item.label = app.pct(ev.total ? (100 * ev.loaded) / ev.total : 0);
+              commit({
+                loaded: ev.loaded,
+                total: ev.total,
+                active: true,
+                label: "上传中 " + app.pct(ev.total ? (100 * ev.loaded) / ev.total : 0)
+              });
             }
           };
           xhr.onerror = () => {
-            item.active = false;
-            item.label = "失败";
+            commit({ active: false, label: "失败" });
+            app.finishTransfer(id, { label: "失败" });
             transferCtl.delete(id);
             app.toast(file.name + " 上传失败", "bad");
             resolve();
           };
           xhr.onabort = () => {
-            item.active = false;
-            item.label = "已取消";
+            commit({ active: false, label: "已取消" });
+            app.finishTransfer(id, { label: "已取消" });
             transferCtl.delete(id);
             resolve();
           };
@@ -1348,8 +1715,8 @@ function sshui() {
             try {
               data = raw ? JSON.parse(raw) : {};
             } catch (err) {
-              item.active = false;
-              item.label = "失败";
+              commit({ active: false, label: "失败" });
+              app.finishTransfer(id, { label: "失败" });
               transferCtl.delete(id);
               app.toast(file.name + "：" + plainBodyMessage(raw, xhr.statusText), "bad");
               resolve();
@@ -1358,8 +1725,8 @@ function sshui() {
             if (xhr.status === 409 && data.needsConfirm && !confirmText) {
               const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + (data.confirm || alias));
               if (typed == null) {
-                item.active = false;
-                item.label = "已取消";
+                commit({ active: false, label: "已取消" });
+                app.finishTransfer(id, { label: "已取消" });
                 transferCtl.delete(id);
                 resolve();
                 return;
@@ -1368,13 +1735,13 @@ function sshui() {
               return;
             }
             transferCtl.delete(id);
-            item.active = false;
             if (xhr.status < 200 || xhr.status >= 300 || data.ok === false) {
-              item.label = "失败";
+              commit({ active: false, label: "失败" });
+              app.finishTransfer(id, { label: "失败" });
               app.toast(file.name + "：" + (data.error || xhr.statusText || "上传失败"), "bad");
             } else {
-              item.loaded = item.total || item.loaded;
-              item.label = "完成";
+              commit({ active: false, loaded: item.total || item.loaded, label: "完成" });
+              app.finishTransfer(id, { loaded: item.total || item.loaded, label: "完成" });
             }
             resolve();
           };
@@ -1386,13 +1753,22 @@ function sshui() {
 
     async wsDownload(entry) {
       this.menu.open = false;
-      const alias = this.activeTermAlias();
+      const alias = this.liveAlias();
       if (!alias || !entry || !entry.path) return;
       this.setError("files", "");
       await this.ensureSession();
-      const id = "dn" + Date.now().toString(36);
-      const item = { id: id, alias: alias, name: entry.name || "download", loaded: 0, total: 0, active: true, label: "下载中" };
-      this.transfers.push(item);
+      const id = "dn" + Date.now().toString(36) + Math.floor(Math.random() * 1000);
+      const name = entry.dir ? ((entry.name || "download") + ".tar.gz") : (entry.name || "download");
+      let loaded = 0;
+      let total = 0;
+      let lastPaint = 0;
+      this.patchTransfer(id, { id: id, alias: alias, name: name, loaded: 0, total: 0, active: true, label: "下载中" });
+      const paint = (patch, force) => {
+        const now = Date.now();
+        if (!force && now - lastPaint < 80) return;
+        lastPaint = now;
+        this.patchTransfer(id, patch);
+      };
       const ctrl = new AbortController();
       transferCtl.set(id, ctrl);
       try {
@@ -1406,32 +1782,34 @@ function sshui() {
           const data = await this.parseJSON(res);
           throw new Error(friendlyError(data.error, res.statusText));
         }
-        const total = Number(res.headers.get("Content-Length")) || 0;
-        item.total = total;
+        total = Number(res.headers.get("Content-Length")) || Number(entry.size) || 0;
+        paint({ total: total, active: true, label: total ? ("下载中 " + this.pct(0)) : "下载中" }, true);
         const reader = res.body && res.body.getReader ? res.body.getReader() : null;
         const chunks = [];
         if (!reader) {
           const blob = await res.blob();
-          item.loaded = blob.size;
-          this.saveBlob(blob, entry.name || "download");
+          loaded = blob.size;
+          this.saveBlob(blob, name);
         } else {
           while (true) {
             const step = await reader.read();
             if (step.done) break;
             chunks.push(step.value);
-            item.loaded += step.value.length;
-            item.label = total ? this.pct((100 * item.loaded) / total) : this.formatBytes(item.loaded);
+            loaded += step.value.length;
+            const label = total ? ("下载中 " + this.pct((100 * loaded) / total)) : ("下载中 " + this.formatBytes(loaded));
+            paint({ loaded: loaded, total: total, active: true, label: label }, false);
           }
-          this.saveBlob(new Blob(chunks), entry.name || "download");
+          this.saveBlob(new Blob(chunks), name);
         }
-        item.active = false;
-        item.label = "完成";
+        this.patchTransfer(id, { loaded: loaded, total: total || loaded, active: false, label: "完成" });
+        this.finishTransfer(id, { loaded: loaded, total: total || loaded, label: "完成" });
       } catch (err) {
-        item.active = false;
         if (err && err.name === "AbortError") {
-          item.label = "已取消";
+          this.patchTransfer(id, { active: false, label: "已取消" });
+          this.finishTransfer(id, { label: "已取消" });
         } else {
-          item.label = "失败";
+          this.patchTransfer(id, { active: false, label: "失败" });
+          this.finishTransfer(id, { label: "失败" });
           this.toast((entry.name || "文件") + "：" + (err.message || "下载失败"), "bad");
         }
       } finally {
@@ -1449,15 +1827,22 @@ function sshui() {
     },
 
     cancelTransfer(id) {
+      const items = this.transfers || [];
+      let active = false;
+      for (let i = 0; i < items.length; i++) if (items[i].id === id && items[i].active) active = true;
+      if (!active) return;
       const ctl = transferCtl.get(id);
       if (ctl && ctl.abort) ctl.abort();
-      const items = this.transfers || [];
-      for (let i = 0; i < items.length; i++) {
-        if (items[i].id === id) {
-          items[i].active = false;
-          items[i].label = "已取消";
-        }
-      }
+      this.finishTransfer(id, { label: "已取消" });
+    },
+
+    itemPct(item) {
+      if (!item) return 0;
+      if (!item.active && item.label === "完成") return 100;
+      const total = Number(item.total) || 0;
+      const loaded = Number(item.loaded) || 0;
+      if (!total) return 0;
+      return (100 * loaded) / total;
     },
 
     transferPct() {
@@ -1551,10 +1936,11 @@ function sshui() {
 
     openMenu(ev, entry) {
       if (entry) this.selectedPath = entry.path || "";
-      this.menu = { open: true, x: ev.clientX, y: ev.clientY, entry: entry || null };
+      this.menu = { open: true, x: ev.clientX, y: ev.clientY, entry: entry || null, newOpen: false };
       const app = this;
       const close = (e) => {
         if (e.type === "keydown" && e.key !== "Escape") return;
+        if (e.type === "click" && e.target && e.target.closest && e.target.closest(".ws-menu")) return;
         app.menu.open = false;
         document.removeEventListener("click", close, true);
         document.removeEventListener("keydown", close);
@@ -1608,8 +1994,9 @@ function sshui() {
     },
 
     workspaceSession() {
-      const alias = this.activeTermAlias();
+      const alias = this.panelAlias();
       if (!alias) return "未选择主机";
+      if (!this.workspaceLive()) return "未打开终端 · 点「打开」或「连接」后显示概况和文件";
       const items = this.sessions || [];
       for (let i = 0; i < items.length; i++) {
         if (items[i].alias !== alias) continue;
@@ -1620,14 +2007,17 @@ function sshui() {
     },
 
     async openWorkspaceHost() {
-      const alias = this.activeTermAlias();
+      const alias = this.panelAlias();
       if (!alias) {
         this.toast("先选择一台主机。", "bad");
         return;
       }
       try {
         await this.postJSON("/api/sessions/open", { alias: alias });
+        this.explicitAlias = alias;
+        this.termAlias = alias;
         await this.loadSessions();
+        this.syncWorkspace();
         this.toast("已连接 " + alias);
       } catch (err) {
         this.toast(err.message || "连接失败", "bad");
@@ -1635,8 +2025,9 @@ function sshui() {
     },
 
     async closeWorkspaceHost() {
-      const alias = this.activeTermAlias();
+      const alias = this.panelAlias();
       if (!alias) return;
+      if (this.explicitAlias === alias) this.explicitAlias = "";
       const tabs = (this.termTabs || []).slice();
       for (let i = 0; i < tabs.length; i++) if (tabs[i].alias === alias) this.closeTab(tabs[i].id);
       try {
@@ -1645,12 +2036,13 @@ function sshui() {
       } catch (err) {
         this.toast(err.message || "断开失败", "bad");
       }
+      this.syncWorkspace();
     },
 
     async loadHistory(alias) {
-      const name = String(alias || this.activeTermAlias() || "").trim();
-      if (!name) {
-        this.setError("files", "先选择一台主机。");
+      const name = String(alias || this.liveAlias() || "").trim();
+      if (!name || !this.workspaceLive()) {
+        this.setError("files", "先打开终端或点「连接」。");
         return;
       }
       this.files.mode = "history";
@@ -1658,13 +2050,13 @@ function sshui() {
       const signal = this.replaceRead("files");
       try {
         const data = await this.postRead("/api/history", { alias: name, lines: 100 }, signal);
-        if (this.activeTermAlias() !== name) return;
+        if (this.liveAlias() !== name) return;
         data.lines = data.lines || [];
         data.notes = data.notes || [];
         this.historyView = data;
       } catch (err) {
         if (err && err.name === "AbortError") return;
-        if (this.activeTermAlias() !== name) return;
+        if (this.liveAlias() !== name) return;
         this.historyView = { alias: name, found: false, status: "error", lines: [], notes: [], error: err.message || "读取历史失败" };
         this.setError("files", err.message || "读取历史失败");
       }
@@ -2048,12 +2440,17 @@ function sshui() {
       }
     },
 
+    hostKeys() {
+      return (this.detail && this.detail.knownHosts) || [];
+    },
+
     async removeKnown(marker) {
-      if (!window.confirm("删除已知主机密钥 " + marker + "？下次连接会重新记录第一把钥匙。")) return;
+      if (!window.confirm("清除这台主机的信任 " + marker + "？下次连接会重新记录第一把钥匙。")) return;
       this.setError("known", "");
       try {
         await this.postJSON("/api/known-hosts/remove", { marker: marker });
-        await this.loadKnown();
+        if (this.view === "host") await this.loadHost();
+        else await this.loadKnown();
       } catch (err) {
         this.setError("known", err.message);
       }
@@ -2305,7 +2702,6 @@ function sshui() {
         const yaml = data.yaml || "";
         if (this.looksSecret(yaml)) throw new Error("导出里出现了明文口令字段，已停止显示");
         this.bundleYaml = yaml;
-        this.wizard = "export";
       } catch (err) {
         this.setError("bundle", err.message);
       }

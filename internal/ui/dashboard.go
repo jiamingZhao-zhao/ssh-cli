@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -17,6 +18,7 @@ import (
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/policyhmac"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/session"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/sshclient"
 )
 
 const (
@@ -122,9 +124,18 @@ func (s *service) hostDetailAPI(w http.ResponseWriter, r *http.Request) {
 		live = []any{}
 	}
 	recs := newest(s.dir, audit.Filter{Hosts: []string{h.Alias}, Source: audit.SourceCLI}, 10)
-	writeJSON(w, http.StatusOK, map[string]any{
+	keys, keyErr := sshclient.KeysForHost(filepath.Join(s.dir, config.KnownHostsName), h.Host.Host, h.Host.PortOrDefault())
+	if keyErr != nil {
+		keys = []sshclient.KnownHost{}
+	}
+	payload := map[string]any{
 		"ok": true, "host": view, "policy": policy, "sessions": live, "audit": recs,
-	})
+		"knownHosts": keys,
+	}
+	if keyErr != nil {
+		payload["knownError"] = keyErr.Error()
+	}
+	writeJSON(w, http.StatusOK, payload)
 }
 
 func fillRulesJSON(view map[string]any, allow *[]string, deny, confirm []string) {

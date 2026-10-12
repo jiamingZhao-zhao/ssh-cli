@@ -50,13 +50,17 @@ func TestWorkspaceChrome(t *testing.T) {
 		"ws-download-lane",
 		"拖到这里下载到本机",
 		"复制路径",
+		"打开方式",
+		"转到",
+		"传输队列",
+		"还没有打开的终端",
 		"ws-via",
 	} {
 		if !strings.Contains(chunk, s) {
 			t.Fatalf("workspace missing %s", s)
 		}
 	}
-	if strings.Contains(chunk, ">命令<") || strings.Contains(chunk, `data-pane="commands"`) {
+	if strings.Contains(chunk, `data-pane="commands"`) {
 		t.Fatal("command tab is out of scope")
 	}
 	if strings.Contains(body, "不套用允许") || strings.Contains(body, "不记按键") {

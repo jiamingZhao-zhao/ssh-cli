@@ -5,6 +5,8 @@ package metrics
 
 import (
 	"context"
+	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -26,7 +28,7 @@ func Probes() []Probe {
 		{Name: "stat", Command: "cat /proc/stat"},
 		{Name: "mem", Command: "free -b"},
 		{Name: "disk", Command: "df -P"},
-		{Name: "proc", Command: "ps -eo pid,user,pcpu,pmem,comm --sort=-pcpu"},
+		{Name: "proc", Command: "ps -eo pid,user,pcpu,rss,comm --sort=-pcpu"},
 		{Name: "proc-aux", Command: "ps aux"},
 		{Name: "net", Command: "cat /proc/net/dev"},
 	}
@@ -57,6 +59,7 @@ type Proc struct {
 	User string `json:"user"`
 	CPU  string `json:"cpu"`
 	Mem  string `json:"mem"`
+	RSS  uint64 `json:"rss"`
 	Comm string `json:"comm"`
 }
 
@@ -133,7 +136,7 @@ func Collect(ctx context.Context, exec ExecFunc, gate GateFunc, opt Options) (Sn
 		return stdout, true
 	}
 	if text, ok := run("uptime"); ok {
-		snap.Uptime = oneLine(text)
+		snap.Uptime = ChineseUptime(text)
 	}
 	if transport != nil {
 		return Snapshot{}, transport
@@ -270,6 +273,65 @@ func loadOf(s string) string {
 	return oneLine(s)
 }
 
+var (
+	reUpDays     = regexp.MustCompile(`(\d+)\s+days?`)
+	reUpHourWord = regexp.MustCompile(`(\d+)\s+hours?`)
+	reUpMinWord  = regexp.MustCompile(`(\d+)\s+mins?`)
+	reUpClock    = regexp.MustCompile(`(\d+):(\d{2})`)
+)
+
+// ChineseUptime turns the English uptime(1) line into 已运行 … 天 … 小时 … 分.
+// The clock before "up" and the "load average" tail are dropped; load stays on its own field.
+func ChineseUptime(raw string) string {
+	s := strings.TrimSpace(raw)
+	if s == "" {
+		return ""
+	}
+	if strings.Contains(s, "已运行") {
+		return oneLine(s)
+	}
+	body := s
+	if i := strings.Index(s, " up "); i >= 0 {
+		body = s[i+4:]
+	} else if strings.HasPrefix(s, "up ") {
+		body = s[3:]
+	}
+	if i := strings.Index(strings.ToLower(body), "load average"); i >= 0 {
+		body = body[:i]
+	}
+	days, hours, mins := 0, 0, 0
+	if m := reUpDays.FindStringSubmatch(body); m != nil {
+		days, _ = strconv.Atoi(m[1])
+	}
+	if m := reUpHourWord.FindStringSubmatch(body); m != nil {
+		hours, _ = strconv.Atoi(m[1])
+	}
+	if m := reUpMinWord.FindStringSubmatch(body); m != nil {
+		mins, _ = strconv.Atoi(m[1])
+	}
+	if hours == 0 && mins == 0 {
+		if m := reUpClock.FindStringSubmatch(body); m != nil {
+			hours, _ = strconv.Atoi(m[1])
+			mins, _ = strconv.Atoi(m[2])
+		}
+	}
+	if days == 0 && hours == 0 && mins == 0 && !strings.Contains(strings.ToLower(s), "up") {
+		return "已运行"
+	}
+	var b strings.Builder
+	b.WriteString("已运行")
+	if days > 0 {
+		fmt.Fprintf(&b, " %d 天", days)
+	}
+	if hours > 0 {
+		fmt.Fprintf(&b, " %d 小时", hours)
+	}
+	if mins > 0 || (days == 0 && hours == 0) {
+		fmt.Fprintf(&b, " %d 分", mins)
+	}
+	return b.String()
+}
+
 // CPUPercent is the non-idle share between two /proc/stat samples.
 func CPUPercent(a, b string) (float64, bool) {
 	idle1, total1, ok1 := cpuLine(a)
@@ -391,6 +453,7 @@ func ParsePS(text string) []Proc {
 	userI := firstCol(col, "USER")
 	cpuI := firstCol(col, "%CPU", "CPU")
 	memI := firstCol(col, "%MEM", "MEM")
+	rssI := firstCol(col, "RSS")
 	commI := firstCol(col, "COMMAND", "CMD", "COMM")
 	if pidI < 0 || commI < 0 {
 		return []Proc{}
@@ -410,6 +473,11 @@ func ParsePS(text string) []Proc {
 		}
 		if memI >= 0 && memI < len(f) {
 			p.Mem = f[memI]
+		}
+		if rssI >= 0 && rssI < len(f) {
+			if n, err := strconv.ParseUint(f[rssI], 10, 64); err == nil {
+				p.RSS = n
+			}
 		}
 		out = append(out, p)
 		if len(out) == maxProcs {
