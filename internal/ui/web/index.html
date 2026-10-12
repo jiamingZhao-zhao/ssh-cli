@@ -151,6 +151,7 @@
               <button type="button" class="btn btn-sm" :aria-pressed="panel === 'overview'" @click="selectPanel('overview')">概况</button>
               <button type="button" class="btn btn-sm" :aria-pressed="panel === 'files'" @click="selectPanel('files')">文件</button>
             </div>
+            <div class="ws-side">
             <aside class="ws-overview" data-pane="overview">
               <div class="empty" x-show="!workspaceLive()">
                 <div class="empty-ico" aria-hidden="true"></div>
@@ -185,23 +186,22 @@
                 <div class="ws-meter-label"><span>交换</span><span x-text="memText(metrics.swap)"></span></div>
                 <div class="ws-meter-track"><div class="ws-meter-bar ws-meter-swap" :style="barStyle(memPct(metrics.swap))"></div></div>
               </div>
-              <div class="ws-block ws-disk-block" x-show="workspaceLive()">
-                <div class="ws-kicker">磁盘</div>
-                <div class="empty" x-show="diskEmpty() && !metricsPending()">
-                  <div class="empty-ico" aria-hidden="true"></div>
-                  <p class="empty-title">没有磁盘数据</p>
-                  <p class="empty-subtitle">连接主机后会显示各挂载点用量。</p>
-                  <div class="empty-action"><button class="btn btn-primary btn-sm" type="button" @click="refreshMetrics()">刷新</button></div>
-                </div>
-                <template x-for="d in metrics.disks" :key="d.mount">
-                  <div class="ws-disk-row">
-                    <span class="ws-disk-mount" x-text="d.mount"></span>
-                    <div class="ws-meter-track"><div class="ws-meter-bar" :style="barStyle(diskPct(d.percent))"></div></div>
-                    <span class="ws-disk-meta" x-text="diskText(d)"></span>
-                  </div>
-                </template>
+              <div class="empty" x-show="workspaceLive() && diskEmpty() && !metricsPending()">
+                <div class="empty-ico" aria-hidden="true"></div>
+                <p class="empty-title">没有磁盘数据</p>
+                <p class="empty-subtitle">连接主机后会显示各挂载点用量。</p>
+                <div class="empty-action"><button class="btn btn-primary btn-sm" type="button" @click="refreshMetrics()">刷新</button></div>
               </div>
-              <div class="ws-block" x-show="workspaceLive()">
+              <template x-for="d in metrics.disks" :key="d.mount">
+                <div class="ws-meter">
+                  <div class="ws-meter-label">
+                    <span class="ws-disk-label">磁盘<span class="ws-disk-mount" x-show="d.mount" x-text="d.mount"></span></span>
+                    <span x-text="diskText(d)"></span>
+                  </div>
+                  <div class="ws-meter-track"><div class="ws-meter-bar" :style="barStyle(diskPct(d.percent))"></div></div>
+                </div>
+              </template>
+              <div class="ws-block ws-proc-block" x-show="workspaceLive()">
                 <div class="empty" x-show="procEmpty() && !metricsPending()">
                   <div class="empty-ico" aria-hidden="true"></div>
                   <p class="empty-title">没有进程数据</p>
@@ -240,6 +240,35 @@
               <p class="ws-quiet mb-0" x-show="workspaceLive() && noteText()" x-text="noteText()"></p>
               </div>
             </aside>
+            <aside class="ws-dl-rail" aria-label="传输队列">
+              <div class="ws-dl-head">
+                <div class="ws-dl-title">
+                  <div class="ws-kicker">传输队列</div>
+                  <button type="button" class="ws-dl-path" @click="pickDownloadDir()" aria-label="选择下载目录" :title="downloadDirLabel()" x-text="downloadDirLabel()"></button>
+                  <button type="button" class="ws-dl-default" x-show="downloadDir" @click="useDefaultDownloadDir()">默认</button>
+                </div>
+                <button type="button" class="btn btn-outline-secondary btn-sm" x-show="hasFinishedTransfers()" @click="clearFinishedTransfers()">清除已完成</button>
+              </div>
+              <div class="ws-download-lane" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载。本机 ssh-cli 用和命令行相同的 SFTP 写到所选目录。</div>
+              <div class="ws-dl-list">
+                <div class="empty ws-dl-empty" x-show="!(transfers || []).length">
+                  <div class="empty-ico" aria-hidden="true"></div>
+                  <p class="empty-title">没有下载的文件</p>
+                  <p class="empty-subtitle">把远端文件拖到上面，就会保存到所选目录。未选择时用默认 Downloads。</p>
+                </div>
+                <template x-for="item in transfers" :key="'q-' + item.id">
+                  <div class="ws-queue-row">
+                    <div class="ws-queue-name" :title="item.name" x-text="item.name"></div>
+                    <div class="ws-meter-track"><div class="ws-meter-bar" :class="{ 'is-busy': item.active && !item.total }" :style="barStyle(itemPct(item))"></div></div>
+                    <div class="ws-queue-foot">
+                      <span class="ws-queue-meta" x-text="transferDetail(item)"></span>
+                      <button type="button" class="ws-seg-btn" x-show="item.active" @click="cancelTransfer(item.id)">取消</button>
+                    </div>
+                  </div>
+                </template>
+              </div>
+            </aside>
+            </div>
             <div class="ws-gutter ws-gutter-v" role="separator" aria-orientation="vertical" aria-label="调整概况宽度" @mousedown.prevent="beginSplit('side', $event)"></div>
               <div class="ws-upper" data-pane="terminal">
                 <div class="ws-term-bar">
@@ -284,35 +313,17 @@
                   <button type="button" class="btn btn-sm btn-outline-secondary" x-show="terminalBlocked(panelAlias())" @click="show('operate')">执行受策略检查的命令</button>
                 </div>
               </div>
-              <aside class="ws-dl-rail" aria-label="传输队列">
-                <div class="ws-dl-head">
-                  <div class="ws-kicker">传输队列</div>
-                  <button type="button" class="btn btn-outline-secondary btn-sm" @click="clearFinishedTransfers()" :disabled="!hasFinishedTransfers()">清除已完成</button>
-                </div>
-                <label class="ws-dl-local">
-                  <span class="ws-quiet">保存到</span>
-                  <input class="form-control form-control-sm" x-model="downloadDir" @change="saveDownloadDir()" placeholder="留空使用本机 Downloads" aria-label="下载保存目录" autocomplete="off" spellcheck="false">
-                </label>
-                <div class="ws-download-lane" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载。本机 ssh-cli 用和命令行相同的 SFTP 写到上面的目录。</div>
-                <div class="ws-dl-list">
-                  <p class="ws-quiet" x-show="!(transfers || []).length">没有传输记录。</p>
-                  <template x-for="item in transfers" :key="'q-' + item.id">
-                    <div class="ws-queue-row">
-                      <div class="ws-queue-name" :title="item.name" x-text="item.name"></div>
-                      <div class="ws-meter-track"><div class="ws-meter-bar" :class="{ 'is-busy': item.active && !item.total }" :style="barStyle(itemPct(item))"></div></div>
-                      <div class="ws-queue-foot">
-                        <span class="ws-queue-meta" x-text="transferDetail(item)"></span>
-                        <button type="button" class="ws-seg-btn" x-show="item.active" @click="cancelTransfer(item.id)">取消</button>
-                      </div>
-                    </div>
-                  </template>
-                </div>
-              </aside>
               <div class="ws-lower" data-pane="files">
                 <div class="ws-file-bar">
                   <div class="ws-seg" role="tablist">
                     <button type="button" class="ws-seg-btn" :class="{ active: files.mode !== 'history' }" @click="showFiles()">文件</button>
                     <button type="button" class="ws-seg-btn" data-pane="history" :class="{ active: files.mode === 'history' }" @click="showHistory()">历史</button>
+                  </div>
+                  <div class="ws-file-status">
+                    <span class="ws-identity-line" x-text="terminalStatusLine()"></span>
+                    <span class="ws-session-line" x-text="workspaceSession()"></span>
+                    <button type="button" class="btn btn-sm btn-outline-primary" x-show="tabAlias() && !workspaceLive()" :disabled="termOpening" @click="reconnectTerminal()">重新连接</button>
+                    <button type="button" class="btn btn-sm btn-outline-secondary" x-show="terminalBlocked(panelAlias())" @click="show('operate')">执行受策略检查的命令</button>
                   </div>
                   <div class="btn-list" x-show="files.mode !== 'history'">
                     <button class="btn btn-outline-secondary btn-sm" type="button" @click="refreshFiles()">刷新</button>
@@ -324,12 +335,6 @@
                   </div>
                 </div>
                 <div class="alert alert-danger ws-banner mb-0" role="alert" x-show="errors.files" x-text="errors.files"></div>
-                <div x-show="!workspaceLive()" class="empty">
-                  <div class="empty-ico" aria-hidden="true"></div>
-                  <p class="empty-title">还没有打开终端</p>
-                  <p class="empty-subtitle text-secondary">打开终端或点「连接」后再列出目录和历史。</p>
-                  <div class="empty-action"><button class="btn btn-primary" type="button" @click="openTerminal(termAlias)">打开终端</button></div>
-                </div>
                 <div x-show="workspaceLive() && files.mode !== 'history'" class="ws-file-body" @contextmenu.prevent="openMenu($event, null)">
                   <form class="ws-pathbar" @submit.prevent="jumpPath()">
                     <input class="form-control" x-model="pathDraft" @focus="pathFocused = true" @blur="pathFocused = false" @keydown.enter.prevent="jumpPath()" aria-label="远端路径" placeholder="/root" autocomplete="off" spellcheck="false">

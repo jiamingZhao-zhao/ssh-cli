@@ -58,9 +58,14 @@ func TestWorkspaceChrome(t *testing.T) {
 		"清除已完成",
 		"workspaceGrid",
 		"ws-split",
-		"ws-disk-row",
+		"ws-disk-label",
+		"ws-disk-mount",
 		"diskText",
-		"保存到",
+		"选择下载目录",
+		"没有下载的文件",
+		"pickDownloadDir",
+		"ws-file-status",
+		`x-show="hasFinishedTransfers()"`,
 		"ws-folder",
 		"详情",
 		"openProc",
@@ -97,6 +102,17 @@ func TestWorkspaceChrome(t *testing.T) {
 	if strings.Contains(body, "不套用允许") || strings.Contains(body, "不记按键") {
 		t.Fatal("terminal policy blurb should be gone")
 	}
+	filesAt := strings.Index(chunk, `data-pane="files"`)
+	if filesAt < 0 {
+		t.Fatal("files pane missing")
+	}
+	filesPart := chunk[filesAt:]
+	if strings.Contains(filesPart, "还没有打开终端") || strings.Contains(filesPart, "打开终端或点「连接」后再列出目录和历史") {
+		t.Fatal("files and history should stay blank when nothing is open")
+	}
+	if strings.Contains(chunk, `placeholder="留空使用本机 Downloads"`) {
+		t.Fatal("download dir should be a folder picker, not a typed path")
+	}
 	for _, s := range []string{"收起菜单", "展开菜单", "navCollapsed", `x-show="!is('terminal')"`, "is-terminal"} {
 		if !strings.Contains(body, s) {
 			t.Fatalf("shell missing %s", s)
@@ -108,7 +124,7 @@ func TestWorkspaceChrome(t *testing.T) {
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "pickDownloadDir", "downloadDirLabel", "useDefaultDownloadDir", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}

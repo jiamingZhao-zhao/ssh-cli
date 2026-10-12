@@ -121,6 +121,22 @@ test('overview shows disk bytes, top 5 memory rows, and a short command', () => 
   assert.equal(detail, '30% · 3.0 MB / 10.0 MB');
   assert.equal(sandbox.lastJSONObject('{"loaded":1,"total":2}\n{"ok":true,"local":"/tmp/a"}\n').local, '/tmp/a');
 });
+test('clear button only applies when a transfer is finished', () => {
+  const { app } = fixture();
+  assert.equal(app.hasFinishedTransfers(), false);
+  assert.equal(app.downloadDirLabel(), '默认 Downloads');
+  app.transfers = [{ id: '1', active: true }];
+  assert.equal(app.hasFinishedTransfers(), false);
+  app.transfers = [{ id: '1', active: false, label: '完成' }, { id: '2', active: true }];
+  assert.equal(app.hasFinishedTransfers(), true);
+  app.clearFinishedTransfers();
+  assert.equal(app.transfers.length, 1);
+  assert.equal(app.transfers[0].id, '2');
+  app.downloadDir = '/tmp/out';
+  assert.equal(app.downloadDirLabel(), '/tmp/out');
+  app.downloadDir = '';
+  assert.equal(app.downloadDirLabel(), '默认 Downloads');
+});
 test('transfers do not keep a browser byte cap', () => {
   assert.equal(source.includes('128 MiB'), false);
   assert.equal(source.includes('63 MiB'), false);

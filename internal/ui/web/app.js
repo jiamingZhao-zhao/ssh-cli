@@ -609,6 +609,29 @@ function sshui() {
       this.savePrefs({ downloadDir: this.downloadDir || "" });
     },
 
+    downloadDirLabel() {
+      const dir = String(this.downloadDir || "").trim();
+      return dir || "默认 Downloads";
+    },
+
+    useDefaultDownloadDir() {
+      this.downloadDir = "";
+      this.saveDownloadDir();
+    },
+
+    async pickDownloadDir() {
+      try {
+        const data = await this.readJSON(await this.api("/api/download-dir", { method: "POST" }));
+        if (!data || data.cancelled) return;
+        const dir = String(data.path || "").trim();
+        if (!dir) return;
+        this.downloadDir = dir;
+        this.saveDownloadDir();
+      } catch (err) {
+        this.toast((err && err.message) || "没有选到目录", "bad");
+      }
+    },
+
     toggleTheme() {
       this.draft.theme = this.theme === "dark" ? "light" : "dark";
       this.applyLook();
