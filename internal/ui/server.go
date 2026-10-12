@@ -120,6 +120,9 @@ func newService(dir string, allowRemote bool, bearer string) *service {
 		pool, _ = session.New(session.DefaultIdle, session.DefaultMaxLife, s.dialAlias, s.onSessionClose)
 	}
 	s.pool = pool
+	if s.pool != nil {
+		s.pool.SetBeforeClose(s.noteMaxLife)
+	}
 	return s
 }
 
@@ -164,6 +167,7 @@ type service struct {
 	mu          sync.Mutex
 	sessions    map[string]string
 	tickets     map[string]termTicket
+	terms       map[*wsConn]string
 	pool        *session.Pool
 }
 

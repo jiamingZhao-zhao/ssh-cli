@@ -1094,7 +1094,7 @@ function sshui() {
       const proto = location.protocol === "https:" ? "wss:" : "ws:";
       const ws = new WebSocket(proto + "//" + location.host + "/api/terminal/ws?ticket=" + encodeURIComponent(opened.ticket));
       ws.binaryType = "arraybuffer";
-      const entry = { id: id, alias: alias, term: term, fit: fit, ws: ws, pane: pane, saw: false, hadError: false };
+      const entry = { id: id, alias: alias, term: term, fit: fit, ws: ws, pane: pane, saw: false, hadError: false, maxLife: false };
       termMap.set(id, entry);
       this.termTabs.push({ id: id, alias: alias, busy: true });
       this.showPane(id);
@@ -1103,12 +1103,27 @@ function sshui() {
         if (code) return "终端连接已断开 (" + code + ")";
         return "终端连接已断开";
       };
+      const writeFrame = (data) => {
+        if (typeof data === "string") term.write(data);
+        else term.write(new Uint8Array(data));
+      };
       ws.onmessage = (ev) => {
         entry.saw = true;
         app.markTabIdle(id);
+        const text = typeof ev.data === "string" ? ev.data : "";
+        if (text.indexOf("已达到最长时限") >= 0) {
+          entry.maxLife = true;
+          term.write(text);
+          app.setError("terminal", "会话已达到最长时限，连接已关闭");
+          app.toast("会话已达到最长时限，连接已关闭", "bad");
+          return;
+        }
+        if (entry.maxLife) {
+          writeFrame(ev.data);
+          return;
+        }
         app.setError("terminal", "");
-        if (typeof ev.data === "string") term.write(ev.data);
-        else term.write(new Uint8Array(ev.data));
+        writeFrame(ev.data);
       };
       ws.onopen = () => {
         fit.fit();
@@ -1118,6 +1133,7 @@ function sshui() {
         entry.hadError = true;
       };
       ws.onclose = (ev) => {
+        if (entry.maxLife) return;
         if (!entry.saw) {
           term.write("终端连接失败\r\n");
           app.setError("terminal", "终端连接失败");

@@ -24,7 +24,8 @@ func (a *App) sessionCmd() *cobra.Command {
 		Long: `Sessions stay inside the process that opened them. ssh-cli does not
 start a background daemon. Idle auto-close defaults to 5m and max lifetime
 defaults to 60m; max lifetime wins even while a command is running.
-Process exit closes every session this process still holds.
+Each SSH connection sends a keepalive. A peer that does not answer is closed
+instead of left hanging. Process exit closes every session this process still holds.
 
 session run keeps one shell for repeated --command values, then closes it.
 Separate session list/open/close processes do not see that shell.`,

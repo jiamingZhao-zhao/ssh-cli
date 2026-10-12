@@ -37,7 +37,18 @@ type wsConn struct {
 	mu        sync.Mutex
 	writeMask bool
 	readMask  bool
+	readIdle  time.Duration
+	writeWait time.Duration
 }
+
+// WebSocket idle timing. A browser answers ping with pong, which refreshes
+// the read deadline. A socket that sends nothing, including no pong, is
+// closed so the terminal bridge can tear the PTY down. Tests shorten these.
+var (
+	wsPingEvery = 30 * time.Second
+	wsReadIdle  = 90 * time.Second
+	wsWriteWait = 20 * time.Second
+)
 
 func acceptWebSocket(w http.ResponseWriter, r *http.Request) (*wsConn, error) {
 	if !headerHasToken(r.Header, "Connection", "upgrade") || !headerHasToken(r.Header, "Upgrade", "websocket") {
@@ -180,7 +191,60 @@ func (c *wsConn) readFrame() (bool, byte, []byte, error) {
 			payload[i] ^= mask[i%4]
 		}
 	}
+	c.bumpRead()
 	return fin, op, payload, nil
+}
+
+func (c *wsConn) bumpRead() {
+	if c == nil || c.c == nil || c.readIdle <= 0 {
+		return
+	}
+	_ = c.c.SetReadDeadline(time.Now().Add(c.readIdle))
+}
+
+// armIdle starts ping frames and a read deadline. stop ends the ping loop.
+// pingEvery, readIdle, and writeWait are snapshotted by the caller.
+// A non-positive pingEvery only installs the read deadline.
+func (c *wsConn) armIdle(pingEvery, readIdle, writeWait time.Duration) func() {
+	if c == nil {
+		return func() {}
+	}
+	c.mu.Lock()
+	c.readIdle = readIdle
+	c.writeWait = writeWait
+	conn := c.c
+	c.mu.Unlock()
+	if conn != nil && readIdle > 0 {
+		_ = conn.SetReadDeadline(time.Now().Add(readIdle))
+	}
+	if pingEvery <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	go func() {
+		t := time.NewTicker(pingEvery)
+		defer t.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-t.C:
+				if err := c.Write(wsPing, nil); err != nil {
+					if c.c != nil {
+						_ = c.c.Close()
+					}
+					return
+				}
+			}
+		}
+	}()
+	return func() {
+		select {
+		case <-done:
+		default:
+			close(done)
+		}
+	}
 }
 
 func (c *wsConn) Write(op byte, p []byte) error {
@@ -192,6 +256,9 @@ func (c *wsConn) Write(op byte, p []byte) error {
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	if c.c != nil && c.writeWait > 0 {
+		_ = c.c.SetWriteDeadline(time.Now().Add(c.writeWait))
+	}
 	hdr := []byte{0x80 | op}
 	n := len(p)
 	switch {
