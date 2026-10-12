@@ -1682,6 +1682,7 @@ function sshui() {
     },
 
     pct(n) {
+      if (n == null || n === "") return "—";
       const v = Number(n);
       if (!isFinite(v)) return "—";
       return Math.round(v) + "%";
@@ -1759,6 +1760,12 @@ function sshui() {
       return disks.filter((d) => this.diskMountLabel(d && d.mount) === "/");
     },
 
+    diskMeters() {
+      const disks = this.visibleDisks();
+      if (disks.length) return disks;
+      return [{ mount: "/", percent: "", used: "", size: "" }];
+    },
+
     procShort(p) {
       const raw = String((p && (p.comm || p.args)) || "").trim();
       const token = raw.split(/\s+/)[0] || "";
@@ -1775,7 +1782,9 @@ function sshui() {
 
     diskBytes(text, bytes) {
       if (bytes != null && bytes !== "" && isFinite(Number(bytes))) return Number(bytes);
-      const n = Number(String(text || "").trim());
+      const raw = String(text == null ? "" : text).trim();
+      if (!raw) return null;
+      const n = Number(raw);
       if (!isFinite(n) || n < 0) return null;
       return n * 1024;
     },

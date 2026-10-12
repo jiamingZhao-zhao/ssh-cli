@@ -173,25 +173,21 @@
                 <div><dt>运行</dt><dd x-text="uptimeText()"></dd></div>
                 <div><dt>负载</dt><dd x-text="metrics.load || '—'"></dd></div>
               </dl>
-              <div class="ws-meter" x-show="workspaceLive()">
+              <p class="ws-quiet mb-0" x-show="workspaceLive() && noteText()" x-text="noteText()"></p>
+              </div>
+              <div class="ws-meter">
                 <div class="ws-meter-label"><span>CPU</span><span x-text="pct(metrics.cpuPercent)"></span></div>
                 <div class="ws-meter-track"><div class="ws-meter-bar" :style="barStyle(metrics.cpuPercent)"></div></div>
               </div>
-              <div class="ws-meter" x-show="workspaceLive()">
+              <div class="ws-meter">
                 <div class="ws-meter-label"><span>内存</span><span x-text="memText(metrics.mem)"></span></div>
                 <div class="ws-meter-track"><div class="ws-meter-bar" :style="barStyle(memPct(metrics.mem))"></div></div>
               </div>
-              <div class="ws-meter" x-show="workspaceLive()">
+              <div class="ws-meter">
                 <div class="ws-meter-label"><span>交换</span><span x-text="memText(metrics.swap)"></span></div>
                 <div class="ws-meter-track"><div class="ws-meter-bar ws-meter-swap" :style="barStyle(memPct(metrics.swap))"></div></div>
               </div>
-              <div class="empty" x-show="workspaceLive() && diskEmpty() && !metricsPending()">
-                <div class="empty-ico" aria-hidden="true"></div>
-                <p class="empty-title">没有磁盘数据</p>
-                <p class="empty-subtitle">连接主机后会显示根分区用量。</p>
-                <div class="empty-action"><button class="btn btn-primary btn-sm" type="button" @click="refreshMetrics()">刷新</button></div>
-              </div>
-              <template x-for="d in visibleDisks()" :key="d.mount">
+              <template x-for="d in diskMeters()" :key="d.mount || 'disk'">
                 <div class="ws-meter">
                   <div class="ws-meter-label">
                     <span class="ws-disk-label">磁盘<span class="ws-disk-mount" x-show="diskMountLabel(d.mount) && diskMountLabel(d.mount) !== '/'" x-text="diskMountLabel(d.mount)"></span></span>
@@ -200,8 +196,6 @@
                   <div class="ws-meter-track"><div class="ws-meter-bar" :style="barStyle(diskPct(d.percent))"></div></div>
                 </div>
               </template>
-              <p class="ws-quiet mb-0" x-show="workspaceLive() && noteText()" x-text="noteText()"></p>
-              </div>
               <div class="ws-block ws-proc-block">
                 <table class="table table-sm table-vcenter ws-proc mb-0">
                   <colgroup>

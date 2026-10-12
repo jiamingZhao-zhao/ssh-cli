@@ -63,7 +63,7 @@ func TestWorkspaceChrome(t *testing.T) {
 		"diskText",
 		"选择下载目录",
 		"ws-dl-empty-box",
-		"visibleDisks",
+		"diskMeters",
 		"diskMountLabel",
 		"pickDownloadDir",
 		"ws-file-status",
@@ -108,6 +108,9 @@ func TestWorkspaceChrome(t *testing.T) {
 	if strings.Contains(chunk, "ws-row-detail") || strings.Contains(chunk, ">详情<") {
 		t.Fatal("process rows should open on row click, without a 详情 link")
 	}
+	if strings.Contains(chunk, `class="ws-meter" x-show="workspaceLive()"`) || strings.Contains(chunk, "没有磁盘数据") {
+		t.Fatal("cpu, memory, swap, and disk meters should stay in the fixed layout")
+	}
 	if strings.Contains(body, "不套用允许") || strings.Contains(body, "不记按键") {
 		t.Fatal("terminal policy blurb should be gone")
 	}
@@ -133,7 +136,7 @@ func TestWorkspaceChrome(t *testing.T) {
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "pickDownloadDir", "downloadDirLabel", "useDefaultDownloadDir", "paintNetChart", "openProc", "openProcRow", "procRows", "canOpenDownload", "openDownloadFolder", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "diskMountLabel", "visibleDisks", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端", `postJSON("/api/download-dir"`, `postJSON("/api/download-dir/reveal"`, "slice(0, 5)"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "pickDownloadDir", "downloadDirLabel", "useDefaultDownloadDir", "paintNetChart", "openProc", "openProcRow", "procRows", "canOpenDownload", "openDownloadFolder", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "diskMountLabel", "visibleDisks", "diskMeters", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端", `postJSON("/api/download-dir"`, `postJSON("/api/download-dir/reveal"`, "slice(0, 5)"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}

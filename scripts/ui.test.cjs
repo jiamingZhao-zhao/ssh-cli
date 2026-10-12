@@ -135,6 +135,12 @@ test('process table stays five rows when overview data is missing', () => {
   assert.equal(app.canOpenDownload({ active: true, kind: 'download', local: '/tmp/a' }), false);
   assert.equal(app.canOpenDownload({ active: false, kind: 'upload', local: '/tmp/a' }), false);
   assert.equal(app.canOpenDownload({ active: false, kind: 'download', local: '/tmp/a' }), true);
+  app.metrics.disks = [];
+  const meters = app.diskMeters();
+  assert.equal(meters.length, 1);
+  assert.equal(app.diskText(meters[0]), '—');
+  assert.equal(app.memText(null), '—');
+  assert.equal(app.pct(null), '—');
 });
 test('clear button only applies when a transfer is finished', () => {
   const { app } = fixture();
