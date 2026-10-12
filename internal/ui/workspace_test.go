@@ -69,12 +69,11 @@ func TestWorkspaceChrome(t *testing.T) {
 		"ws-file-status",
 		`x-show="hasFinishedTransfers()"`,
 		"ws-folder",
-		"详情",
 		"openProc",
 		"procShort",
-		"ws-row-detail",
+		"ws-proc-row",
 		"fileSize",
-		"ws-comm-row",
+		`@click="openProc(p)"`,
 	} {
 		if !strings.Contains(chunk, s) {
 			t.Fatalf("workspace missing %s", s)
@@ -101,6 +100,9 @@ func TestWorkspaceChrome(t *testing.T) {
 	if !strings.Contains(body, "启动命令") || strings.Contains(body, "进程详情") {
 		t.Fatal("row detail should show 启动命令 and not 进程详情")
 	}
+	if strings.Contains(chunk, "ws-row-detail") || strings.Contains(chunk, ">详情<") {
+		t.Fatal("process rows should open on row click, without a 详情 link")
+	}
 	if strings.Contains(body, "不套用允许") || strings.Contains(body, "不记按键") {
 		t.Fatal("terminal policy blurb should be gone")
 	}
@@ -126,13 +128,16 @@ func TestWorkspaceChrome(t *testing.T) {
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "pickDownloadDir", "downloadDirLabel", "useDefaultDownloadDir", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "diskMountLabel", "visibleDisks", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端", `postJSON("/api/download-dir"`, "slice(0, 7)"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "pickDownloadDir", "downloadDirLabel", "useDefaultDownloadDir", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "diskMountLabel", "visibleDisks", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端", `postJSON("/api/download-dir"`, "slice(0, 5)"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}
 	}
 	if strings.Contains(script, "await res.json()") || strings.Contains(script, "res.json()") {
 		t.Fatal("app.js still parses responses with res.json()")
+	}
+	if strings.Contains(script, "slice(0, 7)") {
+		t.Fatal("process table still keeps seven rows")
 	}
 	if strings.Contains(script, "128 MiB") || strings.Contains(script, "63 MiB") || strings.Contains(script, "new Blob(chunks)") {
 		t.Fatal("ui still caps transfers in a browser blob")
@@ -158,6 +163,28 @@ func TestWorkspaceChrome(t *testing.T) {
 	}
 	if strings.Contains(proc, "transparent") {
 		t.Fatal("process table still hides grid lines")
+	}
+	sideAt := strings.Index(style, ".ws-side {")
+	if sideAt < 0 {
+		t.Fatal("side column rule missing")
+	}
+	side := style[sideAt:]
+	if end := strings.Index(side, "}"); end >= 0 {
+		side = side[:end]
+	}
+	if !strings.Contains(side, "grid-row: 1 / span 3") || !strings.Contains(side, "display: flex") {
+		t.Fatal("side column should hug the process table instead of stretching a blank row")
+	}
+	railAt := strings.Index(style, ".ws-dl-rail {")
+	if railAt < 0 {
+		t.Fatal("transfer rail rule missing")
+	}
+	rail := style[railAt:]
+	if end := strings.Index(rail, "}"); end >= 0 {
+		rail = rail[:end]
+	}
+	if strings.Contains(rail, "grid-row") {
+		t.Fatal("transfer queue should follow the process table")
 	}
 }
 

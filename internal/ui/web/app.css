@@ -899,21 +899,22 @@ pre {
   border-radius: 0;
 }
 .ws-side {
-  display: contents;
-}
-.ws-side-gap {
   grid-column: 1;
-  grid-row: 2;
-  background: var(--mh-page);
-}
-.ws-overview {
-  grid-column: 1;
-  grid-row: 1;
+  grid-row: 1 / span 3;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
   min-height: 0;
   overflow: auto;
-  padding: 0.65rem 0.35rem 0.05rem;
   background: var(--mh-header);
+}
+.ws-side-gap { display: none; }
+.ws-overview {
+  flex: 0 0 auto;
+  min-width: 0;
+  overflow: visible;
+  padding: 0.65rem 0.35rem 0;
+  background: transparent;
 }
 .ws-stage {
   min-width: 0;
@@ -1080,7 +1081,10 @@ pre {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.ws-proc tr:hover td { background: var(--mh-fill); }
+.ws-proc tbody tr.ws-proc-row { cursor: pointer; }
+.ws-proc tr:hover td,
+.ws-proc tbody tr.ws-proc-row:focus-visible td { background: var(--mh-fill); }
+.ws-proc tbody tr.ws-proc-row:focus-visible { outline: 2px solid var(--mh-link); outline-offset: -2px; }
 .ws-comm {
   max-width: 9rem;
   overflow: hidden;
@@ -1093,37 +1097,6 @@ pre {
   overflow: hidden;
   text-align: center;
 }
-.ws-comm-row {
-  display: grid;
-  grid-template-columns: 2.4rem minmax(0, 1fr) 2.4rem;
-  align-items: center;
-  min-width: 0;
-  max-width: 100%;
-}
-.ws-comm-text {
-  grid-column: 2;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  text-align: center;
-}
-.ws-row-detail {
-  grid-column: 3;
-  justify-self: end;
-  border: 0;
-  background: transparent;
-  box-shadow: none;
-  padding: 0 0.1rem;
-  margin: 0;
-  color: var(--mh-link);
-  font: inherit;
-  font-size: 12px;
-  line-height: 1.4;
-  cursor: pointer;
-  white-space: nowrap;
-}
-.ws-row-detail:hover { color: var(--mh-link-hover); text-decoration: underline; }
 .ws-proc-detail { flex: 0 0 auto; padding: 0 0.15rem; white-space: nowrap; }
 .ws-proc-detail-list { display: grid; gap: 0.55rem; margin: 0; }
 .ws-proc-detail-list div { display: grid; grid-template-columns: 5.5rem 1fr; gap: 0.75rem; }
@@ -1403,17 +1376,18 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
   border-inline-end: 0;
 }
 .ws-dl-rail {
-  grid-column: 1;
-  grid-row: 3;
+  flex: 1 0 auto;
   width: auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 0;
+  min-height: 7.5rem;
   overflow: hidden;
-  background: var(--mh-header);
+  border-top: 1px solid var(--mh-line);
+  background: transparent;
 }
 .ws-dl-empty {
+  flex: 1 1 auto;
   display: flex;
   flex-direction: column;
   gap: 0.35rem;

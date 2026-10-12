@@ -223,15 +223,10 @@
                   </thead>
                   <tbody>
                     <template x-for="p in sortedProcs()" :key="p.pid + '-' + p.comm">
-                      <tr>
+                      <tr class="ws-proc-row" tabindex="0" role="button" :aria-label="'查看 ' + procShort(p) + ' 的详情'" @click="openProc(p)" @keydown.enter.prevent="openProc(p)" @keydown.space.prevent="openProc(p)">
                         <td class="ws-proc-mem" x-text="procMem(p)"></td>
                         <td class="ws-proc-cpu" x-text="procCpu(p)"></td>
-                        <td class="ws-comm">
-                          <div class="ws-comm-row">
-                            <span class="ws-comm-text" :title="procShort(p)" x-text="procShort(p)"></span>
-                            <button type="button" class="ws-row-detail" @click.stop="openProc(p)">详情</button>
-                          </div>
-                        </td>
+                        <td class="ws-comm" :title="procShort(p)" x-text="procShort(p)"></td>
                       </tr>
                     </template>
                   </tbody>

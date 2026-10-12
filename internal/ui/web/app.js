@@ -1731,7 +1731,7 @@ function sshui() {
         const bv = key === "mem" ? (Number(b.rss) || 0) : (Number(b.cpu) || 0);
         return (av - bv) * dir;
       });
-      return rows.slice(0, 7);
+      return rows.slice(0, 5);
     },
 
     diskMountLabel(mount) {
