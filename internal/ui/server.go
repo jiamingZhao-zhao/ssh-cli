@@ -73,6 +73,7 @@ func (s *service) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/metrics/proc", s.procDetailAPI)
 	mux.HandleFunc("POST /api/upload", s.uploadAPI)
 	mux.HandleFunc("POST /api/download", s.downloadAPI)
+	mux.HandleFunc("POST /api/download-dir", s.pickDownloadDirAPI)
 	mux.HandleFunc("POST /api/relay", s.relayAPI)
 	mux.HandleFunc("GET /api/config/export", s.configExportAPI)
 	mux.HandleFunc("POST /api/config/import", s.configImportAPI)
