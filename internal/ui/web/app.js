@@ -426,6 +426,7 @@ function sshui() {
     procView: { pid: "", ppid: "", user: "", cpu: "", mem: "", memPct: "", stat: "", etime: "", cmd: "", cwd: "", cwdNote: "" },
     drop: { over: false, target: "", label: "" },
     transfers: [],
+    downloadDir: "",
     toasts: [],
     menu: { open: false, x: 0, y: 0, entry: null, newOpen: false },
     selectedPath: "",
@@ -539,6 +540,7 @@ function sshui() {
       this.navCollapsed = !!prefs.navCollapsed;
       if (prefs.wsSide >= 220 && prefs.wsSide <= 460) this.ws.side = prefs.wsSide;
       if (prefs.wsLower >= 160 && prefs.wsLower <= 520) this.ws.lower = prefs.wsLower;
+      this.downloadDir = typeof prefs.downloadDir === "string" ? prefs.downloadDir : "";
       this.exec.timeout = this.draft.commandTimeout;
       this.audit.pageSize = this.draft.pageSize;
       for (const key of Object.keys(this.pages)) this.pages[key].size = this.draft.pageSize;
@@ -559,6 +561,10 @@ function sshui() {
       const next = Object.assign(this.loadPrefs(), patch || {});
       localStorage.setItem("sshCliPrefs", JSON.stringify(next));
       return next;
+    },
+
+    saveDownloadDir() {
+      this.savePrefs({ downloadDir: this.downloadDir || "" });
     },
 
     toggleTheme() {
@@ -1815,6 +1821,7 @@ function sshui() {
         if (!this.pathFocused) this.pathDraft = this.files.path;
         this.pathError = "";
         this.noteTree(this.files.path, this.files.entries);
+        if ((this.files.path || "") !== "/") await this.ensureFsRoot();
       } catch (err) {
         if (err && err.name === "AbortError") return;
         if (this.liveAlias() !== alias) return;
@@ -1824,52 +1831,80 @@ function sshui() {
       }
     },
 
-    pathUnder(root, path) {
-      if (!root || !path) return false;
-      if (path === root) return true;
-      const prefix = root === "/" ? "/" : root + "/";
-      return String(path).indexOf(prefix) === 0;
+    treeLabel(path) {
+      const p = String(path || "");
+      if (!p || p === "/") return "/";
+      const cut = p.lastIndexOf("/");
+      const base = cut >= 0 ? p.slice(cut + 1) : p;
+      return base || "/";
     },
 
     noteTree(abs, entries) {
       let path = String(abs || "");
       if (!path) return;
       if (path.charAt(0) !== "/") path = "/" + path;
-      const home = String(this.files.home || path);
-      let root = home;
-      if (!this.pathUnder(home, path)) root = path;
-      this.treeRoot = root;
-      if (!this.tree[root]) this.tree[root] = { name: root, open: true, loaded: false, dirs: [] };
-      if (path !== root && this.pathUnder(root, path)) {
-        const rest = root === "/" ? path.slice(1) : path.slice(root.length + 1);
-        const parts = rest.split("/").filter(Boolean);
-        let parent = root;
+      // FinalShell-style tree: always anchored at /, labels are basenames.
+      const anchor = "/";
+      this.treeRoot = anchor;
+      if (!this.tree[anchor]) this.tree[anchor] = { name: "/", open: true, loaded: false, dirs: [] };
+      else this.tree[anchor].name = "/";
+      if (path !== anchor) {
+        const parts = path.split("/").filter(Boolean);
+        let parent = anchor;
         for (let i = 0; i < parts.length; i++) {
           const cur = parent === "/" ? "/" + parts[i] : parent + "/" + parts[i];
-          if (!this.tree[parent]) this.tree[parent] = { name: parent === root ? root : parent.slice(parent.lastIndexOf("/") + 1), open: true, loaded: false, dirs: [] };
+          if (!this.tree[parent]) this.tree[parent] = { name: this.treeLabel(parent), open: true, loaded: false, dirs: [] };
           this.tree[parent].open = true;
+          this.tree[parent].name = this.treeLabel(parent);
           const dirs = this.tree[parent].dirs || [];
           let seen = false;
-          for (let j = 0; j < dirs.length; j++) if (dirs[j].path === cur) seen = true;
+          for (let j = 0; j < dirs.length; j++) {
+            if (dirs[j].path === cur) { dirs[j].name = parts[i]; seen = true; }
+          }
           if (!seen) dirs.push({ name: parts[i], path: cur });
           this.tree[parent].dirs = dirs;
           if (!this.tree[cur]) this.tree[cur] = { name: parts[i], open: false, loaded: false, dirs: [] };
+          else this.tree[cur].name = parts[i];
           parent = cur;
         }
       }
-      const node = this.tree[path] || { name: path === root ? root : path.slice(path.lastIndexOf("/") + 1), open: true, loaded: false, dirs: [] };
+      const node = this.tree[path] || { name: this.treeLabel(path), open: true, loaded: false, dirs: [] };
       node.open = true;
       node.loaded = true;
-      node.name = path === root ? root : path.slice(path.lastIndexOf("/") + 1);
+      node.name = this.treeLabel(path);
       node.dirs = [];
       const list = entries || [];
       for (let i = 0; i < list.length; i++) {
         if (!list[i].dir) continue;
-        node.dirs.push({ name: list[i].name, path: list[i].path });
-        if (!this.tree[list[i].path]) this.tree[list[i].path] = { name: list[i].name, open: false, loaded: false, dirs: [] };
+        const child = String(list[i].path || "");
+        const base = this.treeLabel(child || list[i].name);
+        node.dirs.push({ name: base, path: child });
+        if (!this.tree[child]) this.tree[child] = { name: base, open: false, loaded: false, dirs: [] };
+        else this.tree[child].name = base;
       }
       this.tree[path] = node;
       this.tree = Object.assign({}, this.tree);
+    },
+
+    async ensureFsRoot() {
+      const node = this.tree["/"];
+      if (node && node.loaded) return;
+      if (this._rootLoad) return this._rootLoad;
+      const alias = this.liveAlias();
+      if (!alias) return;
+      const app = this;
+      this._rootLoad = (async () => {
+        try {
+          const data = await app.postRead("/api/files/list", { alias: alias, path: "/" });
+          if (app.liveAlias() !== alias) return;
+          app.noteTree(data.path || "/", data.entries || []);
+        } catch (err) {
+          // The directory that was opened stays visible if / cannot be listed.
+        } finally {
+          app._rootLoad = null;
+        }
+      })();
+      return this._rootLoad;
     },
 
     treeRows() {
@@ -2065,10 +2100,6 @@ function sshui() {
       const list = fileList || [];
       for (let i = 0; i < list.length; i++) files.push(list[i]);
       if (!files.length) return;
-      if (files.some((file) => file.size > 63 * 1024 * 1024)) {
-        this.toast("网页单文件上传上限为 63 MiB；大文件请使用命令行上传。", "bad");
-        return;
-      }
       this.setError("files", "");
       await this.ensureSession();
       for (let i = 0; i < files.length; i++) {
@@ -2179,60 +2210,42 @@ function sshui() {
       this.menu.open = false;
       const alias = explicitAlias || this.liveAlias();
       if (!alias || !entry || !entry.path) return;
-      const memoryLimit = 128 * 1024 * 1024;
-      if (Number(entry.size) > memoryLimit) {
-        this.toast("网页下载暂限 128 MiB，较大文件请使用命令行下载。", "bad");
-        return;
-      }
       this.setError("files", "");
       await this.ensureSession();
       const id = "dn" + Date.now().toString(36) + Math.floor(Math.random() * 1000);
-      const name = entry.dir ? ((entry.name || "download") + ".tar.gz") : (entry.name || "download");
-      let loaded = 0;
-      let total = 0;
-      let lastPaint = 0;
+      const name = entry.name || "download";
       this.patchTransfer(id, { id: id, alias: alias, name: name, loaded: 0, total: 0, active: true, label: "下载中" });
-      const paint = (patch, force) => {
-        const now = Date.now();
-        if (!force && now - lastPaint < 80) return;
-        lastPaint = now;
-        this.patchTransfer(id, patch);
-      };
       const ctrl = new AbortController();
       transferCtl.set(id, ctrl);
+      let confirmText = "";
       try {
-        const res = await this.api("/api/download", {
-          method: "POST",
-          signal: ctrl.signal,
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ alias: alias, path: entry.path })
-        });
-        if (!res.ok) {
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const res = await this.api("/api/download", {
+            method: "POST",
+            signal: ctrl.signal,
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ alias: alias, path: entry.path, local: this.downloadDir || "", confirm: confirmText })
+          });
           const data = await this.parseJSON(res);
-          throw new Error(friendlyError(data.error, res.statusText));
-        }
-        total = Number(res.headers.get("Content-Length")) || Number(entry.size) || 0;
-        if (total > memoryLimit) { ctrl.abort(); throw new Error("文件超过网页下载内存上限，请使用命令行下载。"); }
-        paint({ total: total, active: true, label: total ? ("下载中 " + this.pct(0)) : "下载中" }, true);
-        const reader = res.body && res.body.getReader ? res.body.getReader() : null;
-        const chunks = [];
-        if (!reader) {
-          ctrl.abort();
-          throw new Error("此浏览器不支持流式读取，请使用命令行下载。");
-        } else {
-          while (true) {
-            const step = await reader.read();
-            if (step.done) break;
-            chunks.push(step.value);
-            loaded += step.value.length;
-            if (loaded > memoryLimit) { await reader.cancel(); throw new Error("下载超过 128 MiB 内存上限，请使用命令行下载。"); }
-            const label = total ? ("下载中 " + this.pct((100 * loaded) / total)) : ("下载中 " + this.formatBytes(loaded));
-            paint({ loaded: loaded, total: total, active: true, label: label }, false);
+          if (res.status === 409 && data.needsConfirm && !confirmText) {
+            const typed = await this.ask((data.error || "需要确认") + "\n主机：" + alias + "\n路径：" + entry.path + "\n请输入：" + (data.confirm || alias));
+            if (typed == null) {
+              const cancel = new Error("已取消");
+              cancel.name = "AbortError";
+              throw cancel;
+            }
+            confirmText = String(typed);
+            continue;
           }
-          this.saveBlob(new Blob(chunks), name);
+          if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
+          const saved = data.local || "";
+          const label = saved ? ("已保存到 " + saved) : "完成";
+          this.patchTransfer(id, { loaded: 1, total: 1, active: false, label: label });
+          this.finishTransfer(id, { loaded: 1, total: 1, label: label });
+          if (saved) this.toast(label);
+          return;
         }
-        this.patchTransfer(id, { loaded: loaded, total: total || loaded, active: false, label: "完成" });
-        this.finishTransfer(id, { loaded: loaded, total: total || loaded, label: "完成" });
+        throw new Error("下载失败");
       } catch (err) {
         if (err && err.name === "AbortError") {
           this.patchTransfer(id, { active: false, label: "已取消" });
@@ -2360,7 +2373,7 @@ function sshui() {
       const p = this.dragPoint;
       const outside = p.x < r.left || p.x > r.right || p.y < r.top || p.y > r.bottom;
       if (!outside) return;
-      this.toast("浏览器不能把文件直接放进系统文件夹，已改为下载");
+      this.toast("已按命令行方式下载到保存目录");
       this.wsDownload(entry);
     },
 
@@ -2998,8 +3011,6 @@ function sshui() {
     async upload(ev) {
       this.setError("operate", "");
       const fd = new FormData(ev.target);
-      const file = fd.get("file");
-      if (file && file.size > 63 * 1024 * 1024) { this.setError("operate", "网页单文件上传上限为 63 MiB。"); return; }
       try {
         for (let attempt = 0; attempt < 4; attempt++) {
           const res = await this.api("/api/upload", { method: "POST", body: fd });

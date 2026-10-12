@@ -243,6 +243,24 @@ func missingParents(sf *sftp.Client, remote string) []plannedUpload {
 
 // Download copies a remote file or directory to local.
 func Download(client *ssh.Client, remote, local string, log LogFunc) error {
+	return download(client, remote, local, log)
+}
+
+// DownloadContext is Download with cancellation. Cancelling ctx closes client
+// so a stalled SFTP read unblocks. The CLI calls Download.
+func DownloadContext(ctx context.Context, client *ssh.Client, remote, local string, log LogFunc) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+	defer stop()
+	return download(client, remote, local, log)
+}
+
+func download(client *ssh.Client, remote, local string, log LogFunc) error {
 	sf, err := Client(client)
 	if err != nil {
 		return err

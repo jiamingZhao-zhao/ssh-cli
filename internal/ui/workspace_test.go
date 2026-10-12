@@ -48,7 +48,7 @@ func TestWorkspaceChrome(t *testing.T) {
 		"CPU",
 		"内存",
 		"ws-download-lane",
-		"拖到这里下载到本机",
+		"拖到这里下载",
 		"复制路径",
 		"打开方式",
 		"转到",
@@ -56,11 +56,13 @@ func TestWorkspaceChrome(t *testing.T) {
 		"还没有打开的终端",
 		"ws-via",
 		"清除已完成",
-		"ws-net-chart",
+		"ws-side",
+		"保存到",
 		"ws-folder",
 		"详情",
 		"openProc",
 		"fileSize",
+		"ws-comm-row",
 	} {
 		if !strings.Contains(chunk, s) {
 			t.Fatalf("workspace missing %s", s)
@@ -68,6 +70,18 @@ func TestWorkspaceChrome(t *testing.T) {
 	}
 	if strings.Contains(chunk, `data-pane="commands"`) {
 		t.Fatal("command tab is out of scope")
+	}
+	for _, s := range []string{
+		`class="ws-kicker">主机`,
+		`class="ws-kicker">进程`,
+		`class="ws-kicker">网络`,
+		`id="ws-net-chart"`,
+		"网页下载暂限",
+		"63 MiB",
+	} {
+		if strings.Contains(chunk, s) {
+			t.Fatalf("workspace still has %s", s)
+		}
 	}
 	if strings.Contains(body, "不套用允许") || strings.Contains(body, "不记按键") {
 		t.Fatal("terminal policy blurb should be gone")
@@ -83,13 +97,16 @@ func TestWorkspaceChrome(t *testing.T) {
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}
 	}
 	if strings.Contains(script, "await res.json()") || strings.Contains(script, "res.json()") {
 		t.Fatal("app.js still parses responses with res.json()")
+	}
+	if strings.Contains(script, "128 MiB") || strings.Contains(script, "63 MiB") || strings.Contains(script, "new Blob(chunks)") {
+		t.Fatal("ui still caps transfers in a browser blob")
 	}
 	cssReq := httptest.NewRequest(http.MethodGet, "/app.css", nil)
 	cssReq.RemoteAddr = "127.0.0.1:9"
