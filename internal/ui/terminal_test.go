@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -715,17 +716,6 @@ func startTermFixture(t *testing.T) termFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() {
-		done := make(chan struct{})
-		go func() {
-			sshSrv.Close()
-			close(done)
-		}()
-		select {
-		case <-done:
-		case <-time.After(2 * time.Second):
-		}
-	})
 	host, port, err := net.SplitHostPort(sshSrv.Addr)
 	if err != nil {
 		t.Fatal(err)
@@ -733,13 +723,32 @@ func startTermFixture(t *testing.T) termFixture {
 	dir := t.TempDir()
 	svc := newService(dir, false, "")
 	ctx, cancel := context.WithCancel(context.Background())
-	t.Cleanup(cancel)
-	go svc.pool.Loop(ctx)
-	web := httptest.NewServer(svc.guard(svc.routes()))
-	t.Cleanup(web.Close)
+	poolStopped := make(chan struct{})
+	go func() {
+		svc.pool.Loop(ctx)
+		close(poolStopped)
+	}()
+	// httptest.Server.Close stops waiting at hijack, while the terminal
+	// handler keeps writing the audit log after that. Count the handler
+	// itself so cleanup can wait for the write to finish.
+	var handlers sync.WaitGroup
+	h := svc.guard(svc.routes())
+	web := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		handlers.Add(1)
+		defer handlers.Done()
+		h.ServeHTTP(w, r)
+	}))
 	client := web.Client()
+	f := termFixture{dir: dir, web: web, client: client}
+	// Registered after TempDir, so this runs first. Idle close and pool
+	// shutdown both create files in the temp dir; RemoveAll fails with
+	// "directory not empty" if either is still running.
+	t.Cleanup(func() {
+		stopTermFixture(t, &f, cancel, poolStopped, &handlers, sshSrv)
+	})
 	csrf, cookie := uiSession(t, client, web.URL)
-	f := termFixture{dir: dir, web: web, client: client, csrf: csrf, cookie: cookie}
+	f.csrf = csrf
+	f.cookie = cookie
 	mustOK := func(path, body string) {
 		t.Helper()
 		res := f.post(t, path, body, false)
@@ -767,9 +776,45 @@ func startTermFixture(t *testing.T) termFixture {
 	if err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(func() { _ = ws.Close() })
 	f.ws = ws
 	return f
+}
+
+func stopTermFixture(t *testing.T, f *termFixture, cancel context.CancelFunc, poolStopped <-chan struct{}, handlers *sync.WaitGroup, sshSrv *sshtest.Server) {
+	t.Helper()
+	if f != nil && f.ws != nil {
+		_ = f.ws.Close()
+	}
+	if f != nil && f.web != nil {
+		f.web.Close()
+	}
+	cancel()
+	select {
+	case <-poolStopped:
+	case <-time.After(5 * time.Second):
+		t.Errorf("session pool did not stop")
+	}
+	waitHandlers(t, handlers)
+	if sshSrv != nil {
+		sshSrv.Close()
+	}
+}
+
+func waitHandlers(t *testing.T, handlers *sync.WaitGroup) {
+	t.Helper()
+	if handlers == nil {
+		return
+	}
+	done := make(chan struct{})
+	go func() {
+		handlers.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Errorf("http handlers did not finish")
+	}
 }
 
 func TestTerminalReadIdleClosesSocket(t *testing.T) {
