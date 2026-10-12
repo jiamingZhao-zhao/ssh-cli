@@ -272,7 +272,7 @@
                 <div class="empty" x-show="termTabs.length === 0">
                   <div class="empty-ico" aria-hidden="true"></div>
                   <p class="empty-title">还没有打开的终端</p>
-                  <p class="empty-subtitle text-secondary">选一台主机后点「打开」。可以同时开多个。连接失败时会写「终端连接失败」。</p>
+                  <p class="empty-subtitle text-secondary">选一台主机后点「打开」。可以同时开多个。连接失败时会写「终端连接失败」。到达最长时限时会先提示再断开。</p>
                   <div class="empty-action"><button class="btn btn-primary" type="button" @click="openTerminal(termAlias)">打开终端</button></div>
                 </div>
                 <div id="term-screen" class="term-screen" x-show="termTabs.length > 0"></div>

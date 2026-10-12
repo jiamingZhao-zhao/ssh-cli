@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"golang.org/x/crypto/ssh"
@@ -19,9 +20,14 @@ import (
 // carriers are earlier jump connections that only forward direct-tcpip.
 // They are closed after conn so the destination handshake stays up
 // until the caller is done. No shell is opened on a carrier.
+// stops cancels the keepalive loops started for conn and each carrier.
 type Client struct {
 	conn     *ssh.Client
 	carriers []*ssh.Client
+	stops    []context.CancelFunc
+	// dead is set when a keepalive probe fails, before that SSH client is closed.
+	// The pool uses it to drop the session on the next call instead of reusing it.
+	dead atomic.Bool
 }
 
 // Dial connects and authenticates. timeout bounds the TCP dial and handshake.
@@ -40,6 +46,7 @@ func Dial(ctx context.Context, addr, user string, auth []ssh.AuthMethod, hk ssh.
 	if err != nil {
 		return nil, err
 	}
+	enableTCPKeepAlive(netConn)
 	if timeout > 0 {
 		_ = netConn.SetDeadline(time.Now().Add(timeout))
 	}
@@ -49,7 +56,21 @@ func Dial(ctx context.Context, addr, user string, auth []ssh.AuthMethod, hk ssh.
 		return nil, err
 	}
 	_ = netConn.SetDeadline(time.Time{})
-	return &Client{conn: ssh.NewClient(c, chans, reqs)}, nil
+	raw := ssh.NewClient(c, chans, reqs)
+	client := &Client{conn: raw}
+	client.stops = []context.CancelFunc{startKeepAlive(raw, client.markDead)}
+	return client, nil
+}
+
+func (c *Client) markDead() {
+	if c != nil {
+		c.dead.Store(true)
+	}
+}
+
+// Dead reports that keepalive gave up on this connection.
+func (c *Client) Dead() bool {
+	return c != nil && c.dead.Load()
 }
 
 // Close closes the destination, then the jump connections that carried it.
@@ -57,6 +78,12 @@ func (c *Client) Close() error {
 	if c == nil {
 		return nil
 	}
+	for _, stop := range c.stops {
+		if stop != nil {
+			stop()
+		}
+	}
+	c.stops = nil
 	var err error
 	if c.conn != nil {
 		err = c.conn.Close()

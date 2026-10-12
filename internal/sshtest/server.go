@@ -20,16 +20,17 @@ import (
 
 // Server is a password-authenticated SSH server on 127.0.0.1.
 type Server struct {
-	Addr     string
-	Signer   ssh.Signer
-	User     string
-	ln       net.Listener
-	wg       sync.WaitGroup
-	closed   chan struct{}
-	pass     string
-	mu       sync.Mutex
-	conns    map[net.Conn]struct{}
-	sessions atomic.Int64
+	Addr       string
+	Signer     ssh.Signer
+	User       string
+	ln         net.Listener
+	wg         sync.WaitGroup
+	closed     chan struct{}
+	pass       string
+	mu         sync.Mutex
+	conns      map[net.Conn]struct{}
+	sessions   atomic.Int64
+	keepalives atomic.Int64
 }
 
 // Sessions is the number of shell and exec channels accepted.
@@ -40,6 +41,14 @@ func (s *Server) Sessions() int64 {
 		return 0
 	}
 	return s.sessions.Load()
+}
+
+// KeepAlives is how many keepalive@openssh.com global requests this server has seen.
+func (s *Server) KeepAlives() int64 {
+	if s == nil {
+		return 0
+	}
+	return s.keepalives.Load()
 }
 
 // Start listens and serves until Close.
@@ -126,7 +135,7 @@ func (s *Server) handle(conn net.Conn, cfg *ssh.ServerConfig) {
 		return
 	}
 	defer sc.Close()
-	go ssh.DiscardRequests(reqs)
+	go s.globalRequests(reqs)
 	for ch := range chans {
 		switch ch.ChannelType() {
 		case "session":
@@ -139,6 +148,20 @@ func (s *Server) handle(conn net.Conn, cfg *ssh.ServerConfig) {
 			go s.directTCP(ch)
 		default:
 			_ = ch.Reject(ssh.UnknownChannelType, "unknown channel")
+		}
+	}
+}
+
+func (s *Server) globalRequests(reqs <-chan *ssh.Request) {
+	for req := range reqs {
+		if req == nil {
+			continue
+		}
+		if req.Type == "keepalive@openssh.com" {
+			s.keepalives.Add(1)
+		}
+		if req.WantReply {
+			_ = req.Reply(false, nil)
 		}
 	}
 }

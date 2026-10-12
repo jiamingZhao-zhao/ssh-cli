@@ -37,33 +37,54 @@ func DialHops(ctx context.Context, hops []Hop, timeout time.Duration) (*Client, 
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	out := &Client{}
 	var carriers []*ssh.Client
 	var current *ssh.Client
+	var stops []context.CancelFunc
 	for _, hop := range hops {
 		netConn, err := dialHop(ctx, current, hop, timeout)
 		if err != nil {
+			stopAll(stops)
 			closeChain(carriers, current)
 			return nil, hopErr(hop, err)
 		}
 		next, err := clientHandshake(ctx, netConn, hop, timeout)
 		if err != nil {
+			stopAll(stops)
 			closeChain(carriers, current)
 			return nil, hopErr(hop, err)
 		}
+		stops = append(stops, startKeepAlive(next, out.markDead))
 		if current != nil {
 			carriers = append(carriers, current)
 		}
 		current = next
 	}
-	return &Client{conn: current, carriers: carriers}, nil
+	out.conn = current
+	out.carriers = carriers
+	out.stops = stops
+	return out, nil
 }
 
 func dialHop(ctx context.Context, via *ssh.Client, hop Hop, timeout time.Duration) (net.Conn, error) {
 	if via == nil {
 		d := net.Dialer{Timeout: timeout}
-		return d.DialContext(ctx, "tcp", hop.Addr)
+		conn, err := d.DialContext(ctx, "tcp", hop.Addr)
+		if err != nil {
+			return nil, err
+		}
+		enableTCPKeepAlive(conn)
+		return conn, nil
 	}
 	return via.DialContext(ctx, "tcp", hop.Addr)
+}
+
+func stopAll(stops []context.CancelFunc) {
+	for _, stop := range stops {
+		if stop != nil {
+			stop()
+		}
+	}
 }
 
 func clientHandshake(ctx context.Context, netConn net.Conn, hop Hop, timeout time.Duration) (*ssh.Client, error) {

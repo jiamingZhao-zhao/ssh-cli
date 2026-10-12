@@ -2,6 +2,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"io"
 	"net"
@@ -587,6 +588,12 @@ func TestTerminalUIDoesNotStickFalseBanner(t *testing.T) {
 	if !strings.Contains(onclose, "!entry.saw") || !strings.Contains(onclose, `app.setError("terminal", "终端连接失败")`) || !strings.Contains(script, "终端连接已断开 (") {
 		t.Fatalf("close copy: %s", onclose)
 	}
+	if !strings.Contains(onmessage, "已达到最长时限") || !strings.Contains(onmessage, "entry.maxLife = true") || !strings.Contains(onclose, "entry.maxLife") {
+		t.Fatalf("max-life tip missing: %s", onmessage)
+	}
+	if !strings.Contains(onmessage, `app.toast("会话已达到最长时限，连接已关闭", "bad")`) {
+		t.Fatalf("max-life toast missing: %s", onmessage)
+	}
 }
 
 func TestTerminalTabAliasIsNotNestedButton(t *testing.T) {
@@ -672,4 +679,191 @@ func terminalClosed(recs []audit.Record) bool {
 		}
 	}
 	return false
+}
+
+type termFixture struct {
+	dir    string
+	web    *httptest.Server
+	ws     *wsConn
+	client *http.Client
+	csrf   string
+	cookie string
+}
+
+func (f termFixture) post(t *testing.T, path, body string, browser bool) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, f.web.URL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-CSRF-Token", f.csrf)
+	req.Header.Set("Cookie", f.cookie)
+	if browser {
+		browserFetch(req, f.web.URL)
+	}
+	res, err := f.client.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func startTermFixture(t *testing.T) termFixture {
+	t.Helper()
+	sshSrv, err := sshtest.Start("tester", "ui-secret", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		done := make(chan struct{})
+		go func() {
+			sshSrv.Close()
+			close(done)
+		}()
+		select {
+		case <-done:
+		case <-time.After(2 * time.Second):
+		}
+	})
+	host, port, err := net.SplitHostPort(sshSrv.Addr)
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	svc := newService(dir, false, "")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	go svc.pool.Loop(ctx)
+	web := httptest.NewServer(svc.guard(svc.routes()))
+	t.Cleanup(web.Close)
+	client := web.Client()
+	csrf, cookie := uiSession(t, client, web.URL)
+	f := termFixture{dir: dir, web: web, client: client, csrf: csrf, cookie: cookie}
+	mustOK := func(path, body string) {
+		t.Helper()
+		res := f.post(t, path, body, false)
+		defer res.Body.Close()
+		raw, _ := io.ReadAll(res.Body)
+		if res.StatusCode != http.StatusOK {
+			t.Fatalf("%s %d %s", path, res.StatusCode, raw)
+		}
+	}
+	mustOK("/api/groups", `{"name":"app","env":"dev"}`)
+	mustOK("/api/hosts", `{"alias":"box","group":"app","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
+	opened := f.post(t, "/api/terminal/open", `{"alias":"box","cols":80,"rows":24}`, true)
+	openBody, _ := io.ReadAll(opened.Body)
+	opened.Body.Close()
+	if opened.StatusCode != http.StatusOK {
+		t.Fatalf("terminal open %d %s", opened.StatusCode, openBody)
+	}
+	var ticket struct {
+		Ticket string `json:"ticket"`
+	}
+	if err := json.Unmarshal(openBody, &ticket); err != nil || ticket.Ticket == "" {
+		t.Fatalf("ticket %v %s", err, openBody)
+	}
+	ws, err := dialWebSocket(web.URL+"/api/terminal/ws?ticket="+ticket.Ticket, browserSocket(web.URL, cookie))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = ws.Close() })
+	f.ws = ws
+	return f
+}
+
+func TestTerminalReadIdleClosesSocket(t *testing.T) {
+	prevPing, prevIdle, prevWrite := wsPingEvery, wsReadIdle, wsWriteWait
+	wsPingEvery = time.Hour
+	wsReadIdle = 200 * time.Millisecond
+	wsWriteWait = time.Second
+	t.Cleanup(func() {
+		wsPingEvery, wsReadIdle, wsWriteWait = prevPing, prevIdle, prevWrite
+	})
+	f := startTermFixture(t)
+	errCh := make(chan error, 1)
+	go func() {
+		for {
+			_, _, err := f.ws.ReadMessage()
+			if err != nil {
+				errCh <- err
+				return
+			}
+		}
+	}()
+	select {
+	case err := <-errCh:
+		if err == nil {
+			t.Fatal("expected the idle socket to close")
+		}
+	case <-time.After(4 * time.Second):
+		t.Fatal("terminal socket stayed open with no traffic")
+	}
+	// The socket close unblocks the client before the handler finishes the
+	// close audit. Wait for that write so test cleanup does not race it.
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		done := false
+		for _, rec := range readAuditRecords(t, f.dir) {
+			if rec.Op == audit.OpTerminal && rec.Host == "box" && rec.Reason != "open" {
+				done = true
+			}
+		}
+		if done {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("terminal did not record close after the idle timeout")
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+func TestMaxLifeTipsOpenTerminal(t *testing.T) {
+	f := startTermFixture(t)
+	got := make(chan string, 1)
+	go func() {
+		var b strings.Builder
+		for {
+			_, payload, err := f.ws.ReadMessage()
+			if len(payload) > 0 {
+				b.Write(payload)
+				if strings.Contains(b.String(), "已达到最长时限") {
+					got <- b.String()
+					return
+				}
+			}
+			if err != nil {
+				got <- b.String()
+				return
+			}
+		}
+	}()
+	res := f.post(t, "/api/settings", `{"idle":"1h","maxLife":"1s"}`, false)
+	raw, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusOK {
+		t.Fatalf("settings %d %s", res.StatusCode, raw)
+	}
+	select {
+	case text := <-got:
+		if !strings.Contains(text, "已达到最长时限") {
+			t.Fatalf("notice %q", text)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timed out waiting for the max-life notice")
+	}
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		recs := readAuditRecords(t, f.dir)
+		for _, rec := range recs {
+			if rec.Op == audit.OpSession && rec.Host == "box" && rec.Reason == "max_life" {
+				return
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("missing max_life audit %#v", recs)
+		}
+		time.Sleep(30 * time.Millisecond)
+	}
 }

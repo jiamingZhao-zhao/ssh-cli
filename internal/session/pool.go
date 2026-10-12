@@ -58,6 +58,10 @@ type Pool struct {
 	now     func() time.Time
 	dial    DialFunc
 	onClose CloseFunc
+	// before runs after the session leaves the table and before the SSH
+	// client is closed. The UI writes the max-life notice there, while the
+	// terminal socket is still open.
+	before CloseFunc
 }
 
 type entry struct {
@@ -169,16 +173,24 @@ func (p *Pool) open(ctx context.Context, alias, fingerprint string, forceNew, wi
 	}
 	p.mu.Lock()
 	if e := p.items[alias]; e != nil && !e.closed && e.fingerprint == fingerprint {
-		e.used = p.now()
-		needShell := withShell && e.shell == nil
-		client := e.client
-		p.mu.Unlock()
-		if !needShell {
-			return nil
+		if e.client != nil && e.client.Dead() {
+			p.mu.Unlock()
+			// The keepalive already closed the socket. Drop the entry on this
+			// call so the workspace panels dial again instead of reusing it.
+			p.finish(alias, "disconnect")
+		} else {
+			e.used = p.now()
+			needShell := withShell && e.shell == nil
+			client := e.client
+			p.mu.Unlock()
+			if !needShell {
+				return nil
+			}
+			return p.attachShell(ctx, alias, client)
 		}
-		return p.attachShell(ctx, alias, client)
+	} else {
+		p.mu.Unlock()
 	}
-	p.mu.Unlock()
 	if ctx != nil {
 		if err := ctx.Err(); err != nil {
 			return err
@@ -424,6 +436,18 @@ func (p *Pool) Use(alias, fingerprint string, fn func() error) error {
 	return err
 }
 
+// SetBeforeClose registers fn, called once the session is out of the table
+// and before its SSH client is closed. fn may be nil. It runs without the
+// pool lock. The terminal uses it to write a max-life notice first.
+func (p *Pool) SetBeforeClose(fn CloseFunc) {
+	if p == nil {
+		return
+	}
+	p.mu.Lock()
+	p.before = fn
+	p.mu.Unlock()
+}
+
 // Close tears down alias immediately.
 func (p *Pool) Close(alias string) { p.finish(alias, "explicit") }
 
@@ -558,15 +582,22 @@ func (p *Pool) finish(alias, reason string) {
 	delete(p.items, alias)
 	shell := e.shell
 	client := e.client
+	before := p.before
+	onClose := p.onClose
 	p.mu.Unlock()
+	// Tell the terminal before the SSH client goes away. Closing the client
+	// unblocks the PTY bridge, and that bridge then closes the browser socket.
+	if before != nil {
+		before(alias, reason)
+	}
 	if shell != nil {
 		_ = shell.Close()
 	}
 	if client != nil {
 		_ = client.Close()
 	}
-	if p.onClose != nil {
-		p.onClose(alias, reason)
+	if onClose != nil {
+		onClose(alias, reason)
 	}
 }
 
@@ -575,7 +606,7 @@ func (p *Pool) Client(alias, fingerprint string) (*ssh.Client, bool) {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 	e := p.items[alias]
-	if e == nil || e.closed || e.client == nil || e.fingerprint != fingerprint {
+	if e == nil || e.closed || e.client == nil || e.client.Dead() || e.fingerprint != fingerprint {
 		return nil, false
 	}
 	return e.client.Raw(), true

@@ -5,11 +5,13 @@ import (
 	"context"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/sshclient"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/sshtest"
+	"golang.org/x/crypto/ssh"
 )
 
 const testFingerprint = "test-server"
@@ -137,6 +139,71 @@ func TestIdleAndMaxLife(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("reasons %v", *reasons)
+	}
+}
+
+func TestMaxLifeHooksBeforeSSHClose(t *testing.T) {
+	srv, err := sshtest.Start("tester", "test-pass", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	var mu sync.Mutex
+	var raw *ssh.Client
+	dial := func(ctx context.Context, alias, _ string) (*sshclient.Client, error) {
+		c, err := sshclient.Dial(ctx, srv.Addr, "tester", sshclient.PasswordAuth("test-pass"), sshclient.HostKeyCallback(filepath.Join(t.TempDir(), "known_hosts"), true), 5*time.Second)
+		if err != nil {
+			return nil, err
+		}
+		mu.Lock()
+		raw = c.Raw()
+		mu.Unlock()
+		return c, nil
+	}
+	pool, err := New(time.Hour, time.Hour, dial, func(alias, reason string) {
+		mu.Lock()
+		conn := raw
+		mu.Unlock()
+		if conn == nil {
+			t.Errorf("missing client at onClose")
+			return
+		}
+		if _, _, err := conn.SendRequest("keepalive@openssh.com", true, nil); err == nil {
+			t.Errorf("ssh client still answered after close, reason %s", reason)
+		}
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(pool.Shutdown)
+	pool.SetBeforeClose(func(alias, reason string) {
+		if alias != "main" || reason != "max_life" {
+			t.Errorf("before %s %s", alias, reason)
+			return
+		}
+		mu.Lock()
+		conn := raw
+		mu.Unlock()
+		if conn == nil {
+			t.Errorf("missing client before close")
+			return
+		}
+		if _, _, err := conn.SendRequest("keepalive@openssh.com", true, nil); err != nil {
+			t.Errorf("ssh closed before the max-life notice: %v", err)
+		}
+	})
+	start := time.Date(2026, 10, 12, 3, 0, 0, 0, time.UTC)
+	now := start
+	pool.SetClock(func() time.Time { return now })
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := pool.Open(ctx, "main", testFingerprint, false); err != nil {
+		t.Fatal(err)
+	}
+	now = start.Add(time.Hour)
+	pool.Sweep(now)
+	if len(pool.List()) != 0 {
+		t.Fatalf("max life left the session open: %+v", pool.List())
 	}
 }
 

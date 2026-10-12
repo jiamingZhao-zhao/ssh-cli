@@ -23,6 +23,9 @@ import (
 const (
 	termTicketTTL  = 45 * time.Second
 	maxTermTickets = 32
+	// maxLifeNotice is written to the terminal before the SSH client is closed.
+	// The page matches this phrase and raises the banner and toast.
+	maxLifeNotice = "\r\n会话已达到最长时限，连接已关闭。\r\n"
 )
 
 // termTicket is a one-time permit to open the unrestricted PTY.
@@ -249,7 +252,50 @@ type errString string
 
 func (e errString) Error() string { return string(e) }
 
+func (s *service) trackTerm(alias string, ws *wsConn) {
+	if s == nil || ws == nil {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.terms == nil {
+		s.terms = map[*wsConn]string{}
+	}
+	s.terms[ws] = alias
+}
+
+func (s *service) forgetTerm(ws *wsConn) {
+	if s == nil || ws == nil {
+		return
+	}
+	s.mu.Lock()
+	delete(s.terms, ws)
+	s.mu.Unlock()
+}
+
+// noteMaxLife runs before the pool closes the SSH client. The browser socket
+// is still open here; the PTY bridge closes it only after the client dies.
+func (s *service) noteMaxLife(alias, reason string) {
+	if s == nil || reason != "max_life" {
+		return
+	}
+	s.mu.Lock()
+	var sinks []*wsConn
+	for ws, name := range s.terms {
+		if ws != nil && name == alias {
+			sinks = append(sinks, ws)
+		}
+	}
+	s.mu.Unlock()
+	msg := []byte(maxLifeNotice)
+	for _, ws := range sinks {
+		_ = ws.Write(wsText, msg)
+	}
+}
+
 func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedHost, cols, rows int) {
+	s.trackTerm(h.Alias, ws)
+	defer s.forgetTerm(ws)
 	fp := h.Host.ConnFingerprint()
 	if err := s.pool.OpenConn(r.Context(), h.Alias, fp); err != nil {
 		s.auditTerminal(h, audit.StatusConnect, "open", err.Error(), time.Now(), 0, 0)
@@ -351,6 +397,8 @@ type resizeMsg struct {
 }
 
 func bridgePTY(ws *wsConn, pty *sshclient.PTY) (int64, int64, error) {
+	stop := ws.armIdle(wsPingEvery, wsReadIdle, wsWriteWait)
+	defer stop()
 	var inN, outN atomic.Int64
 	errCh := make(chan error, 2)
 	go func() {
