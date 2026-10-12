@@ -857,7 +857,7 @@
               <div class="card-body border-bottom">
                 <form class="row g-2" @submit.prevent="searchAudit()">
                   <div class="col-md-2"><label class="form-label">操作</label>
-                    <select class="form-select" x-model="auditFilter.op"><option value="">全部</option><option>exec</option><option>upload</option><option>download</option><option>relay</option><option>policy_check</option><option>session</option><option>terminal</option><option>config_change</option><option>status</option><option>service</option><option>keys</option><option>history</option><option>list</option><option>metrics</option></select>
+                    <select class="form-select" x-model="auditFilter.op"><option value="">全部</option><option>exec</option><option>upload</option><option>download</option><option>relay</option><option>policy_check</option><option>session</option><option>terminal</option><option>config_change</option><option>status</option><option>service</option><option>keys</option><option>history</option><option>list</option><option>metrics</option><option>file_change</option></select>
                   </div>
                   <div class="col-md-2"><label class="form-label">主机</label>
                     <select class="form-select" x-model="auditFilter.host"><option value="">全部</option><template x-for="h in sortedHosts()" :key="h.alias"><option :value="h.alias" x-text="h.alias"></option></template></select>

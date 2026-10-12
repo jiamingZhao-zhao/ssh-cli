@@ -104,10 +104,22 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 // loopback, a non-empty Origin whose host equals Host and is allowed, and the
 // session cookie that minted the ticket.
 // workspaceHuman is the localhost page. A client-supplied source field is ignored.
-// Workspace file, history, and metric calls from this page skip command policy
-// and are not written to the audit log. Anything else stays policy-gated.
+// It is not a policy bypass. File changes, upload, and download always run
+// capability checks, and those calls are audited with source=ui. Read-only
+// probes skip per-command text policy only through workspaceProbeExempt.
 func (s *service) workspaceHuman(r *http.Request) bool {
 	return s.terminalBrowser(r, "fetch")
+}
+
+// workspaceProbeExempt reports whether a fixed read probe may skip per-command
+// text policy. The exemption is the loopback page only. Binding the UI beyond
+// loopback turns it off, so a forged browser proof cannot widen policy on an
+// exposed listener. noDataOut, capability checks, and audit are never covered.
+func (s *service) workspaceProbeExempt(r *http.Request) bool {
+	if s.allowRemote {
+		return false
+	}
+	return s.workspaceHuman(r)
 }
 
 func (s *service) terminalBrowser(r *http.Request, kind string) bool {

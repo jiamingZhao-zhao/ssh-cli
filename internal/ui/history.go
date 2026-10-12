@@ -3,17 +3,21 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
 	"time"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/history"
 )
 
 func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
+	started := time.Now()
 	var body struct {
 		Alias          string `json:"alias"`
 		Lines          int    `json:"lines"`
@@ -38,12 +42,15 @@ func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	human := s.workspaceHuman(r)
-	suppress := false
-	if !human {
+	// Loopback page probes may skip the fixed cat/tail text policy.
+	// noDataOut suppression and the outflow confirmation always apply.
+	probe := s.workspaceProbeExempt(r)
+	if !probe {
 		dec := history.PolicyDecision(eff, n)
 		if !dec.Allowed {
-			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec), "status": "denied"})
+			text := decisionText(dec)
+			s.writeAudit(h, audit.OpPolicyCheck, "history", "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
 			return
 		}
 		if dec.NeedsConfirm && strings.TrimSpace(body.Confirm) != h.Alias {
@@ -53,15 +60,14 @@ func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
 			})
 			return
 		}
-		var needsOut bool
-		suppress, needsOut = guard.ExecOutflow(eff.NoDataOut, body.AllowOutflow)
-		if needsOut && body.OutflowConfirm != guard.OutflowPhrase {
-			writeJSON(w, http.StatusConflict, map[string]any{
-				"ok": false, "needsConfirm": true, "confirm": guard.OutflowPhrase, "confirmField": "outflowConfirm",
-				"alias": h.Alias, "error": "type outflow to return history lines",
-			})
-			return
-		}
+	}
+	suppress, needsOut := guard.ExecOutflow(eff.NoDataOut, body.AllowOutflow)
+	if needsOut && body.OutflowConfirm != guard.OutflowPhrase {
+		writeJSON(w, http.StatusConflict, map[string]any{
+			"ok": false, "needsConfirm": true, "confirm": guard.OutflowPhrase, "confirmField": "outflowConfirm",
+			"alias": h.Alias, "error": "type outflow to return history lines",
+		})
+		return
 	}
 	s.reconcile()
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
@@ -69,7 +75,7 @@ func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
 	res, runErr := history.Collect(ctx, func(ctx context.Context, command string) (string, string, int, error) {
 		return s.poolRun(ctx, h, command, 12*time.Second)
 	}, func(command string) error {
-		if human {
+		if probe {
 			return nil
 		}
 		d := guard.Decide(eff, command)
@@ -79,6 +85,7 @@ func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}, history.Options{Lines: n})
 	if runErr != nil {
+		s.writeAudit(h, audit.OpHistory, "history", "", "", audit.StatusError, 1, runErr.Error(), runErr.Error(), false, started)
 		writeFail(w, runErr)
 		return
 	}
@@ -96,6 +103,11 @@ func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
 	if entries == nil {
 		entries = []history.Line{}
 	}
+	summary := fmt.Sprintf("history status=%s lines=%d", res.Status, len(lines))
+	if suppress {
+		summary = guard.OutflowDiscarded
+	}
+	s.writeAudit(h, audit.OpHistory, "history", res.Path, "", audit.StatusOK, 0, summary, "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "found": res.Found && !suppress, "status": res.Status,
 		"path": res.Path, "shell": res.Shell, "lines": lines, "entries": entries,

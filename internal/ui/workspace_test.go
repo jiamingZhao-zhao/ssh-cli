@@ -190,8 +190,8 @@ func TestWorkspaceListHistoryMetrics(t *testing.T) {
 		t.Fatalf("history body %#v", hist)
 	}
 	text := readAuditMaybe(t, dir)
-	if strings.Contains(text, `"op":"history"`) || strings.Contains(text, `"op":"list"`) || strings.Contains(text, `"op":"metrics"`) || strings.Contains(text, "ui-secret") {
-		t.Fatalf("workspace must not write file/history/metrics audit\n%s", text)
+	if !strings.Contains(text, `"op":"history"`) || !strings.Contains(text, `"op":"list"`) || !strings.Contains(text, `"source":"ui"`) || strings.Contains(text, "ui-secret") {
+		t.Fatalf("workspace file/history audit\n%s", text)
 	}
 
 	if closed := post("/api/sessions/close", `{"alias":"box"}`); closed.Code != 200 {
@@ -209,7 +209,7 @@ func TestWorkspaceListHistoryMetrics(t *testing.T) {
 		t.Fatalf("metrics %d %s", metrics.Code, metrics.Body.String())
 	}
 	text = readAuditMaybe(t, dir)
-	if strings.Contains(text, `"op":"metrics"`) {
+	if !strings.Contains(text, `"op":"metrics"`) || !strings.Contains(text, `"source":"ui"`) {
 		t.Fatalf("metrics audit\n%s", text)
 	}
 
@@ -247,7 +247,7 @@ func TestWorkspaceListHistoryMetrics(t *testing.T) {
 		t.Fatalf("browser history should skip policy %d %s", allowed.Code, allowed.Body.String())
 	}
 	text = readAuditMaybe(t, dir)
-	if strings.Contains(text, `"op":"history"`) {
-		t.Fatalf("browser history audited\n%s", text)
+	if !strings.Contains(text, `"op":"history"`) || !strings.Contains(text, `"source":"ui"`) {
+		t.Fatalf("browser history audit\n%s", text)
 	}
 }

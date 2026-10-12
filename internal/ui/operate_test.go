@@ -62,8 +62,8 @@ func TestUIExecUploadDownload(t *testing.T) {
 		t.Fatalf("exec %d %s", rr.Code, rr.Body.String())
 	}
 	text := readAuditMaybe(t, dir)
-	if strings.Contains(text, `"op":"exec"`) || strings.Contains(text, "ui-secret") {
-		t.Fatalf("ui exec must stay out of the audit log\n%s", text)
+	if !strings.Contains(text, `"op":"exec"`) || !strings.Contains(text, `"source":"ui"`) || strings.Contains(text, "ui-secret") {
+		t.Fatalf("ui exec audit\n%s", text)
 	}
 
 	remote := filepath.Join(t.TempDir(), "up.txt")
@@ -130,6 +130,15 @@ func TestUIExecUploadDownload(t *testing.T) {
 	rr = post("/api/exec", `{"alias":"box","command":"rm -rf /"}`)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("deny %d %s", rr.Code, rr.Body.String())
+	}
+	logged := auditText(t, dir)
+	for _, op := range []string{`"op":"exec"`, `"op":"upload"`, `"op":"download"`, `"op":"policy_check"`} {
+		if !strings.Contains(logged, op) {
+			t.Fatalf("missing %s\n%s", op, logged)
+		}
+	}
+	if !strings.Contains(logged, `"source":"ui"`) || strings.Contains(logged, "ui-secret") {
+		t.Fatalf("ui transfer audit\n%s", logged)
 	}
 
 	exp := httptest.NewRequest(http.MethodGet, "/api/config/export", nil)
