@@ -424,7 +424,7 @@ function sshui() {
       });
       setInterval(() => this.tickSessions(), 1000);
       setInterval(() => {
-        if (this.view === "sessions") this.loadSessions();
+        if (this.view === "sessions" || this.view === "home") this.loadSessions();
       }, 20000);
     },
 
@@ -722,6 +722,7 @@ function sshui() {
         if (!this.overview.days) this.overview.days = [];
         if (!this.overview.ops) this.overview.ops = [];
         paintOverview(this.overview);
+        await this.loadSessions();
       } catch (err) {
         this.setError("home", err.message);
       }
@@ -751,6 +752,7 @@ function sshui() {
       try {
         const data = await this.readJSON(await this.api("/api/sessions"));
         this.sessions = data.sessions || [];
+        if (this.dash) this.dash.sessions = this.sessions.length;
         this.clampPage("sessions");
       } catch (err) {
         this.setError("sessions", err.message);
@@ -1019,6 +1021,43 @@ function sshui() {
       this.setError("terminal", "");
       await new Promise((resolve) => setTimeout(resolve, 40));
       await this.mountTerm(name);
+    },
+
+    async focusTerminal(alias) {
+      const name = String(alias || "").trim();
+      if (!name) {
+        this.show("terminal");
+        return;
+      }
+      const tabs = this.termTabs || [];
+      for (let i = 0; i < tabs.length; i++) {
+        if (tabs[i].alias === name) {
+          this.termAlias = name;
+          this.show("terminal");
+          this.showPane(tabs[i].id);
+          return;
+        }
+      }
+      await this.openTerminal(name);
+    },
+
+    async openLiveTerminal() {
+      const live = this.liveSessions();
+      if (live.length) {
+        await this.focusTerminal(live[0].alias);
+        return;
+      }
+      this.show("terminal");
+    },
+
+    liveSessions() {
+      return (this.sessions || []).filter((item) => item && item.alias);
+    },
+
+    liveCount() {
+      const n = this.liveSessions().length;
+      if (n) return n;
+      return (this.dash && this.dash.sessions) || 0;
     },
 
     async mountTerm(alias) {

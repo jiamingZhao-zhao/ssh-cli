@@ -69,7 +69,16 @@
                 <div class="card"><div class="card-body text-center"><div class="subheader">分组</div><div class="h1 mb-2" x-text="dash.groups || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('groups')">打开分组</button></div></div>
               </div>
               <div class="col-sm-6 col-lg-3">
-                <div class="card"><div class="card-body text-center"><div class="subheader">会话</div><div class="h1 mb-2" x-text="dash.sessions || 0"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('terminal')">打开终端</button></div></div>
+                <div class="card"><div class="card-body text-center">
+                  <div class="subheader">会话</div>
+                  <button class="dash-count h1 mb-2" type="button" @click="openLiveTerminal()" x-text="liveCount()" :title="liveCount() ? '打开在线会话的终端' : '打开终端'"></button>
+                  <div class="dash-live" x-show="liveSessions().length">
+                    <template x-for="item in liveSessions()" :key="'live-' + item.alias">
+                      <button class="btn btn-outline-primary btn-sm" type="button" @click="focusTerminal(item.alias)" x-text="item.alias" :title="'打开 ' + item.alias + ' 的终端'"></button>
+                    </template>
+                  </div>
+                  <button class="btn btn-outline-primary btn-sm" type="button" x-show="!liveSessions().length" @click="show('terminal')">打开终端</button>
+                </div></div>
               </div>
               <div class="col-sm-6 col-lg-3">
                 <div class="card"><div class="card-body text-center"><div class="subheader">审计</div><div class="h1 mb-2" x-text="dashEntries()"></div><button class="btn btn-outline-primary btn-sm" type="button" @click="show('audit')">打开审计</button></div></div>
@@ -975,14 +984,17 @@
                   <thead><tr><th>主机</th><th>状态</th><th>空闲剩余</th><th>最长剩余</th><th>打开</th><th>最近使用</th><th></th></tr></thead>
                   <tbody id="session-rows">
                     <template x-for="item in filteredSessions()" :key="item.alias">
-                      <tr :class="item.status === 'busy' ? 'table-warning' : ''">
-                        <td x-text="item.alias"></td>
+                      <tr class="session-row" :class="item.status === 'busy' ? 'table-warning' : ''" @click="focusTerminal(item.alias)" :title="'打开 ' + item.alias + ' 的终端'">
+                        <td><button class="btn btn-link p-0" type="button" @click.stop="focusTerminal(item.alias)" x-text="item.alias"></button></td>
                         <td><span :class="item.status === 'busy' ? 'badge bg-yellow-lt' : 'badge bg-green-lt'" x-text="item.status === 'busy' ? '忙碌' : '空闲'"></span></td>
                         <td x-text="idleText(item)"></td>
                         <td x-text="formatLeft(item.lifeLeftSec)"></td>
                         <td class="text-secondary" x-text="formatTime(item.opened)"></td>
                         <td class="text-secondary" x-text="formatTime(item.used)"></td>
-                        <td class="text-end"><button class="btn btn-outline-danger btn-sm" type="button" @click="closeSession(item.alias)">关闭</button></td>
+                        <td class="text-end" @click.stop>
+                          <button class="btn btn-outline-primary btn-sm" type="button" @click="focusTerminal(item.alias)">终端</button>
+                          <button class="btn btn-outline-danger btn-sm" type="button" @click="closeSession(item.alias)">关闭</button>
+                        </td>
                       </tr>
                     </template>
                   </tbody>

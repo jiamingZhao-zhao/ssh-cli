@@ -1397,4 +1397,28 @@ pre {
 }
 .ws-toast.is-bad { background: #ae2a19; }
 @keyframes ws-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.dash-count {
+  display: block;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+.dash-count:hover { color: var(--mh-blue); }
+.dash-live {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
+  margin-bottom: 0.15rem;
+}
+.session-row { cursor: pointer; }
+.session-row:hover td { background: var(--mh-blue-soft); }
 @keyframes ws-pulse { 50% { opacity: 0.35; } }
