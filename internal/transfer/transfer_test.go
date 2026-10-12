@@ -1,6 +1,7 @@
 package transfer
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"os"
@@ -54,6 +55,47 @@ func TestUploadDownloadDirectory(t *testing.T) {
 	got, err = os.ReadFile(filepath.Join(back, "sub", "a.txt"))
 	if err != nil || string(got) != "hello" {
 		t.Fatalf("downloaded %q err %v", got, err)
+	}
+}
+
+func TestDownloadReportsByteProgress(t *testing.T) {
+	srv, err := sshtest.Start("tester", "test-pass", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	client, err := sshclient.Dial(ctx, srv.Addr, "tester", sshclient.PasswordAuth("test-pass"), sshclient.HostKeyCallback(filepath.Join(t.TempDir(), "known_hosts"), true), 5*time.Second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	payload := bytes.Repeat([]byte("p"), 200*1024)
+	remoteDir := t.TempDir()
+	remote := filepath.Join(remoteDir, "blob.bin")
+	if err := os.WriteFile(remote, payload, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var marks []int64
+	var total int64
+	back := filepath.Join(t.TempDir(), "blob.bin")
+	err = DownloadWithOptions(client.Raw(), remote, back, nil, DownloadOptions{
+		Context: ctx,
+		Progress: func(done, tot int64) {
+			marks = append(marks, done)
+			total = tot
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if total != int64(len(payload)) || len(marks) < 2 || marks[0] != 0 || marks[len(marks)-1] != total {
+		t.Fatalf("progress total %d marks %v", total, marks)
+	}
+	got, err := os.ReadFile(back)
+	if err != nil || !bytes.Equal(got, payload) {
+		t.Fatalf("saved %d err %v", len(got), err)
 	}
 }
 

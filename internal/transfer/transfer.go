@@ -11,6 +11,7 @@ import (
 	"path"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
@@ -47,6 +48,9 @@ type UploadOptions struct {
 	Protected       []string
 	Check           func(dest string, protected []string) error
 	RejectOverwrite bool
+	// Progress reports bytes copied to the remote. total is the planned
+	// regular-file size and may be 0. Callbacks run on the upload goroutine.
+	Progress func(done, total int64)
 }
 
 // OverwriteError means an existing regular file needs an explicit overwrite decision.
@@ -120,6 +124,20 @@ func UploadWithOptions(client *ssh.Client, local, remote string, log LogFunc, op
 			}
 		}
 	}
+	var prog *byteProgress
+	if opt.Progress != nil {
+		var total int64
+		for _, item := range plan {
+			if item.dir || item.local == "" {
+				continue
+			}
+			if st, err := os.Stat(item.local); err == nil {
+				total += st.Size()
+			}
+		}
+		prog = &byteProgress{fn: opt.Progress, total: total}
+		prog.report(true)
+	}
 	for _, item := range plan {
 		if err := checkPath(item.remote); err != nil {
 			return err
@@ -130,9 +148,15 @@ func UploadWithOptions(client *ssh.Client, local, remote string, log LogFunc, op
 			}
 			continue
 		}
-		if err := uploadFile(sf, item.local, item.remote, item.mode, log, opt.RejectOverwrite, checkPath); err != nil {
+		if err := uploadFile(sf, item.local, item.remote, item.mode, log, opt.RejectOverwrite, checkPath, prog); err != nil {
+			if prog != nil {
+				prog.report(true)
+			}
 			return err
 		}
+	}
+	if prog != nil {
+		prog.report(true)
 	}
 	return nil
 }
@@ -243,12 +267,21 @@ func missingParents(sf *sftp.Client, remote string) []plannedUpload {
 
 // Download copies a remote file or directory to local.
 func Download(client *ssh.Client, remote, local string, log LogFunc) error {
-	return download(client, remote, local, log)
+	return download(client, remote, local, log, nil)
 }
 
-// DownloadContext is Download with cancellation. Cancelling ctx closes client
-// so a stalled SFTP read unblocks. The CLI calls Download.
-func DownloadContext(ctx context.Context, client *ssh.Client, remote, local string, log LogFunc) error {
+// DownloadOptions is Download with cancellation and optional byte progress.
+// A non-nil Context owns the connection and closes it when canceled.
+type DownloadOptions struct {
+	Context context.Context
+	// Progress reports bytes written locally. total is the remote regular-file
+	// size (0 when unknown). Callbacks run on the download goroutine.
+	Progress func(done, total int64)
+}
+
+// DownloadWithOptions is Download plus cancellation and progress.
+func DownloadWithOptions(client *ssh.Client, remote, local string, log LogFunc, opt DownloadOptions) error {
+	ctx := opt.Context
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -257,10 +290,16 @@ func DownloadContext(ctx context.Context, client *ssh.Client, remote, local stri
 	}
 	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
 	defer stop()
-	return download(client, remote, local, log)
+	return download(client, remote, local, log, opt.Progress)
 }
 
-func download(client *ssh.Client, remote, local string, log LogFunc) error {
+// DownloadContext is Download with cancellation. Cancelling ctx closes client
+// so a stalled SFTP read unblocks. The CLI calls Download.
+func DownloadContext(ctx context.Context, client *ssh.Client, remote, local string, log LogFunc) error {
+	return DownloadWithOptions(client, remote, local, log, DownloadOptions{Context: ctx})
+}
+
+func download(client *ssh.Client, remote, local string, log LogFunc, progress func(done, total int64)) error {
 	sf, err := Client(client)
 	if err != nil {
 		return err
@@ -271,16 +310,22 @@ func download(client *ssh.Client, remote, local string, log LogFunc) error {
 	if err != nil {
 		return err
 	}
+	prog := &byteProgress{fn: progress, total: regularBytes(sf, remote, info)}
+	prog.report(true)
 	if info.IsDir() {
-		return downloadDir(sf, remote, local, log)
+		err := downloadDir(sf, remote, local, log, prog)
+		prog.report(true)
+		return err
 	}
 	if st, err := os.Stat(local); err == nil && st.IsDir() {
 		local = filepath.Join(local, path.Base(remote))
 	}
-	return downloadFile(sf, remote, local, info.Mode(), log)
+	err = downloadFile(sf, remote, local, info.Mode(), log, prog)
+	prog.report(true)
+	return err
 }
 
-func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error) error {
+func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error, prog *byteProgress) error {
 	if dir := path.Dir(remote); dir != "" && dir != "." {
 		if err := sf.MkdirAll(dir); err != nil {
 			return fmt.Errorf("mkdir %s: %w", dir, err)
@@ -306,7 +351,7 @@ func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log Log
 		_ = dst.Close()
 		return fmt.Errorf("restrict temporary upload permissions: %w", err)
 	}
-	_, copyErr := io.Copy(dst, src)
+	copyErr := copyWithProgress(dst, src, prog)
 	closeErr := dst.Close()
 	if copyErr != nil {
 		return copyErr
@@ -334,7 +379,7 @@ func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log Log
 	return nil
 }
 
-func downloadDir(sf *sftp.Client, remote, local string, log LogFunc) error {
+func downloadDir(sf *sftp.Client, remote, local string, log LogFunc, prog *byteProgress) error {
 	walker := sf.Walk(remote)
 	for walker.Step() {
 		if err := walker.Err(); err != nil {
@@ -361,14 +406,14 @@ func downloadDir(sf *sftp.Client, remote, local string, log LogFunc) error {
 			note(log, "skipping non-regular file "+walker.Path())
 			continue
 		}
-		if err := downloadFile(sf, walker.Path(), localPath, info.Mode(), log); err != nil {
+		if err := downloadFile(sf, walker.Path(), localPath, info.Mode(), log, prog); err != nil {
 			return err
 		}
 	}
 	return nil
 }
 
-func downloadFile(sf *sftp.Client, remote, local string, mode os.FileMode, log LogFunc) error {
+func downloadFile(sf *sftp.Client, remote, local string, mode os.FileMode, log LogFunc, prog *byteProgress) error {
 	if err := os.MkdirAll(filepath.Dir(local), 0o755); err != nil {
 		return err
 	}
@@ -381,7 +426,7 @@ func downloadFile(sf *sftp.Client, remote, local string, mode os.FileMode, log L
 	if err != nil {
 		return err
 	}
-	_, copyErr := io.Copy(dst, src)
+	copyErr := copyWithProgress(dst, src, prog)
 	closeErr := dst.Close()
 	if copyErr != nil {
 		return copyErr
@@ -393,6 +438,81 @@ func downloadFile(sf *sftp.Client, remote, local string, mode os.FileMode, log L
 		note(log, fmt.Sprintf("chmod %s: %v", local, err))
 	}
 	return nil
+}
+
+// byteProgress throttles progress callbacks. A nil receiver or nil fn is a no-op.
+type byteProgress struct {
+	fn    func(done, total int64)
+	total int64
+	done  int64
+	last  time.Time
+	seen  bool
+}
+
+func (b *byteProgress) Add(n int) {
+	if b == nil || n <= 0 {
+		return
+	}
+	b.done += int64(n)
+	b.report(false)
+}
+
+func (b *byteProgress) report(force bool) {
+	if b == nil || b.fn == nil {
+		return
+	}
+	if !force && b.seen && time.Since(b.last) < 120*time.Millisecond && b.done != b.total {
+		return
+	}
+	b.seen = true
+	b.last = time.Now()
+	b.fn(b.done, b.total)
+}
+
+func copyWithProgress(dst io.Writer, src io.Reader, prog *byteProgress) error {
+	buf := make([]byte, 32*1024)
+	for {
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			nw, werr := dst.Write(buf[:n])
+			if nw > 0 {
+				prog.Add(nw)
+			}
+			if werr != nil {
+				return werr
+			}
+			if nw != n {
+				return io.ErrShortWrite
+			}
+		}
+		if rerr != nil {
+			if rerr == io.EOF {
+				return nil
+			}
+			return rerr
+		}
+	}
+}
+
+func regularBytes(sf *sftp.Client, remote string, info os.FileInfo) int64 {
+	if info != nil && !info.IsDir() {
+		if info.Mode().IsRegular() {
+			return info.Size()
+		}
+		return 0
+	}
+	var total int64
+	walker := sf.Walk(remote)
+	for walker.Step() {
+		if walker.Err() != nil {
+			break
+		}
+		st := walker.Stat()
+		if st != nil && st.Mode().IsRegular() {
+			total += st.Size()
+		}
+	}
+	return total
 }
 
 func remoteFileDest(sf *sftp.Client, remote, base string) (string, error) {

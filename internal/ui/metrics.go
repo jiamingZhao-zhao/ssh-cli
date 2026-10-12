@@ -126,7 +126,7 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	if eff.NoDataOut {
 		s.writeAudit(h, audit.OpMetrics, "proc", "", body.PID, audit.StatusDenied, exitcode.Denied, "noDataOutflow forbids process details", "noDataOutflow forbids process details", true, started)
-		writeErr(w, http.StatusForbidden, "此环境禁止带回数据，进程详情不可用。")
+		writeErr(w, http.StatusForbidden, "此环境禁止带回数据，这一行的详情不可用。")
 		return
 	}
 	if !probe {

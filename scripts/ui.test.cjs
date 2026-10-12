@@ -102,6 +102,25 @@ test('file tree anchors at / and shows basenames', async () => {
   assert.equal(rows.some((row) => row.name === '/root'), false);
   assert.ok(paths.includes('/'));
 });
+test('overview shows disk bytes, top 5 memory rows, and a short command', () => {
+  const { app, sandbox } = fixture();
+  const disk = { mount: '/', percent: '28%', used: '10485760', size: '41943040' };
+  assert.equal(app.diskText(disk), '28% · 10.0 GB / 40.0 GB');
+  app.procSort = { key: 'mem', dir: 'desc' };
+  app.metrics.procs = [];
+  for (let i = 0; i < 8; i++) {
+    app.metrics.procs.push({ pid: String(i + 1), rss: (i + 1) * 1000, cpu: '1', comm: '/usr/lib/jvm/java -jar /data/web/ag.jar', args: 'java -jar /data/web/ag.jar extra' });
+  }
+  const rows = app.sortedProcs();
+  assert.equal(rows.length, 5);
+  assert.equal(rows[0].rss, 8000);
+  assert.equal(rows[4].rss, 4000);
+  assert.equal(app.procShort(rows[0]), 'java');
+  assert.equal(app.procShort({ comm: 'nginx: master process /usr/sbin/nginx' }), 'nginx:');
+  const detail = app.transferDetail({ loaded: 3 * 1024 * 1024, total: 10 * 1024 * 1024, active: true, label: '下载中' });
+  assert.equal(detail, '30% · 3.0 MB / 10.0 MB');
+  assert.equal(sandbox.lastJSONObject('{"loaded":1,"total":2}\n{"ok":true,"local":"/tmp/a"}\n').local, '/tmp/a');
+});
 test('transfers do not keep a browser byte cap', () => {
   assert.equal(source.includes('128 MiB'), false);
   assert.equal(source.includes('63 MiB'), false);

@@ -137,6 +137,18 @@ func TestUIExecUploadDownload(t *testing.T) {
 	if err != nil || string(gotFile) != "uploaded" || saved.Local != filepath.Join(saveDir, "up.txt") {
 		t.Fatalf("download wrote %q (%v) body %s", gotFile, err, rr.Body.String())
 	}
+	progressReq := httptest.NewRequest(http.MethodPost, "/api/download", bytes.NewReader(body))
+	progressReq.RemoteAddr = "127.0.0.1:9"
+	progressReq.Host = "127.0.0.1"
+	progressReq.Header.Set("Content-Type", "application/json")
+	progressReq.Header.Set("Accept", "application/x-ndjson")
+	attachCSRF(t, h, progressReq)
+	progressRR := httptest.NewRecorder()
+	h.ServeHTTP(progressRR, progressReq)
+	progressBody := progressRR.Body.String()
+	if progressRR.Code != 200 || !strings.Contains(progressRR.Header().Get("Content-Type"), "ndjson") || !strings.Contains(progressBody, `"loaded"`) || !strings.Contains(progressBody, `"total"`) || !strings.Contains(progressBody, `"ok":true`) {
+		t.Fatalf("progress download %d %s %s", progressRR.Code, progressRR.Header().Get("Content-Type"), progressBody)
+	}
 
 	rr = post("/api/exec", `{"alias":"box","command":"rm -rf /"}`)
 	if rr.Code != http.StatusForbidden {

@@ -56,11 +56,16 @@ func TestWorkspaceChrome(t *testing.T) {
 		"还没有打开的终端",
 		"ws-via",
 		"清除已完成",
-		"ws-side",
+		"workspaceGrid",
+		"ws-split",
+		"ws-disk-row",
+		"diskText",
 		"保存到",
 		"ws-folder",
 		"详情",
 		"openProc",
+		"procShort",
+		"ws-row-detail",
 		"fileSize",
 		"ws-comm-row",
 	} {
@@ -75,13 +80,19 @@ func TestWorkspaceChrome(t *testing.T) {
 		`class="ws-kicker">主机`,
 		`class="ws-kicker">进程`,
 		`class="ws-kicker">网络`,
+		`class="ws-kicker">终端`,
 		`id="ws-net-chart"`,
 		"网页下载暂限",
 		"63 MiB",
+		"进程详情",
+		`btn btn-outline-secondary btn-sm ws-proc-detail`,
 	} {
 		if strings.Contains(chunk, s) {
 			t.Fatalf("workspace still has %s", s)
 		}
+	}
+	if !strings.Contains(body, "启动命令") || strings.Contains(body, "进程详情") {
+		t.Fatal("row detail should show 启动命令 and not 进程详情")
 	}
 	if strings.Contains(body, "不套用允许") || strings.Contains(body, "不记按键") {
 		t.Fatal("terminal policy blurb should be gone")
@@ -97,7 +108,7 @@ func TestWorkspaceChrome(t *testing.T) {
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}
