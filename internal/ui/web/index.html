@@ -145,7 +145,12 @@
             </div>
           </div>
 
-          <div x-show="is('terminal')" data-view="terminal" class="ws">
+          <div x-show="is('terminal')" data-view="terminal" class="ws" :class="{ 'panel-overview': panel === 'overview', 'panel-files': panel === 'files' }">
+            <div class="ws-mobile-nav" role="group" aria-label="工作区面板">
+              <button type="button" class="btn btn-sm" :aria-pressed="panel === 'terminal'" @click="selectPanel('terminal')">终端</button>
+              <button type="button" class="btn btn-sm" :aria-pressed="panel === 'overview'" @click="selectPanel('overview')">概况</button>
+              <button type="button" class="btn btn-sm" :aria-pressed="panel === 'files'" @click="selectPanel('files')">文件</button>
+            </div>
             <aside class="ws-overview" data-pane="overview" :style="sideStyle()">
               <div class="empty" x-show="!workspaceLive()">
                 <div class="empty-ico" aria-hidden="true"></div>
@@ -248,11 +253,12 @@
                     <select class="form-select w-auto" x-model="termAlias" @change="onTermHost()" aria-label="终端主机">
                       <template x-for="h in sortedHosts()" :key="'term-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
                     </select>
-                    <button class="btn btn-primary" type="button" @click="openTerminal(termAlias)">打开</button>
+                    <button class="btn btn-primary" type="button" :disabled="termOpening" @click="openTerminal(termAlias)" x-text="termOpening ? '连接中…' : '打开'">打开</button>
                     <button class="btn btn-outline-secondary" type="button" @click="openWorkspaceHost()">连接</button>
                     <button class="btn btn-outline-secondary" type="button" @click="closeWorkspaceHost()">断开</button>
                   </div>
                 </div>
+                <div class="ws-identity"><span x-text="terminalIdentity()"></span><span x-text="overviewAddr()"></span><strong x-text="terminalState()"></strong><button type="button" class="btn btn-sm btn-outline-primary" x-show="tabAlias() && !workspaceLive()" :disabled="termOpening" @click="reconnectTerminal()">重新连接</button><button type="button" class="btn btn-sm btn-outline-secondary" x-show="terminalBlocked(panelAlias())" @click="show('operate')">执行受策略检查的命令</button></div>
                 <p class="ws-session ws-quiet" x-text="workspaceSession()"></p>
                 <div class="ws-tabs" x-show="termTabs.length > 0">
                   <div class="term-tabs" role="tablist">
@@ -261,6 +267,7 @@
                         <button class="term-tab-label" type="button" role="tab" :aria-selected="tab.id === termActive" @click="showPane(tab.id)" x-text="tab.alias"></button>
                         <span class="term-tab-via" x-show="tab.id === termActive && viaOf(tab.alias)" x-text="viaOf(tab.alias)"></span>
                         <span class="term-tab-busy" x-show="tabBusy(tab)" aria-hidden="true"></span>
+                        <span class="term-tab-state" x-show="tab.state === 'closed' || tab.state === 'expired'">已断开</span>
                         <button class="term-tab-close" type="button" @click="closeTab(tab.id)" :aria-label="'关闭 ' + tab.alias">×</button>
                       </div>
                     </template>
@@ -1493,8 +1500,20 @@
           </div>
           <div class="modal-footer">
             <button type="button" class="btn btn-link link-secondary" @click="closeDialogs()">关闭</button>
-            <button type="submit" class="btn btn-primary">执行所选</button>
+            <button type="button" class="btn btn-outline-secondary" :disabled="batchBusy || batchUncertain" @click="previewBatch()">预检</button>
+            <button type="button" class="btn btn-outline-primary" x-show="batchUncertain" :disabled="batchBusy" @click="checkBatchResult()">查询执行结果</button>
+            <button type="button" class="btn btn-outline-secondary" x-show="batchUncertain" :disabled="batchBusy" @click="clearBatchOperation()">已核验远端，开始新操作</button>
+            <button type="submit" class="btn btn-primary" :disabled="batchBusy || batchUncertain" x-text="batchBusy ? '处理中…' : (batchPreview ? '确认执行' : '预检所选')">预检所选</button>
           </div>
+        </form>
+      </div>
+    </div>
+    <div class="modal modal-blur confirm-modal" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="confirm-title" x-show="dialog.confirm" :class="{ show: dialog.confirm, 'd-block': dialog.confirm }">
+      <div class="modal-dialog modal-dialog-centered" role="document">
+        <form class="modal-content" @submit.prevent="answerPrompt(true)">
+          <div class="modal-header"><h5 class="modal-title" id="confirm-title">请核对后确认</h5><button type="button" class="btn-close" aria-label="取消" @click="answerPrompt(false)"></button></div>
+          <div class="modal-body"><p class="confirm-message" x-text="confirmView.message"></p><label class="form-label" for="confirm-value" x-show="confirmView.kind !== 'confirm'">确认内容</label><input id="confirm-value" class="form-control" :type="confirmView.kind === 'password' ? 'password' : 'text'" x-show="confirmView.kind !== 'confirm'" x-model="confirmView.value" autocomplete="off"></div>
+          <div class="modal-footer"><button type="button" class="btn btn-link" @click="answerPrompt(false)">取消</button><button type="submit" class="btn btn-primary">确认</button></div>
         </form>
       </div>
     </div>

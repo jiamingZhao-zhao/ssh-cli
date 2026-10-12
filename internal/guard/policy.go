@@ -618,6 +618,12 @@ func DecideService(eff Effective, action string) Decision {
 // shell, so the PTY is refused. The decision does not read request headers.
 func DecideTerminal(eff Effective) Decision {
 	dec := Decision{Mode: string(eff.Mode), Allowed: true}
+	if eff.NoDataOut {
+		dec.Allowed = false
+		dec.Findings = append(dec.Findings, Finding{
+			Layer: "env", Kind: "deny", Detail: "noDataOutflow refuses an unrestricted terminal",
+		})
+	}
 	if eff.Mode == config.ModeReadonly {
 		dec.Allowed = false
 		dec.Findings = append(dec.Findings, Finding{
@@ -784,7 +790,7 @@ func hitsProtected(protected []string, candidate string, children bool) (match s
 		if p == "" {
 			continue
 		}
-		if candidate == p || strings.HasPrefix(candidate, p+"/") {
+		if candidate == p || (p == "/" && strings.HasPrefix(candidate, "/")) || strings.HasPrefix(candidate, p+"/") {
 			return p, false, true
 		}
 		if children && ((candidate == "/" && strings.HasPrefix(p, "/")) || strings.HasPrefix(p, candidate+"/")) {

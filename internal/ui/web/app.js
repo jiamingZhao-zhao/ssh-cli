@@ -7,6 +7,13 @@ let chartOps = null;
 let netChart = null;
 let rangePicker = null;
 let suppressRange = false;
+const promptQueue = [];
+let promptResolve = null;
+let dialogReturnFocus = null;
+
+function operationID() {
+  return Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, "0")).join("");
+}
 
 function pad2(n) {
   return String(n).padStart(2, "0");
@@ -72,7 +79,7 @@ function batchSummary(results) {
     const exit = (row.exitCode === undefined || row.exitCode === null || row.exitCode === "") ? "" : " exit " + row.exitCode;
     const head = (row.alias || "") + " " + (bad ? "失败" : "ok") + exit;
     if (row.stdoutSuppressed) return head + "\n" + (row.notice || "输出已丢弃");
-    return head + (row.error ? "\n" + row.error : "") + (row.stdout ? "\n" + row.stdout : "") + (row.stderr ? "\n" + row.stderr : "");
+    return head + (row.error ? "\n" + row.error : "") + (row.stdout ? "\n" + row.stdout : "") + (row.stderr ? "\n" + row.stderr : "") + (row.truncated ? "\n[输出已截断]" : "");
   });
   if (!rows.length) return { failed: 0, total: 0, text: "没有结果" };
   const summary = failed ? ("失败 " + failed + " / " + rows.length) : ("成功 " + rows.length);
@@ -346,7 +353,7 @@ function sshui() {
     detail: { host: {}, policy: { capabilities: {} }, sessions: [], audit: [] },
     ops: { hmac: {}, audit: {} },
     audit: { records: [], page: 1, pageSize: DEFAULT_PAGE_SIZE, total: 0, stats: {}, jump: "" },
-    auditFilter: { op: "", host: "", group: "", env: "", status: "", source: "cli", since: "", until: "" },
+    auditFilter: { op: "", host: "", group: "", env: "", status: "", source: "", since: "", until: "" },
     col: { time: "", status: "", op: "", host: "", env: "", command: "", reason: "" },
     q: { hosts: "", groups: "", tags: "", envs: "", policy: "", known: "" },
     pages: {
@@ -362,12 +369,23 @@ function sshui() {
     pickAll: false,
     tagDraft: {},
     tagBulk: {},
-    dialog: { host: false, group: false, policy: false, env: false, batch: false, detail: false, proc: false },
+    dialog: { host: false, group: false, policy: false, env: false, batch: false, detail: false, proc: false, confirm: false },
+    confirmView: { message: "", value: "", kind: "text", detail: "" },
     bundleYaml: "",
     bundleImport: "",
     cleanupNote: "",
     operateOut: "",
     batchOut: "",
+    batchBusy: false,
+    batchUncertain: false,
+    batchOperationID: "",
+    batchPreview: null,
+    batchPreviewKey: "",
+    hostSeq: 0,
+    hostLoading: false,
+    termOpening: false,
+    workspaceCache: Object.create(null),
+    panel: "terminal",
     errors: {},
     settingsNote: "",
     draft: {
@@ -400,6 +418,9 @@ function sshui() {
     netSeries: {},
     metricsTimer: 0,
     metricsSeq: 0,
+    metricsBusy: "",
+    metricsFailures: 0,
+    metricsUpdated: 0,
     readAbort: {},
     files: { alias: "", mode: "files", path: "", parent: "", home: "", crumbs: [], entries: [], truncated: false },
     procView: { pid: "", ppid: "", user: "", cpu: "", mem: "", memPct: "", stat: "", etime: "", cmd: "", cwd: "", cwdNote: "" },
@@ -454,7 +475,19 @@ function sshui() {
       this.policyForm = this.blankPolicy();
       this.envForm = this.blankEnv();
       this.applyStored();
-      this.ensureSession();
+      this.ensureSession().catch((err) => this.setError("home", err.message));
+      document.querySelectorAll("label.form-label").forEach((label, i) => {
+        const control = label.nextElementSibling;
+        if (control && control.matches("input,select,textarea")) {
+          if (!control.id) control.id = "field-" + i;
+          label.htmlFor = control.id;
+        }
+      });
+      document.querySelectorAll('[role="dialog"]').forEach((el, i) => {
+        el.setAttribute("aria-modal", "true");
+        const title = el.querySelector(".modal-title");
+        if (title) { title.id = "dialog-title-" + i; el.setAttribute("aria-labelledby", title.id); }
+      });
       const parsed = this.readHash(location.hash.replace(/^#/, ""));
       this.show(parsed.view || "home");
       this.loadCatalog();
@@ -465,6 +498,7 @@ function sshui() {
         this.show(next.view || "home");
       });
       document.addEventListener("keydown", (ev) => {
+        if (this.anyDialog()) { this.dialogKey(ev); return; }
         if (ev.key !== "/" || ev.ctrlKey || ev.metaKey || ev.altKey) return;
         const tag = (ev.target && ev.target.tagName || "").toLowerCase();
         if (tag === "input" || tag === "textarea" || tag === "select" || ev.target.isContentEditable) return;
@@ -477,6 +511,15 @@ function sshui() {
       });
       window.addEventListener("resize", () => {
         if (this.view === "terminal") this.fitActive();
+      });
+      document.addEventListener("visibilitychange", () => {
+        if (document.hidden) this.stopMetrics();
+        else if (this.view === "terminal") this.startMetrics();
+      });
+      window.addEventListener("beforeunload", (ev) => {
+        if (this.termTabs.some((tab) => tab.state === "connected") || this.transfers.some((t) => t.active) || this.batchBusy || this.batchUncertain) {
+          ev.preventDefault(); ev.returnValue = "";
+        }
       });
       setInterval(() => this.tickSessions(), 1000);
       setInterval(() => {
@@ -642,7 +685,7 @@ function sshui() {
       opts.headers = headers;
       let res = await fetch(url, opts);
       if (res.status === 401) {
-        const typed = window.prompt("这个监听地址要求 Bearer token。请粘贴启动 ssh-cli ui 时打印的那一行。");
+        const typed = await this.ask("这个监听地址要求 Bearer token。请粘贴启动 ssh-cli ui 时打印的那一行。", "", "password");
         if (typed == null || !String(typed).trim()) throw new Error("需要 Bearer token");
         sessionStorage.setItem("sshCliBearer", String(typed).trim());
         headers.Authorization = "Bearer " + String(typed).trim();
@@ -723,7 +766,7 @@ function sshui() {
         });
         const data = await this.parseJSON(res);
         if (res.status === 409 && data.needsConfirm) {
-          const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + (data.confirm || ""));
+          const typed = await this.ask((data.error || "需要确认") + "\n请输入：" + (data.confirm || ""));
           if (typed == null) throw new Error(data.error || "已取消");
           if (data.confirmField) payload[data.confirmField] = typed;
           else payload.confirm = typed;
@@ -790,8 +833,15 @@ function sshui() {
         this.setError("host", "先从主机列表打开一台主机。");
         return;
       }
+      const alias = this.currentHost;
+      const seq = ++this.hostSeq;
+      this.hostLoading = true;
+      const signal = this.replaceRead("host");
+      this.detail = { host: {}, policy: { capabilities: {} }, sessions: [], audit: [], knownHosts: [] };
       try {
-        this.detail = await this.readJSON(await this.api("/api/hosts/detail?alias=" + encodeURIComponent(this.currentHost)));
+        const data = await this.readJSON(await this.api("/api/hosts/detail?alias=" + encodeURIComponent(alias), { signal: signal }));
+        if (seq !== this.hostSeq || this.currentHost !== alias) return;
+        this.detail = data;
         if (!this.detail.policy) this.detail.policy = { capabilities: {} };
         if (!this.detail.policy.capabilities) this.detail.policy.capabilities = {};
         if (!this.detail.audit) this.detail.audit = [];
@@ -799,7 +849,10 @@ function sshui() {
         if (!this.detail.knownHosts) this.detail.knownHosts = [];
         if (this.detail.knownError) this.setError("known", this.detail.knownError);
       } catch (err) {
+        if (err.name === "AbortError" || seq !== this.hostSeq) return;
         this.setError("host", err.message);
+      } finally {
+        if (seq === this.hostSeq) this.hostLoading = false;
       }
     },
 
@@ -808,6 +861,10 @@ function sshui() {
       try {
         const data = await this.readJSON(await this.api("/api/sessions"));
         this.sessions = data.sessions || [];
+        if (this.explicitAlias && !this.sessions.some((item) => item.alias === this.explicitAlias)) {
+          this.explicitAlias = "";
+          if (this.view === "terminal") this.syncWorkspace();
+        }
         if (this.dash) this.dash.sessions = this.sessions.length;
         this.clampPage("sessions");
       } catch (err) {
@@ -1067,6 +1124,7 @@ function sshui() {
     },
 
     async openTerminal(alias) {
+      if (this.termOpening) return;
       const name = String(alias || this.termAlias || "").trim();
       this.termAlias = name;
       this.show("terminal");
@@ -1074,9 +1132,16 @@ function sshui() {
         this.setError("terminal", "先选择一台主机。");
         return;
       }
+      if (this.terminalBlocked(name)) {
+        this.setError("terminal", this.hostByAlias(name).terminalReason + "；请使用「执行」页发送受策略检查的命令。");
+        return;
+      }
       this.setError("terminal", "");
-      await new Promise((resolve) => setTimeout(resolve, 40));
-      await this.mountTerm(name);
+      this.termOpening = true;
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        await this.mountTerm(name);
+      } finally { this.termOpening = false; }
     },
 
     async focusTerminal(alias) {
@@ -1152,7 +1217,11 @@ function sshui() {
       ws.binaryType = "arraybuffer";
       const entry = { id: id, alias: alias, term: term, fit: fit, ws: ws, pane: pane, saw: false, hadError: false, maxLife: false };
       termMap.set(id, entry);
-      this.termTabs.push({ id: id, alias: alias, busy: true });
+      this.termTabs.push({ id: id, alias: alias, busy: true, state: "connecting" });
+      if (typeof ResizeObserver !== "undefined") {
+        entry.observer = new ResizeObserver(() => { if (app.termActive === id) app.fitActive(); });
+        entry.observer.observe(pane);
+      }
       this.showPane(id);
       const closeLine = (ev) => {
         const code = ev && Number(ev.code);
@@ -1182,13 +1251,18 @@ function sshui() {
         writeFrame(ev.data);
       };
       ws.onopen = () => {
+        app.setTabState(id, "connected");
+        app.syncWorkspace();
         fit.fit();
+        term.focus();
         if (ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       };
       ws.onerror = () => {
         entry.hadError = true;
       };
       ws.onclose = (ev) => {
+        app.setTabState(id, entry.maxLife ? "expired" : "closed");
+        if (app.termActive === id) app.syncWorkspace();
         if (entry.maxLife) return;
         if (!entry.saw) {
           term.write("终端连接失败\r\n");
@@ -1229,6 +1303,8 @@ function sshui() {
     closeTab(id) {
       const entry = termMap.get(id);
       if (entry) {
+        if (entry.observer) entry.observer.disconnect();
+        entry.ws.onclose = null;
         try { entry.ws.close(); } catch (err) { /* already closed */ }
         entry.term.dispose();
         entry.pane.remove();
@@ -1256,10 +1332,36 @@ function sshui() {
     },
 
     liveAlias() {
-      const tab = this.tabAlias();
-      if (tab) return tab;
+      const tab = this.termTabs.find((item) => item.id === this.termActive);
+      if (tab) return tab.state === "connected" ? tab.alias : "";
       if (this.explicitAlias && this.explicitAlias === (this.termAlias || "")) return this.explicitAlias;
       return "";
+    },
+
+    setTabState(id, state) {
+      this.termTabs = this.termTabs.map((tab) => tab.id === id ? Object.assign({}, tab, { state: state, busy: false }) : tab);
+    },
+
+    terminalState() {
+      const tab = this.termTabs.find((item) => item.id === this.termActive);
+      return tab ? ({ connecting: "连接中", connected: "已连接", closed: "已断开", expired: "已到期" }[tab.state] || "已断开") : "未连接";
+    },
+
+    async reconnectTerminal() {
+      const alias = this.tabAlias();
+      if (!alias || this.termOpening) return;
+      this.closeTab(this.termActive);
+      await this.openTerminal(alias);
+    },
+
+    selectPanel(name) { this.panel = name; this.fitActive(); },
+
+    rememberWorkspace() {
+      if (!this.files.alias) return;
+      delete this.workspaceCache[this.files.alias];
+      this.workspaceCache[this.files.alias] = { files: Object.assign({}, this.files), tree: this.tree, root: this.treeRoot, draft: this.pathDraft };
+      const keys = Object.keys(this.workspaceCache);
+      if (keys.length > 16) delete this.workspaceCache[keys[0]];
     },
 
     workspaceLive() {
@@ -1277,6 +1379,7 @@ function sshui() {
     },
 
     clearLivePanes() {
+      this.rememberWorkspace();
       this.stopMetrics();
       this.abortRead("files");
       this.metricsSeq++;
@@ -1303,6 +1406,16 @@ function sshui() {
         if (hosts[i].alias === alias) return hosts[i];
       }
       return null;
+    },
+
+    terminalBlocked(alias) {
+      const host = this.hostByAlias(alias);
+      return !!host && host.terminalAllowed === false;
+    },
+
+    terminalIdentity() {
+      const host = this.hostByAlias(this.panelAlias());
+      return host ? host.alias + " · " + host.env : "未选择主机";
     },
 
     overviewAddr() {
@@ -1368,6 +1481,10 @@ function sshui() {
         return;
       }
       if (this.files.alias !== alias) {
+        this.rememberWorkspace();
+        this.stopMetrics();
+        this.metrics = blankMetrics();
+        this.metricsFailures = 0;
         this.abortRead("files");
         this.files.alias = alias;
         this.files.path = "";
@@ -1378,6 +1495,13 @@ function sshui() {
         this.files.home = "";
         this.tree = {};
         this.treeRoot = "";
+        const saved = this.workspaceCache[alias];
+        if (saved) {
+          this.files = Object.assign({}, saved.files);
+          this.tree = saved.tree;
+          this.treeRoot = saved.root;
+          this.pathDraft = saved.draft;
+        }
         if (this.files.mode !== "history") this.refreshFiles();
       }
       if (this.files.mode === "history" && this.historyView.alias !== alias) this.loadHistory(alias);
@@ -1385,30 +1509,25 @@ function sshui() {
     },
 
     startMetrics() {
+      if (document.hidden || this.view !== "terminal" || !this.liveAlias()) return;
+      if (this.metricsBusy === this.liveAlias() || this.metricsTimer) return;
       this.refreshMetrics();
-      if (this.metricsTimer) return;
-      const app = this;
-      this.metricsTimer = window.setInterval(() => {
-        if (app.view !== "terminal") {
-          app.stopMetrics();
-          return;
-        }
-        app.refreshMetrics();
-        app.loadSessions();
-      }, 5000);
     },
 
     stopMetrics() {
+      this.metricsSeq++;
+      this.metricsBusy = "";
       this.abortRead("metrics");
       if (this.metricsTimer) {
-        window.clearInterval(this.metricsTimer);
+        window.clearTimeout(this.metricsTimer);
         this.metricsTimer = 0;
       }
     },
 
     async refreshMetrics() {
       const alias = this.liveAlias();
-      if (!alias || this.view !== "terminal") return;
+      if (!alias || this.view !== "terminal" || document.hidden || this.metricsBusy === alias) return;
+      this.metricsBusy = alias;
       const seq = ++this.metricsSeq;
       const signal = this.replaceRead("metrics");
       try {
@@ -1418,14 +1537,26 @@ function sshui() {
         data.disks = data.disks || [];
         data.notes = data.notes || [];
         this.metrics = data;
+        this.metricsUpdated = Date.now();
+        this.metricsFailures = 0;
         this.pushNet(alias, data.netRx, data.netTx);
         this.setError("metrics", "");
       } catch (err) {
         if (err && err.name === "AbortError") return;
         if (seq !== this.metricsSeq) return;
-        this.metrics.connected = false;
-        this.metrics.alias = alias;
+        this.metricsFailures++;
         this.setError("metrics", err.message || "概况暂时不可用");
+      } finally {
+        if (seq === this.metricsSeq) {
+          this.metricsBusy = "";
+          if (this.view === "terminal" && !document.hidden && this.liveAlias() === alias) {
+            this.metricsTimer = window.setTimeout(() => {
+              this.metricsTimer = 0;
+              this.refreshMetrics();
+              this.loadSessions();
+            }, Math.min(30000, 5000 * Math.pow(2, Math.min(this.metricsFailures, 3))));
+          }
+        }
       }
     },
 
@@ -1801,7 +1932,7 @@ function sshui() {
         this.toast("先打开一个目录。", "bad");
         return;
       }
-      const name = window.prompt(kind === "dir" ? "新建文件夹名称" : "新建文件名称");
+      const name = await this.ask(kind === "dir" ? "新建文件夹名称" : "新建文件名称");
       if (name == null) return;
       if (!String(name).trim()) {
         this.toast("请输入名称。", "bad");
@@ -1817,7 +1948,7 @@ function sshui() {
         this.toast("先选中一项。", "bad");
         return;
       }
-      const name = window.prompt("重命名为", entry.name || "");
+      const name = await this.ask("重命名为", entry.name || "");
       if (name == null) return;
       if (!String(name).trim()) {
         this.toast("请输入名称。", "bad");
@@ -1833,7 +1964,7 @@ function sshui() {
         this.toast("先选中一项。", "bad");
         return;
       }
-      if (!window.confirm("删除 " + (entry.name || entry.path) + " ？此操作不能撤销。")) return;
+      if (!await this.askConfirm("删除 " + (entry.name || entry.path) + " ？此操作不能撤销。")) return;
       await this.fileChange("remove", entry.path, "");
     },
 
@@ -1934,6 +2065,10 @@ function sshui() {
       const list = fileList || [];
       for (let i = 0; i < list.length; i++) files.push(list[i]);
       if (!files.length) return;
+      if (files.some((file) => file.size > 63 * 1024 * 1024)) {
+        this.toast("网页单文件上传上限为 63 MiB；大文件请使用命令行上传。", "bad");
+        return;
+      }
       this.setError("files", "");
       await this.ensureSession();
       for (let i = 0; i < files.length; i++) {
@@ -1952,7 +2087,7 @@ function sshui() {
         app.patchTransfer(id, patch);
       };
       return new Promise((resolve) => {
-        const send = (confirmText) => {
+        const send = (confirmText, overwrite) => {
           const xhr = new XMLHttpRequest();
           transferCtl.set(id, xhr);
           const fd = new FormData();
@@ -1960,6 +2095,7 @@ function sshui() {
           fd.set("remote", remoteDir);
           fd.set("file", file, file.name);
           if (confirmText) fd.set("confirm", confirmText);
+          if (overwrite) fd.set("overwrite", "true");
           xhr.open("POST", "/api/upload");
           if (app.csrf) xhr.setRequestHeader("X-CSRF-Token", app.csrf);
           const token = sessionStorage.getItem("sshCliBearer") || "";
@@ -1970,7 +2106,7 @@ function sshui() {
                 loaded: ev.loaded,
                 total: ev.total,
                 active: true,
-                label: "上传中 " + app.pct(ev.total ? (100 * ev.loaded) / ev.total : 0)
+                label: ev.loaded === ev.total ? "已发送到本机，正在写入远端…" : "发送到本机 " + app.pct(ev.total ? (100 * ev.loaded) / ev.total : 0)
               });
             }
           };
@@ -1987,7 +2123,7 @@ function sshui() {
             transferCtl.delete(id);
             resolve();
           };
-          xhr.onload = () => {
+          xhr.onload = async () => {
             let data = {};
             const raw = String(xhr.responseText || "").trim();
             try {
@@ -2000,8 +2136,17 @@ function sshui() {
               resolve();
               return;
             }
+            if (xhr.status === 409 && data.needsOverwrite && !overwrite) {
+              const accepted = await app.askConfirm("主机 " + alias + " 已有文件：" + data.path + "\n覆盖后无法恢复原内容，继续？");
+              if (accepted && item.active) { send(confirmText, true); return; }
+              commit({ active: false, label: "已取消" });
+              app.finishTransfer(id, { label: "已取消" });
+              transferCtl.delete(id);
+              resolve();
+              return;
+            }
             if (xhr.status === 409 && data.needsConfirm && !confirmText) {
-              const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + (data.confirm || alias));
+              const typed = await app.ask((data.error || "需要确认") + "\n主机：" + alias + "\n路径：" + remoteDir + "\n请输入：" + (data.confirm || alias));
               if (typed == null) {
                 commit({ active: false, label: "已取消" });
                 app.finishTransfer(id, { label: "已取消" });
@@ -2009,7 +2154,8 @@ function sshui() {
                 resolve();
                 return;
               }
-              send(typed);
+              if (!item.active) { resolve(); return; }
+              send(typed, overwrite);
               return;
             }
             transferCtl.delete(id);
@@ -2029,10 +2175,15 @@ function sshui() {
       });
     },
 
-    async wsDownload(entry) {
+    async wsDownload(entry, explicitAlias) {
       this.menu.open = false;
-      const alias = this.liveAlias();
+      const alias = explicitAlias || this.liveAlias();
       if (!alias || !entry || !entry.path) return;
+      const memoryLimit = 128 * 1024 * 1024;
+      if (Number(entry.size) > memoryLimit) {
+        this.toast("网页下载暂限 128 MiB，较大文件请使用命令行下载。", "bad");
+        return;
+      }
       this.setError("files", "");
       await this.ensureSession();
       const id = "dn" + Date.now().toString(36) + Math.floor(Math.random() * 1000);
@@ -2061,19 +2212,20 @@ function sshui() {
           throw new Error(friendlyError(data.error, res.statusText));
         }
         total = Number(res.headers.get("Content-Length")) || Number(entry.size) || 0;
+        if (total > memoryLimit) { ctrl.abort(); throw new Error("文件超过网页下载内存上限，请使用命令行下载。"); }
         paint({ total: total, active: true, label: total ? ("下载中 " + this.pct(0)) : "下载中" }, true);
         const reader = res.body && res.body.getReader ? res.body.getReader() : null;
         const chunks = [];
         if (!reader) {
-          const blob = await res.blob();
-          loaded = blob.size;
-          this.saveBlob(blob, name);
+          ctrl.abort();
+          throw new Error("此浏览器不支持流式读取，请使用命令行下载。");
         } else {
           while (true) {
             const step = await reader.read();
             if (step.done) break;
             chunks.push(step.value);
             loaded += step.value.length;
+            if (loaded > memoryLimit) { await reader.cancel(); throw new Error("下载超过 128 MiB 内存上限，请使用命令行下载。"); }
             const label = total ? ("下载中 " + this.pct((100 * loaded) / total)) : ("下载中 " + this.formatBytes(loaded));
             paint({ loaded: loaded, total: total, active: true, label: label }, false);
           }
@@ -2535,7 +2687,7 @@ function sshui() {
         const prev = this.hostByAlias(String(form.alias || "").trim());
         const nextVia = form.useVia ? String(form.via || "").trim() : "";
         const prevVia = prev && prev.via ? prev.via : "";
-        if (nextVia !== prevVia && !window.confirm("跳板改了之后，这台主机已经打开的连接会断开。保存吗？")) return;
+        if (nextVia !== prevVia && !await this.askConfirm("跳板改了之后，这台主机已经打开的连接会断开。保存吗？")) return;
       }
       const body = Object.assign({
         alias: String(form.alias || "").trim(),
@@ -2560,7 +2712,7 @@ function sshui() {
     },
 
     async removeHost(alias) {
-      if (!window.confirm("删除主机 " + alias + "？")) return;
+      if (!await this.askConfirm("删除主机 " + alias + "？")) return;
       this.setError("hosts", "");
       try {
         await this.postJSON("/api/hosts/remove", { alias: alias });
@@ -2597,7 +2749,7 @@ function sshui() {
       this.setError("groupForm", "");
       const form = this.groupForm;
       if (form.editing && form.envWas === "prod" && form.env !== "prod") {
-        if (!window.confirm("把分组 " + form.name + " 的环境从 prod 改成 " + form.env + "？这会改变该组主机的权限天花板。")) return;
+        if (!await this.askConfirm("把分组 " + form.name + " 的环境从 prod 改成 " + form.env + "？这会改变该组主机的权限天花板。")) return;
       }
       const body = Object.assign({
         name: String(form.name || "").trim(),
@@ -2616,7 +2768,7 @@ function sshui() {
     },
 
     async removeGroup(name) {
-      if (!window.confirm("删除空分组 " + name + "？")) return;
+      if (!await this.askConfirm("删除空分组 " + name + "？")) return;
       this.setError("groups", "");
       try {
         await this.postJSON("/api/groups/remove", { name: name });
@@ -2666,7 +2818,7 @@ function sshui() {
 
     async removePolicy(p) {
       const msg = p.overridden ? "恢复内置策略 " + p.name + "？" : "删除策略 " + p.name + "？";
-      if (!window.confirm(msg)) return;
+      if (!await this.askConfirm(msg)) return;
       this.setError("policy", "");
       try {
         await this.postJSON("/api/policies/remove", { name: p.name });
@@ -2713,7 +2865,7 @@ function sshui() {
     },
 
     async removeEnv(name) {
-      if (!window.confirm("删除环境 " + name + "？仍被分组使用时会失败。")) return;
+      if (!await this.askConfirm("删除环境 " + name + "？仍被分组使用时会失败。")) return;
       this.setError("envs", "");
       try {
         await this.postJSON("/api/envs/remove", { name: name });
@@ -2762,7 +2914,7 @@ function sshui() {
     },
 
     async removeKnown(marker) {
-      if (!window.confirm("清除这台主机的信任 " + marker + "？下次连接会重新记录第一把钥匙。")) return;
+      if (!await this.askConfirm("清除这台主机的信任 " + marker + "？下次连接会重新记录第一把钥匙。")) return;
       this.setError("known", "");
       try {
         await this.postJSON("/api/known-hosts/remove", { marker: marker });
@@ -2845,53 +2997,33 @@ function sshui() {
 
     async upload(ev) {
       this.setError("operate", "");
-      await this.ensureSession();
       const fd = new FormData(ev.target);
+      const file = fd.get("file");
+      if (file && file.size > 63 * 1024 * 1024) { this.setError("operate", "网页单文件上传上限为 63 MiB。"); return; }
       try {
-        let res = await this.api("/api/upload", { method: "POST", body: fd });
-        let data = await this.parseJSON(res);
-        if (res.status === 409 && data.needsConfirm) {
-          const typed = window.prompt(data.error + "\n请输入：" + data.confirm);
-          if (typed == null) throw new Error(data.error);
-          fd.set("confirm", typed);
-          res = await this.api("/api/upload", { method: "POST", body: fd });
-          data = await this.parseJSON(res);
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const res = await this.api("/api/upload", { method: "POST", body: fd });
+          const data = await this.parseJSON(res);
+          if (res.status === 409 && data.needsOverwrite) {
+            if (!await this.askConfirm("主机：" + fd.get("alias") + "\n覆盖文件：" + data.path + "\n覆盖后无法恢复原内容，继续？")) return;
+            fd.set("overwrite", "true"); continue;
+          }
+          if (res.status === 409 && data.needsConfirm) {
+            const typed = await this.ask(data.error + "\n请输入：" + data.confirm);
+            if (typed == null) return;
+            fd.set("confirm", typed); continue;
+          }
+          if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
+          ev.target.reset(); this.operateOut = "上传完成"; this.loadAudit(); return;
         }
-        if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
-        ev.target.reset();
-        this.operateOut = "上传完成";
-        this.loadAudit();
-      } catch (err) {
-        this.setError("operate", err.message);
-      }
+        throw new Error("确认未完成");
+      } catch (err) { this.setError("operate", err.message); }
     },
 
     async download(ev) {
-      this.setError("operate", "");
-      await this.ensureSession();
       const fd = new FormData(ev.target);
-      try {
-        const res = await this.api("/api/download", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ alias: fd.get("alias"), path: fd.get("path") })
-        });
-        if (!res.ok) {
-          const data = await this.parseJSON(res);
-          throw new Error(friendlyError(data.error, res.statusText));
-        }
-        const blob = await res.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement("a");
-        a.href = url;
-        a.download = "download";
-        a.click();
-        URL.revokeObjectURL(url);
-        ev.target.reset();
-        this.loadAudit();
-      } catch (err) {
-        this.setError("operate", err.message);
-      }
+      const remote = String(fd.get("path") || "");
+      await this.wsDownload({ path: remote, name: remote.split("/").pop() || "download" }, String(fd.get("alias") || ""));
     },
 
     async runRelay() {
@@ -2939,19 +3071,18 @@ function sshui() {
     },
 
     openBatch() {
-      this.batchOut = "";
-      this.setError("batch", "");
+      if (!this.batchBusy && !this.batchUncertain) {
+        this.batchOut = "";
+        this.batchPreview = null;
+        this.batchPreviewKey = "";
+        this.setError("batch", "");
+      }
       this.openDialog("batch");
     },
 
-    async submitBatch() {
-      const aliases = this.selectedAliases();
-      if (!aliases.length) {
-        this.batchOut = "先勾选主机。一次最多 16 台。";
-        return;
-      }
-      const payload = {
-        aliases: aliases,
+    batchPayload() {
+      return {
+        aliases: this.selectedAliases(),
         command: this.batchCommand,
         timeout: this.exec.timeout || this.draft.commandTimeout || "",
         parallel: Number(this.batchParallel || 2),
@@ -2960,42 +3091,104 @@ function sshui() {
         allowOutflow: !!this.exec.allowOutflow,
         confirms: {}
       };
+    },
+
+    async previewBatch() {
+      if (this.batchBusy || this.batchUncertain) return;
+      this.batchBusy = true;
+      this.batchPreview = null;
+      try {
+        const payload = this.batchPayload();
+        const data = await this.postJSON("/api/exec/preview", payload);
+        this.batchPreview = data;
+        this.batchPreviewKey = JSON.stringify(payload);
+        this.batchOut = data.notice + "\n\n" + data.hosts.map((h) => h.alias + " · " + h.env + " · " + h.user + "@" + h.address + " · " + h.mode + " · " + (!h.allowed ? "拒绝：" + h.reason : h.needsConfirm ? "需要确认" : "允许") + (h.outputSuppressed ? " · 不带回输出" : "")).join("\n");
+      } catch (err) { this.batchOut = this.explain(err.message); }
+      finally { this.batchBusy = false; }
+    },
+
+    async checkBatchResult() {
+      if (this.batchBusy || !this.batchOperationID) return;
+      this.batchBusy = true;
+      try {
+        const data = await this.readJSON(await this.api("/api/operations/" + this.batchOperationID));
+        if (data.state === "running") { this.batchOut = "操作仍在执行，请稍后查询。请勿重复执行。"; return; }
+        if (data.state !== "complete") throw new Error("执行结果未知，请核验远端状态。请勿重复执行。");
+        this.batchUncertain = false;
+        this.batchPreview = null;
+        this.batchOut = data.result.results ? batchSummary(data.result.results).text : (data.result.error || "操作结束");
+      } catch (err) { this.batchOut = this.explain(err.message); }
+      finally { this.batchBusy = false; }
+    },
+
+    async clearBatchOperation() {
+      if (this.batchBusy || !await this.askConfirm("请先核验远端状态。清除记录后重新执行可能重复写入，确认已核验？")) return;
+      this.batchUncertain = false;
+      this.batchOperationID = "";
+      this.batchPreview = null;
       this.batchOut = "";
+    },
+
+    async submitBatch() {
+      if (this.batchBusy || this.batchUncertain) return;
+      const payload = this.batchPayload();
+      if (!this.batchPreview || this.batchPreviewKey !== JSON.stringify(payload)) { await this.previewBatch(); return; }
+      if (!this.batchPreview.canExecute) { this.batchOut += "\n预检未通过，请调整后重新预检。"; return; }
+      payload.planDigest = this.batchPreview.planDigest;
+      payload.operationId = operationID();
+      this.batchOperationID = payload.operationId;
+      this.batchBusy = true;
+      let sent = false;
+      this.batchOut = "正在执行，请勿重复提交。";
       try {
         let data;
         for (let attempt = 0; attempt < 8; attempt++) {
+          sent = true;
           const res = await this.api("/api/exec/batch", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify(payload)
           });
           data = await this.parseJSON(res);
+          if (res.status === 202) {
+            this.batchUncertain = true;
+            this.batchOut = "操作已接收，请查询结果。";
+            return;
+          }
           if (res.status === 409 && data.needsConfirm) {
+            sent = false;
             if (data.confirmField === "outflowConfirm") {
-              const typed = window.prompt((data.error || "需要确认") + "\n请输入：" + data.confirm);
+              const typed = await this.ask((data.error || "需要确认") + "\n请输入：" + data.confirm);
               if (typed == null) throw new Error(data.error || "已取消");
               payload.outflowConfirm = typed;
               continue;
             }
-            const pending = data.aliases || aliases;
+            const pending = data.aliases || payload.aliases;
             for (let i = 0; i < pending.length; i++) {
               const alias = pending[i];
               if (payload.confirms[alias]) continue;
-              const typed = window.prompt("主机 " + alias + " 需要确认。请输入主机别名。");
+              const typed = await this.ask("主机 " + alias + " 需要确认。请输入主机别名。\n命令：" + payload.command);
               if (typed == null) throw new Error("已取消");
               payload.confirms[alias] = String(typed).trim();
             }
             continue;
           }
-          if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
+          if (!res.ok || data.ok === false) {
+            sent = res.status >= 500;
+            if (data.planChanged) this.batchPreview = null;
+            throw new Error(friendlyError(data.error, res.statusText));
+          }
           break;
         }
+        if (!data || !data.results) throw new Error("确认未完成，请重新预检。");
         this.batchOut = batchSummary(data.results).text;
+        this.batchPreview = null;
         this.loadAudit();
         this.loadDashboard();
       } catch (err) {
-        this.batchOut = this.explain(err.message);
-      }
+        this.batchUncertain = sent;
+        this.batchOut = this.explain(err.message) + (sent ? "\n执行结果未知，请查询操作记录并核验远端状态，不要重复执行。" : "");
+      } finally { this.batchBusy = false; }
     },
 
     batchCommand: "",
@@ -3049,23 +3242,80 @@ function sshui() {
     },
 
     anyDialog() {
-      return this.dialog.host || this.dialog.group || this.dialog.policy || this.dialog.env || this.dialog.batch || this.dialog.detail;
+      return Object.values(this.dialog).some(Boolean);
     },
 
     openDialog(name) {
+      if (!this.anyDialog()) dialogReturnFocus = document.activeElement;
       this.dialog[name] = true;
       document.body.classList.add("overflow-hidden");
+      setTimeout(() => {
+        const modal = this.activeDialog();
+        if (!modal) return;
+        const target = Array.from(modal.querySelectorAll("input:not([type=checkbox]), textarea, select, button:not(.btn-close)")).find((el) => !el.disabled && el.getClientRects().length);
+        (target || modal).focus();
+      }, 0);
+    },
+
+    activeDialog() {
+      return Array.from(document.querySelectorAll('[role="dialog"]')).filter((el) => el.getClientRects().length).pop();
+    },
+
+    dialogKey(ev) {
+      if (ev.key === "Escape") { ev.preventDefault(); this.closeDialogs(); return; }
+      if (ev.key !== "Tab") return;
+      const modal = this.activeDialog();
+      if (!modal) return;
+      const items = Array.from(modal.querySelectorAll('button, input, select, textarea, a[href], [tabindex="0"]')).filter((el) => !el.disabled && el.getClientRects().length);
+      const first = items[0] || modal, last = items[items.length - 1] || modal;
+      if (!modal.contains(document.activeElement) || (ev.shiftKey && document.activeElement === first) || (!ev.shiftKey && document.activeElement === last)) {
+        ev.preventDefault(); (ev.shiftKey ? last : first).focus();
+      }
+    },
+
+    ask(message, value, kind) {
+      return new Promise((resolve) => {
+        promptQueue.push({ message: message, value: value || "", kind: kind || "text", resolve: resolve });
+        this.nextPrompt();
+      });
+    },
+
+    askConfirm(message) { return this.ask(message, "", "confirm"); },
+
+    nextPrompt() {
+      if (promptResolve || !promptQueue.length) return;
+      const next = promptQueue.shift();
+      promptResolve = next.resolve;
+      this.confirmView = { message: next.message, value: next.value, kind: next.kind };
+      this.openDialog("confirm");
+    },
+
+    answerPrompt(accepted) {
+      const resolve = promptResolve;
+      const value = this.confirmView.kind === "confirm" ? !!accepted : (accepted ? this.confirmView.value : null);
+      promptResolve = null;
+      this.dialog.confirm = false;
+      if (resolve) resolve(value);
+      this.restoreDialogFocus();
+      this.nextPrompt();
+    },
+
+    restoreDialogFocus() {
+      setTimeout(() => {
+        if (!this.anyDialog()) {
+          document.body.classList.remove("overflow-hidden");
+          if (dialogReturnFocus && dialogReturnFocus.isConnected) dialogReturnFocus.focus();
+        } else {
+          const modal = this.activeDialog();
+          if (modal) modal.focus();
+        }
+      }, 0);
     },
 
     closeDialogs() {
-      this.dialog.host = false;
-      this.dialog.group = false;
-      this.dialog.policy = false;
-      this.dialog.env = false;
-      this.dialog.batch = false;
-      this.dialog.detail = false;
-      this.dialog.proc = false;
-      document.body.classList.remove("overflow-hidden");
+      if (this.dialog.confirm) { this.answerPrompt(false); return; }
+      Object.keys(this.dialog).forEach((key) => { this.dialog[key] = false; });
+      this.restoreDialogFocus();
     },
 
     sortedHosts() {

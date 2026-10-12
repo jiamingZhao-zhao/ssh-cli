@@ -25,6 +25,8 @@ Built-in env labels (dev, test, preprod, prod) are shown and cannot be changed.
 The interactive terminal is for a person at the localhost page. It does not apply
 allow/deny/confirm. CLI exec and the UI exec form still do. Audit records carry
 source cli or ui. A client cannot skip policy by claiming source=ui.
+Readonly and noDataOutflow environments refuse unrestricted terminals.
+noDataOutflow also refuses workspace metrics and process details.
 There is no port-forward view.
 
 The default bind is 127.0.0.1:7788. Binding 0.0.0.0 or any other non-loopback

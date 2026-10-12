@@ -645,6 +645,7 @@ func TestSSKillAndDiagAreNotReadonly(t *testing.T) {
 		config.ResolvedHost{Alias: "d", Group: "g", EnvName: "dev", Env: adminEnv, GroupDef: ag, Host: ah}, false)
 
 	blocked := []string{
+		"ss -MK", "ss -MD /tmp/dump", "ss --kil", "ss --dia=/tmp/dump",
 		"ss -K state established",
 		"ss --kill state established",
 		"ss -D /tmp/review-placeholder",

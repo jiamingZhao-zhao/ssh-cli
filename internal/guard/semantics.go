@@ -31,7 +31,7 @@ func semanticDeny(mode config.Mode, args []Arg) string {
 // names ss, which is not enough: -K/--kill closes sockets and -D/--diag writes
 // a dump. Admin is unchanged. A non-static argument is refused outside admin
 // because it can hide those flags. Short options that take a value are f, A,
-// F, N, and M; D is itself a mutating flag.
+// F and N; M is a flag without a value and D is itself a mutating flag.
 func ssDeny(mode config.Mode, args []Arg) string {
 	if mode == config.ModeAdmin {
 		return ""
@@ -57,10 +57,12 @@ func ssDeny(mode config.Mode, args []Arg) string {
 		}
 		if strings.HasPrefix(v, "--") {
 			name, _, _ := strings.Cut(v, "=")
-			switch name {
-			case "--kill":
+			// getopt_long also accepts unique prefixes. Refuse prefixes of
+			// mutating options, including ambiguous ones, in restricted modes.
+			switch {
+			case len(name) > 2 && strings.HasPrefix("--kill", name):
 				return "ss kill flag"
-			case "--diag":
+			case len(name) > 2 && strings.HasPrefix("--diag", name):
 				return "ss diag flag"
 			}
 			i++
@@ -75,7 +77,7 @@ func ssDeny(mode config.Mode, args []Arg) string {
 				return "ss kill flag"
 			case 'D':
 				return "ss diag flag"
-			case 'f', 'A', 'F', 'N', 'M':
+			case 'f', 'A', 'F', 'N':
 				if k+1 < len(chars) {
 					k = len(chars)
 					continue

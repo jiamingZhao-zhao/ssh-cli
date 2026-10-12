@@ -50,7 +50,13 @@ func Dial(ctx context.Context, addr, user string, auth []ssh.AuthMethod, hk ssh.
 	if timeout > 0 {
 		_ = netConn.SetDeadline(time.Now().Add(timeout))
 	}
+	stopCancel := context.AfterFunc(ctx, func() { _ = netConn.Close() })
 	c, chans, reqs, err := ssh.NewClientConn(netConn, addr, cfg)
+	stopCancel()
+	if ctx.Err() != nil {
+		_ = netConn.Close()
+		return nil, ctx.Err()
+	}
 	if err != nil {
 		_ = netConn.Close()
 		return nil, err
@@ -107,7 +113,12 @@ func (c *Client) Raw() *ssh.Client { return c.conn }
 // Run executes command. A remote non-zero status is returned as code with a nil
 // error. Transport failures are returned as errors.
 func (c *Client) Run(ctx context.Context, command string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	sess, err := c.conn.NewSession()
+	return RunChannel(ctx, c.conn, command, stdout, stderr, stdin)
+}
+
+// RunChannel isolates a probe's cancellation from other channels on conn.
+func RunChannel(ctx context.Context, conn *ssh.Client, command string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
+	sess, err := conn.NewSession()
 	if err != nil {
 		return 0, err
 	}
