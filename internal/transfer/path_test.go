@@ -45,6 +45,27 @@ func TestNormalizeRemotePath(t *testing.T) {
 	}
 }
 
+func TestPlanPathsHomeRelativeAndTilde(t *testing.T) {
+	src, dest, err := PlanPaths("/home/user", "rename", "~/secret.txt", "moved.txt")
+	if err != nil || src != "/home/user/secret.txt" || dest != "/home/user/moved.txt" {
+		t.Fatalf("tilde rename src=%q dest=%q err=%v", src, dest, err)
+	}
+	src, dest, err = PlanPaths("/home/user", "remove", "subdir/child", "")
+	if err != nil || src != "/home/user/subdir/child" || dest != "" {
+		t.Fatalf("relative remove src=%q dest=%q err=%v", src, dest, err)
+	}
+	src, dest, err = PlanPaths("/home/user", "touch", "/tmp", "note.txt")
+	if err != nil || src != "" || dest != "/tmp/note.txt" {
+		t.Fatalf("absolute touch src=%q dest=%q err=%v", src, dest, err)
+	}
+	if _, _, err := PlanPaths("/home/user", "remove", "/", ""); err == nil {
+		t.Fatal("root delete planned")
+	}
+	if _, _, err := PlanPaths("/home/user", "rename", "/tmp/a", "../b"); err == nil {
+		t.Fatal("dotdot name planned")
+	}
+}
+
 func TestRestoreRemotePath(t *testing.T) {
 	cases := []struct {
 		in, want string

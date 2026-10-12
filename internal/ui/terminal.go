@@ -15,6 +15,8 @@ import (
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/sshclient"
 )
 
@@ -50,11 +52,18 @@ func (s *service) terminalOpen(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// body.Source is intentionally unused. Claiming source=ui does not skip policy
-	// and does not authorize the PTY. Only terminalBrowser does.
+	// and does not authorize the PTY. terminalBrowser only identifies the page.
 	_ = body.Source
 	alias := strings.TrimSpace(body.Alias)
-	if _, _, _, err := s.hostPlan(alias); err != nil {
+	_, h, eff, err := s.hostPlan(alias)
+	if err != nil {
 		writeFail(w, err)
+		return
+	}
+	// Browser headers prove this is the localhost page. They are not a person,
+	// and they do not skip env/group/host policy. Readonly, including prod,
+	// cannot enforce its allow-list on a free shell.
+	if !s.allowTerminal(w, h, eff, time.Now()) {
 		return
 	}
 	sid := sessionID(r)
@@ -77,9 +86,12 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "ui session required")
 		return
 	}
-	_, h, _, err := s.hostPlan(ticket.alias)
+	_, h, eff, err := s.hostPlan(ticket.alias)
 	if err != nil {
 		writeFail(w, err)
+		return
+	}
+	if !s.allowTerminal(w, h, eff, time.Now()) {
 		return
 	}
 	ws, err := acceptWebSocket(w, r)
@@ -107,6 +119,8 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 // It is not a policy bypass. File changes, upload, and download always run
 // capability checks, and those calls are audited with source=ui. Read-only
 // probes skip per-command text policy only through workspaceProbeExempt.
+// An interactive PTY is refused when the effective mode is readonly. Headers
+// cannot authorize that shell.
 func (s *service) workspaceHuman(r *http.Request) bool {
 	return s.terminalBrowser(r, "fetch")
 }
@@ -120,6 +134,17 @@ func (s *service) workspaceProbeExempt(r *http.Request) bool {
 		return false
 	}
 	return s.workspaceHuman(r)
+}
+
+func (s *service) allowTerminal(w http.ResponseWriter, h config.ResolvedHost, eff guard.Effective, started time.Time) bool {
+	dec := guard.DecideTerminal(eff)
+	if dec.Allowed {
+		return true
+	}
+	text := decisionText(dec)
+	s.writeAudit(h, audit.OpPolicyCheck, "pty", "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
+	writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
+	return false
 }
 
 func (s *service) terminalBrowser(r *http.Request, kind string) bool {

@@ -564,11 +564,7 @@ func unwrapWrappers(args []Arg) ([]Arg, unwrapKind, string) {
 				kind = unwrapDynamic
 			}
 		case "exec":
-			var ok bool
-			next, ok = stripExec(rest)
-			if !ok {
-				kind = unwrapDynamic
-			}
+			next, kind, why = stripExec(rest)
 		case "env":
 			next, kind, why = stripEnv(rest)
 		case "nohup":
@@ -1093,29 +1089,53 @@ func stripXargs(args []Arg) ([]Arg, unwrapKind, string) {
 	return []Arg{{Static: true, Value: "echo"}}, unwrapOK, ""
 }
 
-func stripExec(args []Arg) ([]Arg, bool) {
+// stripExec unwraps bash `exec [-cl] [-a name] [command ...]`.
+// -c and -l are flags. -a consumes a name. Combined short options and -- are
+// recognized. A form whose command cannot be recovered is unresolved so the
+// caller denies it in readonly mode and otherwise requires confirmation.
+func stripExec(args []Arg) ([]Arg, unwrapKind, string) {
+	const why = "exec arguments could not be expanded"
 	i := 1
 	for i < len(args) {
-		a := args[i]
-		if !a.Static {
-			return nil, false
+		if !args[i].Static {
+			return nil, unwrapUnresolved, why
 		}
-		if a.Value == "--" {
-			return args[i+1:], true
+		v := args[i].Value
+		switch {
+		case v == "--":
+			return args[i+1:], unwrapOK, ""
+		case v == "-" || !strings.HasPrefix(v, "-"):
+			return args[i:], unwrapOK, ""
+		case strings.HasPrefix(v, "--"):
+			return nil, unwrapUnresolved, why
 		}
-		if !strings.HasPrefix(a.Value, "-") {
-			return args[i:], true
+		chars := v[1:]
+		if chars == "" {
+			return nil, unwrapUnresolved, why
 		}
-		if a.Value == "-a" || a.Value == "-c" {
-			if i+1 >= len(args) {
-				return nil, false
+		k := 0
+		step := 1
+		for k < len(chars) {
+			switch chars[k] {
+			case 'c', 'l':
+				k++
+			case 'a':
+				if k+1 < len(chars) {
+					k = len(chars)
+					continue
+				}
+				if i+1 >= len(args) {
+					return nil, unwrapUnresolved, why
+				}
+				step = 2
+				k = len(chars)
+			default:
+				return nil, unwrapUnresolved, why
 			}
-			i += 2
-			continue
 		}
-		i++
+		i += step
 	}
-	return args[i:], true
+	return args[i:], unwrapOK, ""
 }
 
 func shellScript(args []Arg) (script string, isShell bool, kind unwrapKind, why string) {

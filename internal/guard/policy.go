@@ -613,6 +613,81 @@ func DecideService(eff Effective, action string) Decision {
 	return dec
 }
 
+// DecideTerminal reports whether an interactive PTY may be opened.
+// Readonly mode, including prod, cannot enforce its allow-list on a free
+// shell, so the PTY is refused. The decision does not read request headers.
+func DecideTerminal(eff Effective) Decision {
+	dec := Decision{Mode: string(eff.Mode), Allowed: true}
+	if eff.Mode == config.ModeReadonly {
+		dec.Allowed = false
+		dec.Findings = append(dec.Findings, Finding{
+			Layer: "mode", Kind: "deny", Detail: "readonly mode refuses an unrestricted terminal",
+		})
+	}
+	return dec
+}
+
+// DecideFileChange classifies one workspace mutation.
+// mkdir and touch require upload and confirm when the new path is protected.
+// rename requires upload, checks the source and the destination, and confirms
+// when either tree contains a protected path.
+// remove is a delete: a disabled mutation switch denies it as delete, and
+// confirmation is the intersection of the delete tree with protected paths.
+// protected overrides eff.Protected when non-nil, so a caller can pass paths
+// that were resolved through ~ and symlinks. Nil means use eff.Protected.
+func DecideFileChange(eff Effective, op string, targets, protected []string) Decision {
+	dec := Decision{Mode: string(eff.Mode), Allowed: true}
+	op = strings.TrimSpace(op)
+	children := false
+	switch op {
+	case "mkdir", "touch":
+		if !eff.Upload {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "capability", Kind: "deny", Detail: "upload is disabled"})
+		}
+	case "rename":
+		children = true
+		if !eff.Upload {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "capability", Kind: "deny", Detail: "rename is disabled"})
+		}
+	case "remove":
+		children = true
+		if !eff.Upload {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "capability", Kind: "deny", Detail: "delete is disabled"})
+		}
+	default:
+		dec.Allowed = false
+		dec.Findings = append(dec.Findings, Finding{Layer: "capability", Kind: "deny", Detail: "unknown file change " + op})
+	}
+	if !dec.Allowed {
+		return dec
+	}
+	if protected == nil {
+		protected = eff.Protected
+	}
+	seen := map[string]bool{}
+	for _, target := range targets {
+		match, child, ok := hitsProtected(protected, target, children)
+		if !ok || seen[match] {
+			continue
+		}
+		seen[match] = true
+		dec.NeedsConfirm = true
+		detail := "path is protected: " + match
+		if child {
+			if op == "rename" {
+				detail = "rename tree contains protected path: " + match
+			} else {
+				detail = "delete tree contains protected path: " + match
+			}
+		}
+		dec.Findings = append(dec.Findings, Finding{Layer: "protected", Kind: "confirm", Detail: detail})
+	}
+	return dec
+}
+
 // DecideCapability checks upload/download (and a protected remote path).
 func DecideCapability(eff Effective, capability, remotePath string) Decision {
 	dec := Decision{Mode: string(eff.Mode), Allowed: true}
@@ -682,12 +757,39 @@ func relaySourceOK(mode string) bool {
 }
 
 func pathProtected(protected []string, remote string) bool {
-	remote = path.Clean(transfer.RestoreRemotePath(remote))
+	_, _, ok := hitsProtected(protected, remote, false)
+	return ok
+}
+
+func cleanPolicyPath(p string) string {
+	p = strings.TrimSpace(p)
+	p = strings.ReplaceAll(p, "\\", "/")
+	p = transfer.RestoreRemotePath(p)
+	if p == "" || p == "." {
+		return ""
+	}
+	return path.Clean(p)
+}
+
+// hitsProtected reports whether candidate is a protected path or lies inside
+// one. When children is set, a protected path inside candidate also matches
+// and child is true. match is the protected path that fired.
+func hitsProtected(protected []string, candidate string, children bool) (match string, child, ok bool) {
+	candidate = cleanPolicyPath(candidate)
+	if candidate == "" {
+		return "", false, false
+	}
 	for _, p := range protected {
-		p = path.Clean(p)
-		if remote == p || strings.HasPrefix(remote, p+"/") {
-			return true
+		p = cleanPolicyPath(p)
+		if p == "" {
+			continue
+		}
+		if candidate == p || strings.HasPrefix(candidate, p+"/") {
+			return p, false, true
+		}
+		if children && ((candidate == "/" && strings.HasPrefix(p, "/")) || strings.HasPrefix(p, candidate+"/")) {
+			return p, true, true
 		}
 	}
-	return false
+	return "", false, false
 }
