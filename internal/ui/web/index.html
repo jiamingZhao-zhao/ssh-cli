@@ -159,13 +159,15 @@
               </div>
               <div x-show="workspaceLive()">
               <div class="ws-overview-head">
-                <div class="ws-host" x-text="panelAlias() || '未选择'"></div>
-                <div class="ws-addr" x-text="overviewAddr()"></div>
+                <div class="ws-host" x-text="overviewTitle()"></div>
+                <div class="ws-addr">
+                  <span class="ws-conn" x-text="overviewStatus()"></span>
+                  <button type="button" class="ws-ip" x-show="overviewIP()" @click="copyOverviewIP()" :aria-label="'复制 ' + overviewIP()" :title="'复制 ' + overviewIP()">
+                    <span x-text="overviewIP()"></span>
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
+                  </button>
+                </div>
                 <div class="ws-via" x-show="viaOf(panelAlias())" x-text="viaOf(panelAlias())"></div>
-              </div>
-              <div class="ws-status" x-show="workspaceLive()">
-                <span :class="metrics.connected ? 'badge bg-green-lt' : 'badge bg-secondary-lt'" x-text="metrics.connected ? '在线' : '未连接'"></span>
-                <span class="ws-quiet mb-0" x-text="metrics.hostname"></span>
               </div>
               <p class="ws-quiet" x-show="workspaceLive() && metricsPending()">正在读取概况…</p>
               <div class="alert alert-warning py-2" role="alert" x-show="workspaceLive() && errors.metrics" x-text="errors.metrics"></div>

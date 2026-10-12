@@ -142,6 +142,25 @@ test('process table stays five rows when overview data is missing', () => {
   assert.equal(app.memText(null), '—');
   assert.equal(app.pct(null), '—');
 });
+test('overview header is hostname/user plus plain status and address', async () => {
+  const { app } = fixture();
+  app.catalog.hosts = [{ alias: 'hn-test-105', user: 'root', host: '10.4.85.105', port: 22 }];
+  app.termAlias = 'hn-test-105';
+  app.metrics = { alias: 'hn-test-105', connected: true, hostname: 'ecs-8025-0001', user: 'root', address: '10.4.85.105', port: 22 };
+  assert.equal(app.overviewTitle(), 'ecs-8025-0001/root');
+  assert.equal(app.overviewStatus(), '在线');
+  assert.equal(app.overviewIP(), '10.4.85.105');
+  assert.equal(app.overviewAddr(), 'root@10.4.85.105:22');
+  app.metrics.connected = false;
+  assert.equal(app.overviewStatus(), '未连接');
+  app.metrics.hostname = '';
+  assert.equal(app.overviewTitle(), 'hn-test-105/root');
+  app.termTabs = [{ id: 't1', alias: 'hn-test-105', state: 'closed' }];
+  app.termActive = 't1';
+  assert.equal(app.overviewStatus(), '已断开');
+  await app.copyOverviewIP();
+  assert.equal(app.toasts[0].text, '10.4.85.105');
+});
 test('clear button only applies when a transfer is finished', () => {
   const { app } = fixture();
   assert.equal(app.hasFinishedTransfers(), false);

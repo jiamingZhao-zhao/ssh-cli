@@ -1510,6 +1510,49 @@ function sshui() {
       return (h.user || "") + "@" + (h.host || "") + ":" + (h.port || "");
     },
 
+    overviewTitle() {
+      const alias = this.panelAlias();
+      const host = this.hostByAlias(alias);
+      const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
+      const name = (live && live.hostname) || alias || "未选择";
+      const user = (live && live.user) || (host && host.user) || "";
+      return user ? name + "/" + user : name;
+    },
+
+    overviewStatus() {
+      const alias = this.panelAlias();
+      const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
+      if (live && live.connected) return "在线";
+      const tab = this.termTabs.find((item) => item.id === this.termActive);
+      if (tab) {
+        const label = { connecting: "连接中", closed: "已断开", expired: "已到期" }[tab.state];
+        if (label) return label;
+      }
+      if (this.metricsPending()) return "连接中";
+      return "未连接";
+    },
+
+    overviewIP() {
+      const alias = this.panelAlias();
+      const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
+      if (live && live.address) return String(live.address);
+      const host = this.hostByAlias(alias);
+      return host && host.host ? String(host.host) : "";
+    },
+
+    async copyOverviewIP() {
+      const ip = this.overviewIP();
+      if (!ip) return;
+      const clip = typeof navigator !== "undefined" && navigator.clipboard ? navigator.clipboard : null;
+      try {
+        if (!clip || !clip.writeText) throw new Error("clipboard");
+        await clip.writeText(ip);
+        this.toast("已复制 " + ip);
+      } catch (err) {
+        this.toast(ip);
+      }
+    },
+
     viaOf(alias) {
       const h = this.hostByAlias(alias);
       if (!h || !h.via) return "";
