@@ -16,7 +16,7 @@ import (
 // rename takes the existing path in remote and the new base name in the same directory.
 // remove takes the existing path in remote.
 func Change(client *ssh.Client, op, remote, name string) error {
-	sf, err := sftp.NewClient(client)
+	sf, err := Client(client)
 	if err != nil {
 		return err
 	}

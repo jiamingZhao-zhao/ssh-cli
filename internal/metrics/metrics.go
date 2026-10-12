@@ -28,7 +28,7 @@ func Probes() []Probe {
 		{Name: "stat", Command: "cat /proc/stat"},
 		{Name: "mem", Command: "free -b"},
 		{Name: "disk", Command: "df -P"},
-		{Name: "proc", Command: "ps -eo pid,user,pcpu,rss,comm --sort=-pcpu"},
+		{Name: "proc", Command: "ps -ww -eo pid,ppid,user,pcpu,pmem,rss,stat,etime,args --sort=-pcpu"},
 		{Name: "proc-aux", Command: "ps aux"},
 		{Name: "net", Command: "cat /proc/net/dev"},
 	}
@@ -54,13 +54,20 @@ type Mem struct {
 }
 
 // Proc is one process line, capped by the collector.
+// Args is the full command line when ps reported it. Comm is the same text
+// so older callers keep working. Cwd is filled by a separate read, not by ps.
 type Proc struct {
-	PID  string `json:"pid"`
-	User string `json:"user"`
-	CPU  string `json:"cpu"`
-	Mem  string `json:"mem"`
-	RSS  uint64 `json:"rss"`
-	Comm string `json:"comm"`
+	PID   string `json:"pid"`
+	PPID  string `json:"ppid,omitempty"`
+	User  string `json:"user"`
+	CPU   string `json:"cpu"`
+	Mem   string `json:"mem"`
+	RSS   uint64 `json:"rss"`
+	Stat  string `json:"stat,omitempty"`
+	ETime string `json:"etime,omitempty"`
+	Start string `json:"start,omitempty"`
+	Comm  string `json:"comm"`
+	Args  string `json:"args,omitempty"`
 }
 
 // Disk is one mount from df.
@@ -450,11 +457,15 @@ func ParsePS(text string) []Proc {
 		col[h] = i
 	}
 	pidI := firstCol(col, "PID")
+	ppidI := firstCol(col, "PPID")
 	userI := firstCol(col, "USER")
 	cpuI := firstCol(col, "%CPU", "CPU")
 	memI := firstCol(col, "%MEM", "MEM")
 	rssI := firstCol(col, "RSS")
-	commI := firstCol(col, "COMMAND", "CMD", "COMM")
+	statI := firstCol(col, "STAT")
+	etimeI := firstCol(col, "ELAPSED", "ETIME")
+	startI := firstCol(col, "STARTED", "START")
+	commI := firstCol(col, "COMMAND", "CMD", "COMM", "ARGS")
 	if pidI < 0 || commI < 0 {
 		return []Proc{}
 	}
@@ -464,20 +475,33 @@ func ParsePS(text string) []Proc {
 		if len(f) <= commI || len(f) <= pidI {
 			continue
 		}
-		p := Proc{PID: f[pidI], Comm: strings.Join(f[commI:], " ")}
-		if userI >= 0 && userI < len(f) {
+		cmd := strings.Join(f[commI:], " ")
+		p := Proc{PID: f[pidI], Comm: cmd, Args: cmd}
+		if ppidI >= 0 && ppidI < len(f) && ppidI < commI {
+			p.PPID = f[ppidI]
+		}
+		if userI >= 0 && userI < len(f) && userI < commI {
 			p.User = f[userI]
 		}
-		if cpuI >= 0 && cpuI < len(f) {
+		if cpuI >= 0 && cpuI < len(f) && cpuI < commI {
 			p.CPU = f[cpuI]
 		}
-		if memI >= 0 && memI < len(f) {
+		if memI >= 0 && memI < len(f) && memI < commI {
 			p.Mem = f[memI]
 		}
-		if rssI >= 0 && rssI < len(f) {
+		if rssI >= 0 && rssI < len(f) && rssI < commI {
 			if n, err := strconv.ParseUint(f[rssI], 10, 64); err == nil {
 				p.RSS = n
 			}
+		}
+		if statI >= 0 && statI < len(f) && statI < commI {
+			p.Stat = f[statI]
+		}
+		if etimeI >= 0 && etimeI < len(f) && etimeI < commI {
+			p.ETime = f[etimeI]
+		}
+		if startI >= 0 && startI < len(f) && startI < commI {
+			p.Start = f[startI]
 		}
 		out = append(out, p)
 		if len(out) == maxProcs {
@@ -488,6 +512,27 @@ func ParsePS(text string) []Proc {
 		return []Proc{}
 	}
 	return out
+}
+
+var pidPattern = regexp.MustCompile(`^[0-9]{1,10}$`)
+
+// ProcCommands returns the two read-only commands used to fill a process
+// detail: the full argv, and the cwd symlink. pid must be decimal digits.
+func ProcCommands(pid string) (argsCmd, cwdCmd string, err error) {
+	pid = strings.TrimSpace(pid)
+	if !pidPattern.MatchString(pid) {
+		return "", "", fmt.Errorf("invalid pid")
+	}
+	return "ps -ww -o args= -p " + pid, "ls -ld /proc/" + pid + "/cwd", nil
+}
+
+// ParseCwd reads the target of `ls -ld /proc/<pid>/cwd`.
+func ParseCwd(text string) string {
+	i := strings.LastIndex(text, "->")
+	if i < 0 {
+		return ""
+	}
+	return strings.TrimSpace(text[i+2:])
 }
 
 func firstCol(col map[string]int, names ...string) int {

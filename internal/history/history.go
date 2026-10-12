@@ -7,7 +7,9 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"strconv"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
@@ -49,10 +51,20 @@ type Result struct {
 	Path      string   `json:"path,omitempty"`
 	Shell     string   `json:"shell,omitempty"`
 	Lines     []string `json:"lines"`
+	Entries   []Line   `json:"entries,omitempty"`
 	Truncated bool     `json:"truncated"`
 	Notes     []string `json:"notes,omitempty"`
 	Error     string   `json:"error,omitempty"`
 	Commands  []string `json:"-"`
+}
+
+// Line is one history command. Time is set only when the remote file recorded
+// it (bash #unix when HISTTIMEFORMAT was on, zsh extended history, fish when).
+// It is local time formatted yyyy-MM-dd HH:mm:ss. An empty Time means the file
+// did not store a timestamp; the time is not invented.
+type Line struct {
+	Command string `json:"command"`
+	Time    string `json:"time,omitempty"`
 }
 
 // ClampLines bounds n to 1..MaxLines. Zero selects DefaultLines.
@@ -209,18 +221,22 @@ func Collect(ctx context.Context, exec ExecFunc, gate GateFunc, opt Options) (Re
 			if emptyPath == "" {
 				emptyPath = p
 			}
-			lines := scrubLines(Normalize(p, stdout))
-			if len(lines) == 0 {
+			entries := NormalizeLines(p, stdout)
+			if len(entries) == 0 {
 				res.Notes = append(res.Notes, p+": empty")
 				continue
 			}
-			capped, trunc := Cap(lines, n, MaxBytes)
+			capped, trunc := CapEntries(entries, n, MaxBytes)
 			res.Found = true
 			res.Status = "ok"
 			res.Path = p
 			res.Shell = ShellKind(p)
-			res.Lines = capped
+			res.Entries = capped
+			res.Lines = commandsOf(capped)
 			res.Truncated = trunc
+			if res.Shell == "bash" && !entriesHaveTime(capped) {
+				res.Notes = append(res.Notes, "bash history has no timestamps unless HISTTIMEFORMAT recorded #epoch lines")
+			}
 			return res, nil
 		}
 		note := oneLine(stderr)
@@ -285,7 +301,9 @@ var (
 	fishAssign = regexp.MustCompile(`(?m)^[ \t]*set[ \t]+(?:-\S+[ \t]+)*HISTFILE[ \t]+(\S+)`)
 	bashStamp  = regexp.MustCompile(`^#\d{9,}$`)
 	zshExt     = regexp.MustCompile(`^: \d+:\d+;(.*)$`)
+	zshStamp   = regexp.MustCompile(`^: (\d+):\d+;`)
 	fishCmd    = regexp.MustCompile(`^[ \t]*-[ \t]*cmd:[ \t]?(.*)$`)
+	fishWhen   = regexp.MustCompile(`^[ \t]*when:[ \t]*(\d+)`)
 )
 
 // ParseHistFile returns the last static HISTFILE assignment in rc text.
@@ -378,16 +396,28 @@ func ShellKind(path string) string {
 	}
 }
 
-// Normalize turns raw history text into command lines.
+// Normalize turns raw history text into command lines. Timestamps are not
+// included in the command text.
 func Normalize(path, text string) []string {
+	return commandsOf(NormalizeLines(path, text))
+}
+
+// NormalizeLines parses commands and any timestamp the history file actually
+// stored. Bash lines have a time only when a preceding #unix stamp is present
+// (written when HISTTIMEFORMAT is set). zsh extended history and fish when:
+// lines are kept. A missing stamp stays empty.
+func NormalizeLines(path, text string) []Line {
 	kind := ShellKind(path)
 	if kind == "plain" {
 		kind = sniff(text)
 	}
-	var lines []string
+	var lines []Line
+	pending := ""
+	fishIdx := -1
 	for _, line := range strings.Split(text, "\n") {
 		line = strings.TrimRight(line, "\r")
-		if strings.TrimSpace(line) == "" {
+		trim := strings.TrimSpace(line)
+		if trim == "" {
 			continue
 		}
 		switch kind {
@@ -395,32 +425,81 @@ func Normalize(path, text string) []string {
 			if m := fishCmd.FindStringSubmatch(line); m != nil {
 				cmd := strings.TrimSpace(m[1])
 				if cmd != "" {
-					lines = append(lines, cmd)
+					lines = append(lines, Line{Command: cmd})
+					fishIdx = len(lines) - 1
+				}
+				continue
+			}
+			if fishIdx >= 0 {
+				if m := fishWhen.FindStringSubmatch(line); m != nil {
+					if ts := formatUnix(m[1]); ts != "" {
+						lines[fishIdx].Time = ts
+					}
+					fishIdx = -1
 				}
 			}
 		case "zsh":
 			if m := zshExt.FindStringSubmatch(line); m != nil {
 				cmd := m[1]
-				if strings.TrimSpace(cmd) != "" {
-					lines = append(lines, cmd)
+				if strings.TrimSpace(cmd) == "" {
+					continue
 				}
+				item := Line{Command: cmd}
+				if sm := zshStamp.FindStringSubmatch(line); sm != nil {
+					item.Time = formatUnix(sm[1])
+				}
+				lines = append(lines, item)
 				continue
 			}
-			lines = append(lines, line)
+			lines = append(lines, Line{Command: line})
 		default:
-			if bashStamp.MatchString(strings.TrimSpace(line)) {
+			if bashStamp.MatchString(trim) {
+				pending = strings.TrimPrefix(trim, "#")
 				continue
 			}
-			lines = append(lines, line)
+			item := Line{Command: line}
+			if pending != "" {
+				item.Time = formatUnix(pending)
+				pending = ""
+			}
+			lines = append(lines, item)
 		}
 	}
-	if lines == nil {
-		return []string{}
+	for i := range lines {
+		lines[i].Command = audit.Scrub(lines[i].Command)
 	}
-	for i, line := range lines {
-		lines[i] = audit.Scrub(line)
+	if lines == nil {
+		return []Line{}
 	}
 	return lines
+}
+
+func commandsOf(lines []Line) []string {
+	out := make([]string, len(lines))
+	for i, line := range lines {
+		out[i] = line.Command
+	}
+	if out == nil {
+		return []string{}
+	}
+	return out
+}
+
+func entriesHaveTime(lines []Line) bool {
+	for _, line := range lines {
+		if line.Time != "" {
+			return true
+		}
+	}
+	return false
+}
+
+func formatUnix(raw string) string {
+	n, err := strconv.ParseInt(strings.TrimSpace(raw), 10, 64)
+	if err != nil || n < 100_000_000 {
+		return ""
+	}
+	return time.Unix(n, 0).Local().Format("2006-01-02 15:04:05")
 }
 
 func sniff(text string) string {
@@ -441,14 +520,6 @@ func sniff(text string) string {
 	default:
 		return "bash"
 	}
-}
-
-func scrubLines(lines []string) []string {
-	out := make([]string, len(lines))
-	for i, line := range lines {
-		out[i] = audit.Scrub(line)
-	}
-	return out
 }
 
 // Cap keeps the last n lines and the last maxBytes of those lines.
@@ -479,6 +550,38 @@ func Cap(lines []string, n, maxBytes int) ([]string, bool) {
 	out := append([]string(nil), lines[start:]...)
 	if out == nil {
 		out = []string{}
+	}
+	return out, truncated
+}
+
+// CapEntries keeps the last n commands and the last maxBytes of command text.
+func CapEntries(lines []Line, n, maxBytes int) ([]Line, bool) {
+	if n < 1 {
+		n = DefaultLines
+	}
+	truncated := false
+	if len(lines) > n {
+		lines = append([]Line(nil), lines[len(lines)-n:]...)
+		truncated = true
+	}
+	total := 0
+	start := 0
+	for i := len(lines) - 1; i >= 0; i-- {
+		total += len(lines[i].Command) + 1
+		if total > maxBytes && i != len(lines)-1 {
+			start = i + 1
+			truncated = true
+			break
+		}
+		if total > maxBytes {
+			clipped := lines[i]
+			clipped.Command = clipBytes(clipped.Command, maxBytes)
+			return []Line{clipped}, true
+		}
+	}
+	out := append([]Line(nil), lines[start:]...)
+	if out == nil {
+		out = []Line{}
 	}
 	return out, truncated
 }

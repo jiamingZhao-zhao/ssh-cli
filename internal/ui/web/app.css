@@ -1,5 +1,5 @@
 /* Memory Hub blue/white (and dark) on Tabler tokens.
-   v0.7.8 component chrome: table G (horizontal rules, centered cells),
+   v0.7.9 component chrome: table G (horizontal rules, centered cells),
    hard 4px tool inputs and buttons, bordered cards with a light shadow,
    light-blue left-aligned nav on a narrower sidebar, outlined 6px badges,
    6px modals, icon-block empties, square bottom-right pager with jump,
@@ -994,12 +994,16 @@ pre {
   border-bottom: 1px solid var(--mh-line);
   border-inline-end: 0;
 }
+.ws-proc { table-layout: fixed; width: 100%; }
+.ws-proc col.ws-proc-eq,
+.ws-proc th,
+.ws-proc td { width: 33.33%; }
 .ws-proc-mem,
 .ws-proc-cpu {
   white-space: nowrap;
-  width: 1%;
-  overflow: visible;
-  text-overflow: clip;
+  width: 33.33%;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .ws-proc tr:hover td { background: var(--mh-fill); }
 .ws-comm {
@@ -1008,6 +1012,28 @@ pre {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.ws-proc .ws-comm {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  max-width: none;
+  width: 100%;
+  text-align: left;
+}
+.ws-comm-text {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ws-proc-detail { flex: 0 0 auto; padding: 0.05rem 0.4rem; }
+.ws-proc-detail-list { display: grid; gap: 0.55rem; margin: 0; }
+.ws-proc-detail-list div { display: grid; grid-template-columns: 5.5rem 1fr; gap: 0.75rem; }
+.ws-proc-detail-list dt { margin: 0; color: var(--mh-muted); }
+.ws-proc-detail-list dd { margin: 0; word-break: break-word; }
+.ws-proc-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
+.ws-net-chart { position: relative; height: 148px; }
 .ws-spark { width: 100%; height: 42px; display: block; color: var(--mh-link); }
 .ws-spark-base { stroke: var(--mh-line); stroke-width: 1; }
 .ws-upper {
@@ -1096,7 +1122,7 @@ pre {
   font-size: 12px;
 }
 .ws-tree {
-  width: 9.25rem;
+  width: 11rem;
   flex: 0 0 auto;
   overflow: auto;
   border-right: 1px solid var(--mh-line);
@@ -1127,14 +1153,34 @@ pre {
 }
 .ws-tree-label {
   flex: 1 1 auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
   min-width: 0;
   text-align: left;
   padding: 0.22rem 0.35rem 0.22rem 0;
   overflow: hidden;
-  text-overflow: ellipsis;
+  color: var(--mh-link);
   white-space: nowrap;
 }
-.ws-tree-label:hover { color: var(--mh-link); }
+.ws-tree-label span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.ws-tree-label:hover { color: var(--mh-link-hover); }
+.ws-folder { width: 1rem; height: 0.88rem; flex: 0 0 auto; display: block; }
+.ws-folder.is-open { color: var(--mh-link); }
+.ws-folder.is-open path { fill: currentColor; }
+.ws-folder.is-ghost { color: var(--mh-link); }
+.ws-folder.is-ghost path { fill: currentColor; fill-opacity: 0.22; stroke: currentColor; stroke-width: 1.15; }
+.ws-name {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.35rem;
+}
+.ws-name.is-dir { color: var(--mh-link); font-weight: 650; }
 .ws-tree-item {
   display: block;
   width: 100%;
@@ -1195,8 +1241,42 @@ pre {
   border-bottom-color: var(--mh-hair);
   border-inline-end: 0;
 }
+.ws-dl-rail {
+  width: 16rem;
+  flex: 0 0 auto;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  border-left: 1px solid var(--mh-line);
+  background: var(--mh-header);
+}
+.ws-dl-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.35rem;
+  padding: 0.45rem 0.55rem 0.2rem;
+}
+.ws-dl-list { flex: 1 1 auto; overflow: auto; padding: 0 0.55rem 0.55rem; }
+.ws-queue-row {
+  display: flex;
+  flex-direction: column;
+  align-items: stretch;
+  gap: 0.2rem;
+  padding: 0.4rem 0;
+  border-bottom: 1px solid var(--mh-line);
+  font-size: 12px;
+}
+.ws-queue-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-weight: 650;
+}
+.ws-queue-meta { color: var(--mh-muted); }
 .ws-download-lane {
-  margin: 0.5rem 0.85rem 0.65rem;
+  margin: 0.15rem 0.55rem 0.45rem;
   padding: 0.55rem 0.75rem;
   border: 1px dashed var(--mh-line);
   border-radius: 8px;
@@ -1235,6 +1315,8 @@ pre {
   position: fixed;
   z-index: 40;
   min-width: 11.25rem;
+  max-height: calc(100vh - 16px);
+  overflow: auto;
   padding: 6px;
   background: var(--mh-card);
   color: var(--mh-ink);
@@ -1315,4 +1397,28 @@ pre {
 }
 .ws-toast.is-bad { background: #ae2a19; }
 @keyframes ws-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: none; } }
+
+.dash-count {
+  display: block;
+  width: 100%;
+  margin-left: auto;
+  margin-right: auto;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: inherit;
+  cursor: pointer;
+}
+.dash-count:hover { color: var(--mh-blue); }
+.dash-live {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 0.35rem;
+  margin-bottom: 0.15rem;
+}
+.session-row { cursor: pointer; }
+.session-row:hover td { background: var(--mh-blue-soft); }
 @keyframes ws-pulse { 50% { opacity: 0.35; } }

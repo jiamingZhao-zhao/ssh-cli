@@ -70,6 +70,9 @@ type entry struct {
 	busy        int
 	closed      bool
 	closeCh     chan struct{}
+	// shellWait is closed when an in-flight attachShell finishes.
+	// Concurrent Open/Exec calls wait on it instead of starting a second shell.
+	shellWait chan struct{}
 }
 
 // New returns a pool. dial is required. onClose may be nil.
@@ -193,32 +196,89 @@ func (p *Pool) open(ctx context.Context, alias, fingerprint string, forceNew, wi
 			return err
 		}
 	}
-	return p.store(alias, fingerprint, client, shell)
+	if err := p.store(alias, fingerprint, client, shell); err != nil {
+		return err
+	}
+	if !withShell {
+		return nil
+	}
+	// OpenConn may have stored this alias first, with no shell. The shell we
+	// just started belongs to a duplicate connection that store() closed.
+	// Attach on the connection that was kept so Exec does not report
+	// "has no shell" and so a failed handshake cannot tear the PTY down.
+	p.mu.Lock()
+	e := p.items[alias]
+	var kept *sshclient.Client
+	if e != nil && !e.closed && e.fingerprint == fingerprint && e.shell == nil {
+		kept = e.client
+	}
+	p.mu.Unlock()
+	if kept == nil {
+		return nil
+	}
+	return p.attachShell(ctx, alias, kept)
 }
 
 func (p *Pool) attachShell(ctx context.Context, alias string, client *sshclient.Client) error {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if client == nil || client.Raw() == nil {
 		return fmt.Errorf("session %s is closed", alias)
-	}
-	shell, err := sshclient.NewShell(ctx, client.Raw())
-	if err != nil {
-		p.finish(alias, "desync")
-		return err
 	}
 	p.mu.Lock()
 	e := p.items[alias]
 	if e == nil || e.closed || e.client != client {
 		p.mu.Unlock()
-		_ = shell.Close()
 		return fmt.Errorf("session %s is closed", alias)
 	}
 	if e.shell != nil {
 		p.mu.Unlock()
+		return nil
+	}
+	if e.shellWait != nil {
+		wait := e.shellWait
+		p.mu.Unlock()
+		select {
+		case <-wait:
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		p.mu.Lock()
+		e = p.items[alias]
+		ok := e != nil && !e.closed && e.client == client && e.shell != nil
+		p.mu.Unlock()
+		if !ok {
+			return fmt.Errorf("session %s shell did not start", alias)
+		}
+		return nil
+	}
+	wait := make(chan struct{})
+	e.shellWait = wait
+	p.mu.Unlock()
+	defer close(wait)
+
+	shell, err := sshclient.NewShell(ctx, client.Raw())
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	e = p.items[alias]
+	if e != nil && e.shellWait == wait {
+		e.shellWait = nil
+	}
+	// A handshake failure must not close the SSH client. The interactive
+	// terminal lives on this same connection and should stay up.
+	if err != nil {
+		return err
+	}
+	if e == nil || e.closed || e.client != client {
+		_ = shell.Close()
+		return fmt.Errorf("session %s is closed", alias)
+	}
+	if e.shell != nil {
 		_ = shell.Close()
 		return nil
 	}
 	e.shell = shell
-	p.mu.Unlock()
 	return nil
 }
 
@@ -301,14 +361,28 @@ func (p *Pool) Exec(ctx context.Context, alias, fingerprint, command string, std
 	e.busy++
 	e.used = p.now()
 	shell := e.shell
+	client := e.client
 	p.mu.Unlock()
 	if shell == nil {
-		p.mu.Lock()
-		if e.busy > 0 {
-			e.busy--
+		if err := p.attachShell(ctx, alias, client); err != nil {
+			p.mu.Lock()
+			if e.busy > 0 {
+				e.busy--
+			}
+			p.mu.Unlock()
+			return 0, err
 		}
+		p.mu.Lock()
+		shell = e.shell
 		p.mu.Unlock()
-		return 0, fmt.Errorf("session %s has no shell", alias)
+		if shell == nil {
+			p.mu.Lock()
+			if e.busy > 0 {
+				e.busy--
+			}
+			p.mu.Unlock()
+			return 0, fmt.Errorf("session %s shell did not start", alias)
+		}
 	}
 	code, err := shell.Exec(ctx, command, stdout, stderr)
 	p.mu.Lock()
