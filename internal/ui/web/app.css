@@ -899,21 +899,21 @@ pre {
   border-radius: 0;
 }
 .ws-side {
+  display: contents;
+}
+.ws-side-gap {
   grid-column: 1;
-  grid-row: 1 / span 3;
-  display: flex;
-  flex-direction: column;
-  min-width: 0;
-  min-height: 0;
-  background: var(--mh-header);
+  grid-row: 2;
+  background: var(--mh-page);
 }
 .ws-overview {
-  flex: 0 1 auto;
+  grid-column: 1;
+  grid-row: 1;
   min-width: 0;
   min-height: 0;
   overflow: auto;
   padding: 0.65rem 0.35rem 0.05rem;
-  background: transparent;
+  background: var(--mh-header);
 }
 .ws-stage {
   min-width: 0;
@@ -1149,17 +1149,34 @@ pre {
   gap: 0.75rem;
   align-items: center;
   margin: 0;
-  padding: 0.35rem 0.75rem 0;
+  padding: 0.35rem 0.75rem;
   background: var(--mh-header);
+  min-width: 0;
+}
+.ws-term-bar .ws-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+  overflow: hidden;
+}
+.ws-term-bar .btn-list {
+  flex: 0 0 auto;
+  margin-left: auto;
 }
 .ws-term-bar .btn,
 .ws-term-bar .form-select { margin: 0; }
 .ws .term-tabs {
   min-height: 0;
   margin: 0;
-  padding: 0 0.4rem;
+  padding: 0;
+  border: 0;
   border-radius: 0;
-  align-items: flex-end;
+  background: transparent;
+  align-items: center;
+  flex-wrap: nowrap;
+  overflow: auto;
   gap: 2px;
 }
 .ws .term-tab { top: 0; margin: 0; min-height: 1.75rem; }
@@ -1386,15 +1403,31 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
   border-inline-end: 0;
 }
 .ws-dl-rail {
-  flex: 1 1 auto;
+  grid-column: 1;
+  grid-row: 3;
   width: auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 9.5rem;
+  min-height: 0;
   overflow: hidden;
-  border-top: 1px solid var(--mh-line);
+  background: var(--mh-header);
+}
+.ws-dl-empty {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  min-height: 0;
+  padding: 0.28rem 0.55rem 0.45rem;
+}
+.ws-dl-empty .ws-kicker { line-height: 1.4; }
+.ws-dl-empty-box {
+  flex: 1 1 auto;
+  min-height: 4.5rem;
+  border: 1px dashed var(--mh-line);
+  border-radius: 8px;
   background: transparent;
+  cursor: pointer;
 }
 .ws-dl-local {
   display: flex;
@@ -1654,7 +1687,7 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
   .ws-mobile-nav { display: flex; gap: .5rem; padding: .5rem; flex: 0 0 auto; }
   .ws-mobile-nav [aria-pressed="true"] { background: #206bc4; color: white; }
   .ws-side { display: contents; }
-  .ws-gutter, .ws-overview, .ws-dl-rail, .ws-lower { display: none; }
+  .ws-gutter, .ws-side-gap, .ws-overview, .ws-dl-rail, .ws-lower { display: none; }
   .ws-split { height: auto; min-height: 0; cursor: default; background: var(--mh-header); }
   .ws-split::after { display: none; }
   .ws-split-status {

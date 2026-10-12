@@ -37,9 +37,10 @@ func TestPickDownloadDirAPI(t *testing.T) {
 	h := Handler(t.TempDir(), false)
 	post := func() *httptest.ResponseRecorder {
 		t.Helper()
-		req := httptest.NewRequest(http.MethodPost, "/api/download-dir", nil)
+		req := httptest.NewRequest(http.MethodPost, "/api/download-dir", strings.NewReader("{}"))
 		req.RemoteAddr = "127.0.0.1:9"
 		req.Host = "127.0.0.1"
+		req.Header.Set("Content-Type", "application/json")
 		attachCSRF(t, h, req)
 		rr := httptest.NewRecorder()
 		h.ServeHTTP(rr, req)
@@ -60,5 +61,15 @@ func TestPickDownloadDirAPI(t *testing.T) {
 	rr = post()
 	if rr.Code == 200 {
 		t.Fatalf("relative accepted %s", rr.Body.String())
+	}
+	bare := httptest.NewRequest(http.MethodPost, "/api/download-dir", strings.NewReader("dir"))
+	bare.RemoteAddr = "127.0.0.1:9"
+	bare.Host = "127.0.0.1"
+	bare.Header.Set("Content-Type", "text/plain")
+	attachCSRF(t, h, bare)
+	rr = httptest.NewRecorder()
+	h.ServeHTTP(rr, bare)
+	if rr.Code != http.StatusUnsupportedMediaType || !strings.Contains(rr.Body.String(), "mutating requests must use JSON") {
+		t.Fatalf("non-json %d %s", rr.Code, rr.Body.String())
 	}
 }
