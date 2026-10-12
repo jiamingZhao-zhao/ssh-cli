@@ -28,7 +28,7 @@ func prodReadonlyHost(groupPolicy string, inlineAllow *[]string) (*config.Config
 	g := &config.Group{Env: "prod", Policy: groupPolicy, Allow: inlineAllow}
 	h := &config.Host{Host: "192.0.2.10", User: "viewer"}
 	g.Hosts = map[string]*config.Host{"main": h}
-	env := &config.Env{Label: "生产", MaxMode: config.ModeReadonly, DefaultPolicy: "readonly"}
+	env := &config.Env{Label: "鐢熶骇", MaxMode: config.ModeReadonly, DefaultPolicy: "readonly"}
 	cfg := &config.Config{
 		Version: 1,
 		Envs:    map[string]*config.Env{"prod": env},
@@ -645,6 +645,7 @@ func TestSSKillAndDiagAreNotReadonly(t *testing.T) {
 		config.ResolvedHost{Alias: "d", Group: "g", EnvName: "dev", Env: adminEnv, GroupDef: ag, Host: ah}, false)
 
 	blocked := []string{
+		"ss -MK", "ss -MD /tmp/dump", "ss --kil", "ss --dia=/tmp/dump",
 		"ss -K state established",
 		"ss --kill state established",
 		"ss -D /tmp/review-placeholder",

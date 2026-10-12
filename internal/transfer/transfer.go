@@ -1,6 +1,9 @@
 package transfer
 
 import (
+	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"io"
 	"io/fs"
@@ -29,6 +32,40 @@ func Upload(client *ssh.Client, local, remote string, log LogFunc) error {
 // UploadChecked plans every destination, runs check on each path, then writes.
 // A check error leaves the remote tree unchanged by this call.
 func UploadChecked(client *ssh.Client, local, remote string, log LogFunc, check CheckFunc) error {
+	return UploadWithOptions(client, local, remote, log, UploadOptions{Check: func(dest string, _ []string) error {
+		if check != nil {
+			return check(dest)
+		}
+		return nil
+	}})
+}
+
+// UploadOptions applies cancellation and resolved path policy to the full plan.
+// A non-nil Context owns the connection and closes it when canceled.
+type UploadOptions struct {
+	Context         context.Context
+	Protected       []string
+	Check           func(dest string, protected []string) error
+	RejectOverwrite bool
+}
+
+// OverwriteError means an existing regular file needs an explicit overwrite decision.
+type OverwriteError struct{ Path string }
+
+func (e *OverwriteError) Error() string { return "文件已存在，覆盖前请确认：" + e.Path }
+
+func UploadWithOptions(client *ssh.Client, local, remote string, log LogFunc, opt UploadOptions) error {
+	ctx := opt.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	// Context-aware uploads own a dedicated SSH connection. Closing it also
+	// interrupts a server that never acknowledges SFTP startup or a write.
+	stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+	defer stop()
 	sf, err := Client(client)
 	if err != nil {
 		return err
@@ -53,22 +90,73 @@ func UploadChecked(client *ssh.Client, local, remote string, log LogFunc, check 
 	if err != nil {
 		return err
 	}
-	if check != nil {
-		for _, item := range plan {
-			if err := check(item.remote); err != nil {
+	expanded := expandProtected(sf, home, opt.Protected)
+	checkPath := func(dest string) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := rejectUploadSymlinks(sf, dest); err != nil {
+			return err
+		}
+		if opt.Check != nil {
+			return opt.Check(dest, expanded)
+		}
+		return nil
+	}
+	for _, item := range plan {
+		if err := checkPath(item.remote); err != nil {
+			return err
+		}
+		if !item.dir {
+			if st, err := sf.Lstat(item.remote); err == nil {
+				if !st.Mode().IsRegular() {
+					return fmt.Errorf("refusing to replace non-regular file %s", item.remote)
+				}
+				if opt.RejectOverwrite {
+					return &OverwriteError{Path: item.remote}
+				}
+			} else if !os.IsNotExist(err) {
 				return err
 			}
 		}
 	}
 	for _, item := range plan {
+		if err := checkPath(item.remote); err != nil {
+			return err
+		}
 		if item.dir {
 			if err := sf.MkdirAll(item.remote); err != nil {
 				return err
 			}
 			continue
 		}
-		if err := uploadFile(sf, item.local, item.remote, item.mode, log); err != nil {
+		if err := uploadFile(sf, item.local, item.remote, item.mode, log, opt.RejectOverwrite, checkPath); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+// Upload never follows existing destination symlinks. This also rejects links
+// in parent directories; server-side permissions remain the race boundary.
+func rejectUploadSymlinks(sf *sftp.Client, remote string) error {
+	var paths []string
+	for p := path.Clean(remote); p != "." && p != "/"; p = path.Dir(p) {
+		paths = append(paths, p)
+		if path.Dir(p) == p {
+			break
+		}
+	}
+	for i := len(paths) - 1; i >= 0; i-- {
+		info, err := sf.Lstat(paths[i])
+		if os.IsNotExist(err) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing to upload through remote symlink %s", paths[i])
 		}
 	}
 	return nil
@@ -174,7 +262,7 @@ func Download(client *ssh.Client, remote, local string, log LogFunc) error {
 	return downloadFile(sf, remote, local, info.Mode(), log)
 }
 
-func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc) error {
+func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error) error {
 	if dir := path.Dir(remote); dir != "" && dir != "." {
 		if err := sf.MkdirAll(dir); err != nil {
 			return fmt.Errorf("mkdir %s: %w", dir, err)
@@ -185,9 +273,20 @@ func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log Log
 		return err
 	}
 	defer src.Close()
-	dst, err := sf.Create(remote)
+	var nonce [16]byte
+	if _, err := rand.Read(nonce[:]); err != nil {
+		return err
+	}
+	tmp := path.Join(path.Dir(remote), ".ssh-cli-upload-"+hex.EncodeToString(nonce[:]))
+	dst, err := sf.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", remote, err)
+	}
+	defer sf.Remove(tmp)
+	// Do not stream sensitive bytes into a file with the server's default mode.
+	if err := dst.Chmod(0o600); err != nil {
+		_ = dst.Close()
+		return fmt.Errorf("restrict temporary upload permissions: %w", err)
 	}
 	_, copyErr := io.Copy(dst, src)
 	closeErr := dst.Close()
@@ -197,8 +296,22 @@ func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log Log
 	if closeErr != nil {
 		return closeErr
 	}
-	if err := sf.Chmod(remote, mode.Perm()); err != nil {
+	if err := sf.Chmod(tmp, mode.Perm()); err != nil {
 		note(log, fmt.Sprintf("chmod %s: %v", remote, err))
+	}
+	if err := check(remote); err != nil {
+		return err
+	}
+	if rejectOverwrite {
+		return sf.Rename(tmp, remote)
+	}
+	if _, ok := sf.HasExtension("posix-rename@openssh.com"); ok {
+		return sf.PosixRename(tmp, remote)
+	}
+	// Standard SFTP rename must fail if the destination exists. Never delete
+	// the original as a fallback when atomic replacement is unavailable.
+	if err := sf.Rename(tmp, remote); err != nil {
+		return fmt.Errorf("safe replacement unavailable; original file preserved: %w", err)
 	}
 	return nil
 }

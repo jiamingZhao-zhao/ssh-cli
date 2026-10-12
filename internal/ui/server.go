@@ -55,6 +55,8 @@ func (s *service) routes() *http.ServeMux {
 	mux.HandleFunc("GET /api/settings", s.settingsAPI)
 	mux.HandleFunc("POST /api/settings", s.settingsUpdateAPI)
 	mux.HandleFunc("POST /api/exec/batch", s.batchExecAPI)
+	mux.HandleFunc("POST /api/exec/preview", s.execPreviewAPI)
+	mux.HandleFunc("GET /api/operations/{id}", s.operationAPI)
 	mux.HandleFunc("GET /api/audit/stats", s.auditStatsAPI)
 	mux.HandleFunc("GET /api/audit/overview", s.auditOverviewAPI)
 	mux.HandleFunc("POST /api/terminal/open", s.terminalOpen)
@@ -172,6 +174,8 @@ type service struct {
 	terms       map[*wsConn]string
 	sockets     map[*wsConn]struct{}
 	pool        *session.Pool
+	opMu        sync.Mutex
+	operations  map[string]*operation
 }
 
 func (s *service) guard(next http.Handler) http.Handler {
@@ -229,21 +233,23 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		ProtectedPaths []string `json:"protectedPaths,omitempty"`
 	}
 	type hostView struct {
-		Alias    string   `json:"alias"`
-		Group    string   `json:"group"`
-		Env      string   `json:"env"`
-		Host     string   `json:"host"`
-		Port     int      `json:"port"`
-		User     string   `json:"user"`
-		Auth     string   `json:"auth"`
-		Tags     []string `json:"tags,omitempty"`
-		Policy   string   `json:"policy,omitempty"`
-		Allow    []string `json:"allow,omitempty"`
-		AllowSet bool     `json:"allowSet"`
-		Deny     []string `json:"deny,omitempty"`
-		Confirm  []string `json:"confirm,omitempty"`
-		Via      string   `json:"via,omitempty"`
-		Default  bool     `json:"default,omitempty"`
+		Alias           string   `json:"alias"`
+		Group           string   `json:"group"`
+		Env             string   `json:"env"`
+		Host            string   `json:"host"`
+		Port            int      `json:"port"`
+		User            string   `json:"user"`
+		Auth            string   `json:"auth"`
+		Tags            []string `json:"tags,omitempty"`
+		Policy          string   `json:"policy,omitempty"`
+		Allow           []string `json:"allow,omitempty"`
+		AllowSet        bool     `json:"allowSet"`
+		Deny            []string `json:"deny,omitempty"`
+		Confirm         []string `json:"confirm,omitempty"`
+		Via             string   `json:"via,omitempty"`
+		Default         bool     `json:"default,omitempty"`
+		TerminalAllowed bool     `json:"terminalAllowed"`
+		TerminalReason  string   `json:"terminalReason,omitempty"`
 	}
 	var envs []envView
 	for name, e := range cfg.Envs {
@@ -277,6 +283,16 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 			Auth: authOf(h.Host), Tags: h.Host.Tags, Policy: h.Host.Policy,
 			Via:     strings.TrimSpace(h.Host.Via),
 			Default: cfg.Default == alias,
+		}
+		eff, err := guard.Resolve(cfg, h, false)
+		if err != nil {
+			view.TerminalReason = err.Error()
+		} else {
+			decision := guard.DecideTerminal(eff)
+			view.TerminalAllowed = decision.Allowed
+			if !decision.Allowed {
+				view.TerminalReason = decisionText(decision)
+			}
 		}
 		fillRules(&view.Allow, &view.AllowSet, &view.Deny, &view.Confirm, h.Host.Allow, h.Host.Deny, h.Host.Confirm)
 		hosts = append(hosts, view)

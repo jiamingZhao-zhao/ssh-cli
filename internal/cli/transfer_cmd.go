@@ -92,8 +92,10 @@ func (a *App) transfer(kind, src, dst string) error {
 		var policyErr error
 		if kind == "upload" {
 			already := p.dec.NeedsConfirm
-			err = transfer.UploadChecked(client.Raw(), local, remote, log, func(remotePath string) error {
-				d := guard.DecideCapability(p.eff, "upload", remotePath)
+			err = transfer.UploadWithOptions(client.Raw(), local, remote, log, transfer.UploadOptions{Protected: p.eff.Protected, Check: func(remotePath string, protected []string) error {
+				eff := p.eff
+				eff.Protected = protected
+				d := guard.DecideCapability(eff, "upload", remotePath)
 				if !d.Allowed {
 					policyErr = exitcode.New(exitcode.Denied, "%s", decisionReason(d))
 					a.logDenial(hostMeta, p.host, &d, decisionReason(d))
@@ -108,7 +110,7 @@ func (a *App) transfer(kind, src, dst string) error {
 					already = true
 				}
 				return nil
-			})
+			}})
 			if policyErr != nil {
 				client.Close()
 				return policyErr

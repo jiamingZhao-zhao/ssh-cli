@@ -9,10 +9,37 @@ import (
 	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/metrics"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/sshclient"
 )
+
+func (s *service) probeRun(ctx context.Context, h config.ResolvedHost, command string) (string, string, int, error) {
+	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	fp := s.fingerprint(h)
+	if err := s.pool.OpenConn(ctx, h.Alias, fp); err != nil {
+		return "", "", 0, err
+	}
+	var stdout, stderr limitBuf
+	stdout.n, stderr.n = 1<<20, 64<<10
+	code := 0
+	err := s.pool.Use(h.Alias, fp, func() error {
+		conn, ok := s.pool.Client(h.Alias, fp)
+		if !ok {
+			return errString("session closed")
+		}
+		var err error
+		code, err = sshclient.RunChannel(ctx, conn, command, &stdout, &stderr, nil)
+		return err
+	})
+	if ctx.Err() != nil {
+		return "", "", code, ctx.Err()
+	}
+	return stdout.String(), stderr.String(), code, err
+}
 
 func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
@@ -30,12 +57,17 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
+	if eff.NoDataOut {
+		s.writeAudit(h, audit.OpMetrics, "metrics", "", "", audit.StatusDenied, exitcode.Denied, "noDataOutflow forbids metrics", "noDataOutflow forbids metrics", true, started)
+		writeErr(w, http.StatusForbidden, "此环境禁止带回数据，概况不可用。")
+		return
+	}
 	human := s.workspaceProbeExempt(r)
 	s.reconcile()
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	snap, runErr := metrics.Collect(ctx, func(ctx context.Context, command string) (string, int, error) {
-		stdout, _, code, err := s.poolRun(ctx, h, command, 8*time.Second)
+		stdout, _, code, err := s.probeRun(ctx, h, command)
 		return stdout, code, err
 	}, func(command string) error {
 		if human {
@@ -92,6 +124,11 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	probe := s.workspaceProbeExempt(r)
 	started := time.Now()
+	if eff.NoDataOut {
+		s.writeAudit(h, audit.OpMetrics, "proc", "", body.PID, audit.StatusDenied, exitcode.Denied, "noDataOutflow forbids process details", "noDataOutflow forbids process details", true, started)
+		writeErr(w, http.StatusForbidden, "此环境禁止带回数据，进程详情不可用。")
+		return
+	}
 	if !probe {
 		for _, command := range []string{argsCmd, cwdCmd} {
 			d := guard.Decide(eff, command)
@@ -107,7 +144,7 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), 12*time.Second)
 	defer cancel()
 	run := func(command string) (string, string, error) {
-		stdout, stderr, code, runErr := s.poolRun(ctx, h, command, 8*time.Second)
+		stdout, stderr, code, runErr := s.probeRun(ctx, h, command)
 		if runErr != nil {
 			return "", "", runErr
 		}

@@ -45,6 +45,9 @@ func (s *service) hostPlan(alias string) (*config.Config, config.ResolvedHost, g
 }
 
 type execIn struct {
+	previewRequest *execIn
+	OperationID    string            `json:"operationId,omitempty"`
+	PlanDigest     string            `json:"planDigest,omitempty"`
 	Alias          string            `json:"alias"`
 	Command        string            `json:"command"`
 	Timeout        string            `json:"timeout"`
@@ -69,14 +72,26 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	out := s.execOne(r.Context(), body, false)
-	writeJSON(w, out.status, out.payload)
+	s.runOperation(w, r, body, func(w http.ResponseWriter) {
+		if !s.checkPlan(w, body) {
+			return
+		}
+		out := s.execOne(r.Context(), body, false)
+		writeJSON(w, out.status, out.payload)
+	})
 }
 
 func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) execHit {
 	cfg, h, eff, err := s.hostPlan(body.Alias)
 	if err != nil {
 		return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": err.Error(), "alias": body.Alias}}
+	}
+	preview := body.previewRequest
+	if preview == nil {
+		preview = &body
+	}
+	if preview.PlanDigest != "" && planDigest(cfg, *preview) != preview.PlanDigest {
+		return execHit{status: http.StatusConflict, payload: map[string]any{"ok": false, "alias": body.Alias, "planChanged": true, "error": "主机、策略或执行内容已变化，请重新预检。"}}
 	}
 	if forceReadonly {
 		eff, err = guard.Resolve(cfg, h, true)
@@ -125,11 +140,14 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 	var stdout, stderr limitBuf
 	var outW, errW io.Writer = &stdout, &stderr
 	stdout.n, stderr.n = execCaptureLimit, execCaptureLimit
+	if body.OperationID != "" {
+		stdout.n, stderr.n = 64<<10, 64<<10
+	}
 	if suppress {
 		outW, errW = io.Discard, io.Discard
 	}
 	s.reconcile()
-	code, err := s.pool.Exec(runCtx, h.Alias, s.fingerprint(h), body.Command, outW, errW)
+	code, err := s.pool.Exec(runCtx, h.Alias, cfg.SessionFingerprint(h), body.Command, outW, errW)
 	summary := strings.TrimSpace(stdout.String() + "\n" + stderr.String())
 	if stdout.cut || stderr.cut {
 		summary += "\n[truncated]"
@@ -168,6 +186,7 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
+	defer r.MultipartForm.RemoveAll()
 	alias := r.FormValue("alias")
 	remote := r.FormValue("remote")
 	confirm := r.FormValue("confirm")
@@ -217,17 +236,29 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer client.Close()
-	err = transfer.UploadChecked(client.Raw(), tmpName, remote, nil, func(dest string) error {
-		d := guard.DecideCapability(eff, "upload", dest)
+	err = transfer.UploadWithOptions(client.Raw(), tmpName, remote, nil, transfer.UploadOptions{Context: r.Context(), Protected: eff.Protected, RejectOverwrite: r.FormValue("overwrite") != "true", Check: func(dest string, protected []string) error {
+		resolved := eff
+		resolved.Protected = protected
+		d := guard.DecideCapability(resolved, "upload", dest)
 		if !d.Allowed {
 			return capabilityError(decisionText(d))
 		}
 		if d.NeedsConfirm && strings.TrimSpace(confirm) != h.Alias {
-			return errString("type the host alias to confirm")
+			return errNeedConfirm{}
 		}
 		return nil
-	})
+	}})
 	if err != nil {
+		var overwrite *transfer.OverwriteError
+		if errors.As(err, &overwrite) {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "needsOverwrite": true, "path": overwrite.Path, "error": overwrite.Error()})
+			return
+		}
+		var need errNeedConfirm
+		if errors.As(err, &need) {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": need.Error()})
+			return
+		}
 		var denied capabilityError
 		if errors.As(err, &denied) {
 			s.writeAudit(h, audit.OpPolicyCheck, audit.OpUpload, "", remote, audit.StatusDenied, exitcode.Denied, denied.Error(), denied.Error(), true, started)

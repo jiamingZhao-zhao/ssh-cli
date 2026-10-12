@@ -329,6 +329,15 @@ func (s *service) batchExecAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
+	s.runOperation(w, r, body, func(w http.ResponseWriter) {
+		if !s.checkPlan(w, body) {
+			return
+		}
+		s.batchExec(w, r, body)
+	})
+}
+
+func (s *service) batchExec(w http.ResponseWriter, r *http.Request, body execIn) {
 	aliases := uniqueAliases(body.Aliases)
 	if len(aliases) == 0 {
 		writeErr(w, http.StatusBadRequest, "aliases is required")
@@ -439,7 +448,9 @@ func (s *service) batchExecAPI(w http.ResponseWriter, r *http.Request) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			hit := s.execOne(r.Context(), execIn{
-				Alias: h.Alias, Command: body.Command, Timeout: body.Timeout,
+				previewRequest: &body,
+				OperationID:    body.OperationID,
+				Alias:          h.Alias, Command: body.Command, Timeout: body.Timeout,
 				Confirm: body.Confirm, Confirms: body.Confirms, AllowOutflow: body.AllowOutflow,
 				OutflowConfirm: body.OutflowConfirm,
 			}, force)

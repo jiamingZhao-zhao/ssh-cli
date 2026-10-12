@@ -1422,3 +1422,32 @@ pre {
 .session-row { cursor: pointer; }
 .session-row:hover td { background: var(--mh-blue-soft); }
 @keyframes ws-pulse { 50% { opacity: 0.35; } }
+/* Small-screen workspace uses the existing panes, without another UI bundle. */
+.ws-mobile-nav { display: none; }
+.ws-identity { display: flex; align-items: center; flex-wrap: wrap; gap: .65rem; padding: .4rem 1rem; font-size: .8rem; }
+.ws-identity span { overflow-wrap: anywhere; }
+.term-tab-state { font-size: .7rem; color: var(--tblr-secondary); }
+.confirm-modal { z-index: 1060; }
+.confirm-message { white-space: pre-wrap; overflow-wrap: anywhere; }
+.table th, .table td { text-align: left; }
+.table .text-end { text-align: right !important; }
+:focus-visible { outline: 2px solid #206bc4; outline-offset: 2px; }
+@media (max-width: 767px) {
+  .page.is-terminal .ws { flex-direction: column; height: calc(100dvh - 3.5rem); min-height: 400px; }
+  .ws-mobile-nav { display: flex; gap: .5rem; padding: .5rem; flex: 0 0 auto; }
+  .ws-mobile-nav [aria-pressed="true"] { background: #206bc4; color: white; }
+  .ws-overview, .ws-gutter, .ws-lower { display: none; }
+  .ws-stage { min-width: 0; width: 100%; flex: 1; min-height: 0; }
+  .ws-term-bar, .ws-file-bar { flex-wrap: wrap; gap: .5rem; }
+  .ws-term-bar .btn-list { flex-wrap: wrap; }
+  .ws-term-bar select { max-width: 145px; }
+  .ws-upper { min-height: 0; flex: 1; }
+  .panel-overview .ws-overview { display: block; width: 100% !important; flex: 1; min-height: 0; overflow-y: auto; }
+  .panel-overview .ws-stage { display: none; }
+  .panel-files .ws-upper { display: none; }
+  .panel-files .ws-lower { display: flex; height: 100% !important; flex: 1; }
+  .ws-tree, .ws-dl-rail { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
+}
