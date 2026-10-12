@@ -7,6 +7,7 @@ import (
 	"context"
 	"fmt"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -28,7 +29,7 @@ func Probes() []Probe {
 		{Name: "stat", Command: "cat /proc/stat"},
 		{Name: "mem", Command: "free -b"},
 		{Name: "disk", Command: "df -P"},
-		{Name: "proc", Command: "ps -ww -eo pid,ppid,user,pcpu,pmem,rss,stat,etime,args --sort=-pcpu"},
+		{Name: "proc", Command: "ps -ww -eo pid,ppid,user,pcpu,pmem,rss,stat,etime,args --sort=-rss"},
 		{Name: "proc-aux", Command: "ps aux"},
 		{Name: "net", Command: "cat /proc/net/dev"},
 	}
@@ -72,11 +73,13 @@ type Proc struct {
 
 // Disk is one mount from df.
 type Disk struct {
-	Mount   string `json:"mount"`
-	Size    string `json:"size"`
-	Used    string `json:"used"`
-	Avail   string `json:"avail"`
-	Percent string `json:"percent"`
+	Mount     string `json:"mount"`
+	Size      string `json:"size"`
+	Used      string `json:"used"`
+	Avail     string `json:"avail"`
+	Percent   string `json:"percent"`
+	SizeBytes uint64 `json:"sizeBytes,omitempty"`
+	UsedBytes uint64 `json:"usedBytes,omitempty"`
 }
 
 // Snapshot is safe to show when individual probes fail.
@@ -99,7 +102,7 @@ type Snapshot struct {
 }
 
 const (
-	maxProcs = 8
+	maxProcs = 5
 	maxDisks = 8
 )
 
@@ -421,9 +424,14 @@ func ParseFree(text string) (mem, swap Mem, ok bool) {
 // ParseDF reads POSIX df. Virtual filesystems are skipped.
 func ParseDF(text string) []Disk {
 	var out []Disk
+	block := uint64(1024)
 	for _, line := range strings.Split(text, "\n") {
 		f := strings.Fields(line)
-		if len(f) < 6 || f[0] == "Filesystem" {
+		if len(f) < 6 {
+			continue
+		}
+		if f[0] == "Filesystem" {
+			block = dfBlockSize(f[1])
 			continue
 		}
 		fs := f[0]
@@ -432,7 +440,9 @@ func ParseDF(text string) []Disk {
 		}
 		disk := Disk{
 			Size: f[1], Used: f[2], Avail: f[3], Percent: f[4],
-			Mount: strings.Join(f[5:], " "),
+			Mount:     strings.Join(f[5:], " "),
+			SizeBytes: dfBlocks(f[1], block),
+			UsedBytes: dfBlocks(f[2], block),
 		}
 		out = append(out, disk)
 		if len(out) == maxDisks {
@@ -443,6 +453,22 @@ func ParseDF(text string) []Disk {
 		return []Disk{}
 	}
 	return out
+}
+
+func dfBlockSize(header string) uint64 {
+	h := strings.ToLower(header)
+	if strings.Contains(h, "512") {
+		return 512
+	}
+	return 1024
+}
+
+func dfBlocks(text string, block uint64) uint64 {
+	n, err := strconv.ParseUint(strings.TrimSpace(text), 10, 64)
+	if err != nil || block == 0 {
+		return 0
+	}
+	return n * block
 }
 
 // ParsePS reads `ps -eo` or `ps aux` headers.
@@ -504,12 +530,13 @@ func ParsePS(text string) []Proc {
 			p.Start = f[startI]
 		}
 		out = append(out, p)
-		if len(out) == maxProcs {
-			break
-		}
 	}
 	if out == nil {
 		return []Proc{}
+	}
+	sort.SliceStable(out, func(i, j int) bool { return out[i].RSS > out[j].RSS })
+	if len(out) > maxProcs {
+		out = out[:maxProcs]
 	}
 	return out
 }

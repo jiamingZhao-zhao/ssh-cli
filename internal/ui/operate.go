@@ -235,7 +235,8 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer client.Close()
-	err = transfer.UploadWithOptions(client.Raw(), tmpName, remote, nil, transfer.UploadOptions{Context: r.Context(), Protected: eff.Protected, RejectOverwrite: r.FormValue("overwrite") != "true", Check: func(dest string, protected []string) error {
+	sink := newProgressSink(w, wantsProgress(r))
+	err = transfer.UploadWithOptions(client.Raw(), tmpName, remote, nil, transfer.UploadOptions{Context: r.Context(), Protected: eff.Protected, RejectOverwrite: r.FormValue("overwrite") != "true", Progress: sink.report, Check: func(dest string, protected []string) error {
 		resolved := eff
 		resolved.Protected = protected
 		d := guard.DecideCapability(resolved, "upload", dest)
@@ -250,25 +251,46 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var overwrite *transfer.OverwriteError
 		if errors.As(err, &overwrite) {
-			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "needsOverwrite": true, "path": overwrite.Path, "error": overwrite.Error()})
+			payload := map[string]any{"ok": false, "needsOverwrite": true, "path": overwrite.Path, "error": overwrite.Error()}
+			if sink.on {
+				sink.event(payload)
+				return
+			}
+			writeJSON(w, http.StatusConflict, payload)
 			return
 		}
 		var need errNeedConfirm
 		if errors.As(err, &need) {
-			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": need.Error()})
+			payload := map[string]any{"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": need.Error()}
+			if sink.on {
+				sink.event(payload)
+				return
+			}
+			writeJSON(w, http.StatusConflict, payload)
 			return
 		}
 		var denied capabilityError
 		if errors.As(err, &denied) {
 			s.writeAudit(h, audit.OpPolicyCheck, audit.OpUpload, "", remote, audit.StatusDenied, exitcode.Denied, denied.Error(), denied.Error(), true, started)
-			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": denied.Error(), "status": "denied"})
+			payload := map[string]any{"ok": false, "error": denied.Error(), "status": "denied"}
+			if sink.on {
+				sink.event(payload)
+				return
+			}
+			writeJSON(w, http.StatusForbidden, payload)
 			return
 		}
 		s.writeAudit(h, audit.OpUpload, audit.OpUpload, "", remote, audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		if sink.fail(err) {
+			return
+		}
 		writeFail(w, err)
 		return
 	}
 	s.writeAudit(h, audit.OpUpload, audit.OpUpload, name, remote, audit.StatusOK, 0, "upload "+remote, "", false, started)
+	if sink.ok(map[string]any{"ok": true}) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -309,12 +331,19 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	defer client.Close()
 	// Same writer as `ssh-cli download`: SFTP straight onto this machine.
 	// The page only shows status. It does not buffer the file.
-	if err := transfer.DownloadContext(ctx, client.Raw(), remote, dest, nil); err != nil {
+	sink := newProgressSink(w, wantsProgress(r))
+	if err := transfer.DownloadWithOptions(client.Raw(), remote, dest, nil, transfer.DownloadOptions{Context: ctx, Progress: sink.report}); err != nil {
 		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		if sink.fail(err) {
+			return
+		}
 		writeFail(w, err)
 		return
 	}
 	s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusOK, 0, "download "+remote+" -> "+dest, "", false, started)
+	if sink.ok(map[string]any{"ok": true, "remote": remote, "local": dest}) {
+		return
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "remote": remote, "local": dest})
 }
 
@@ -349,6 +378,73 @@ func localDownloadDest(requested, remote string) (string, error) {
 		return "", fmt.Errorf("本机保存位置不是目录")
 	}
 	return filepath.Join(dir, base), nil
+}
+
+func wantsProgress(r *http.Request) bool {
+	return strings.Contains(strings.ToLower(r.Header.Get("Accept")), "application/x-ndjson")
+}
+
+// progressSink writes newline-delimited progress once the caller asked for it.
+// Until the first event, the response is still a normal JSON status.
+type progressSink struct {
+	w    http.ResponseWriter
+	fl   http.Flusher
+	want bool
+	on   bool
+}
+
+func newProgressSink(w http.ResponseWriter, want bool) *progressSink {
+	fl, _ := w.(http.Flusher)
+	return &progressSink{w: w, fl: fl, want: want}
+}
+
+func (p *progressSink) report(done, total int64) {
+	if p == nil || !p.want {
+		return
+	}
+	p.event(map[string]any{"loaded": done, "total": total})
+}
+
+func (p *progressSink) event(v any) {
+	if p == nil || !p.want {
+		return
+	}
+	if !p.on {
+		p.on = true
+		p.w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
+		p.w.Header().Set("Cache-Control", "no-store")
+		p.w.Header().Set("X-Content-Type-Options", "nosniff")
+		p.w.WriteHeader(http.StatusOK)
+	}
+	enc := json.NewEncoder(p.w)
+	enc.SetEscapeHTML(false)
+	_ = enc.Encode(v)
+	if p.fl != nil {
+		p.fl.Flush()
+	}
+}
+
+func (p *progressSink) fail(err error) bool {
+	if p == nil || !p.on {
+		return false
+	}
+	msg := "传输失败"
+	if err != nil && strings.TrimSpace(err.Error()) != "" {
+		msg = err.Error()
+	}
+	p.event(map[string]any{"ok": false, "error": msg})
+	return true
+}
+
+func (p *progressSink) ok(v map[string]any) bool {
+	if p == nil || !p.on {
+		return false
+	}
+	if v == nil {
+		v = map[string]any{"ok": true}
+	}
+	p.event(v)
+	return true
 }
 
 func defaultDownloadDir() (string, error) {

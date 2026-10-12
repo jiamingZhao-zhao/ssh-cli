@@ -70,6 +70,48 @@ function batchRowFailed(row) {
   return false;
 }
 
+function lastJSONObject(text) {
+  const parts = String(text || "").split("\n");
+  for (let i = parts.length - 1; i >= 0; i--) {
+    const line = parts[i].trim();
+    if (!line) continue;
+    return JSON.parse(line);
+  }
+  return {};
+}
+
+async function readNDJSON(res, onProgress) {
+  if (!res.body || !res.body.getReader) return lastJSONObject(await res.text());
+  const reader = res.body.getReader();
+  const dec = new TextDecoder();
+  let buf = "";
+  let finalMsg = null;
+  const take = (line) => {
+    const trimmed = String(line || "").trim();
+    if (!trimmed) return;
+    const msg = JSON.parse(trimmed);
+    if (msg && msg.ok == null && msg.loaded != null) {
+      if (onProgress) onProgress(msg);
+      return;
+    }
+    finalMsg = msg;
+  };
+  while (true) {
+    const step = await reader.read();
+    if (step.done) break;
+    buf += dec.decode(step.value, { stream: true });
+    let nl = buf.indexOf("\n");
+    while (nl >= 0) {
+      take(buf.slice(0, nl));
+      buf = buf.slice(nl + 1);
+      nl = buf.indexOf("\n");
+    }
+  }
+  buf += dec.decode();
+  if (buf.trim()) take(buf);
+  return finalMsg || {};
+}
+
 function batchSummary(results) {
   const rows = results || [];
   let failed = 0;
@@ -407,7 +449,7 @@ function sshui() {
     termActive: "",
     termAlias: "",
     explicitAlias: "",
-    procSort: { key: "cpu", dir: "desc" },
+    procSort: { key: "mem", dir: "desc" },
     pathDraft: "",
     pathError: "",
     pathFocused: false,
@@ -1424,6 +1466,18 @@ function sshui() {
       return host ? host.alias + " · " + host.env : "未选择主机";
     },
 
+    terminalStatusLine() {
+      const alias = this.panelAlias();
+      if (!alias) return "未选择主机";
+      return this.terminalIdentity() + " · " + this.overviewAddr() + " · " + this.terminalState();
+    },
+
+    workspaceGrid() {
+      const side = Math.max(220, Math.min(460, Number(this.ws && this.ws.side) || 280));
+      const lower = Math.max(160, Math.min(520, Number(this.ws && this.ws.lower) || 280));
+      return "--ws-side:" + side + "px;--ws-lower:" + lower + "px";
+    },
+
     overviewAddr() {
       const alias = this.panelAlias();
       const live = this.workspaceLive() && this.metrics && this.metrics.alias === alias ? this.metrics : null;
@@ -1654,12 +1708,37 @@ function sshui() {
         const bv = key === "mem" ? (Number(b.rss) || 0) : (Number(b.cpu) || 0);
         return (av - bv) * dir;
       });
-      return rows;
+      return rows.slice(0, 5);
+    },
+
+    procShort(p) {
+      const raw = String((p && (p.comm || p.args)) || "").trim();
+      const token = raw.split(/\s+/)[0] || "";
+      if (!token) return "—";
+      const slash = Math.max(token.lastIndexOf("/"), token.lastIndexOf("\\"));
+      const base = slash >= 0 ? token.slice(slash + 1) : token;
+      return base || "—";
     },
 
     diskPct(text) {
       const n = parseInt(String(text || ""), 10);
       return isFinite(n) ? n : null;
+    },
+
+    diskBytes(text, bytes) {
+      if (bytes != null && bytes !== "" && isFinite(Number(bytes))) return Number(bytes);
+      const n = Number(String(text || "").trim());
+      if (!isFinite(n) || n < 0) return null;
+      return n * 1024;
+    },
+
+    diskText(d) {
+      if (!d) return "—";
+      const pct = this.pct(this.diskPct(d.percent));
+      const used = this.diskBytes(d.used, d.usedBytes);
+      const total = this.diskBytes(d.size, d.sizeBytes);
+      if (used == null || total == null) return pct;
+      return pct + " · " + this.formatBytes(used) + " / " + this.formatBytes(total);
     },
 
     diskEmpty() { return !this.metrics || !this.metrics.disks || this.metrics.disks.length === 0; },
@@ -2073,11 +2152,16 @@ function sshui() {
 
     transferDetail(item) {
       if (!item) return "";
-      const loaded = this.formatBytes(item.loaded || 0);
+      const loadedN = Number(item.loaded) || 0;
       const total = Number(item.total) || 0;
       const status = item.label || "";
-      if (total) return loaded + " / " + this.formatBytes(total) + " · " + this.pct(this.itemPct(item)) + (status ? " · " + status : "");
-      return status + (item.loaded ? " · " + loaded : "");
+      if (total > 0) {
+        const bits = this.pct(this.itemPct(item)) + " · " + this.formatBytes(loadedN) + " / " + this.formatBytes(total);
+        if (!item.active && status && status !== "下载中" && status !== "上传中" && status !== "写入远端") return bits + " · " + status;
+        return bits;
+      }
+      if (loadedN > 0) return (status ? status + " · " : "") + this.formatBytes(loadedN);
+      return status;
     },
 
     fileSize(entry) {
@@ -2129,8 +2213,29 @@ function sshui() {
           if (overwrite) fd.set("overwrite", "true");
           xhr.open("POST", "/api/upload");
           if (app.csrf) xhr.setRequestHeader("X-CSRF-Token", app.csrf);
+          xhr.setRequestHeader("Accept", "application/x-ndjson");
           const token = sessionStorage.getItem("sshCliBearer") || "";
           if (token) xhr.setRequestHeader("Authorization", "Bearer " + token);
+          let seen = 0;
+          const takeRemote = () => {
+            const text = xhr.responseText || "";
+            if (text.length <= seen) return;
+            const chunk = text.slice(seen);
+            const lines = chunk.split("\n");
+            if (lines.length < 2) return;
+            seen += chunk.length - lines[lines.length - 1].length;
+            for (let n = 0; n < lines.length - 1; n++) {
+              const line = lines[n].trim();
+              if (!line) continue;
+              let msg = null;
+              try { msg = JSON.parse(line); } catch (err) { continue; }
+              if (msg && msg.ok == null && msg.loaded != null) {
+                commit({ loaded: msg.loaded, total: msg.total || item.total || 0, active: true, label: "写入远端" });
+              }
+            }
+          };
+          xhr.onprogress = takeRemote;
+          xhr.onreadystatechange = () => { if (xhr.readyState >= 3) takeRemote(); };
           xhr.upload.onprogress = (ev) => {
             if (ev.lengthComputable) {
               commit({
@@ -2158,7 +2263,7 @@ function sshui() {
             let data = {};
             const raw = String(xhr.responseText || "").trim();
             try {
-              data = raw ? JSON.parse(raw) : {};
+              data = raw ? lastJSONObject(raw) : {};
             } catch (err) {
               commit({ active: false, label: "失败" });
               app.finishTransfer(id, { label: "失败" });
@@ -2167,7 +2272,7 @@ function sshui() {
               resolve();
               return;
             }
-            if (xhr.status === 409 && data.needsOverwrite && !overwrite) {
+            if ((xhr.status === 409 || data.needsOverwrite) && data.needsOverwrite && !overwrite) {
               const accepted = await app.askConfirm("主机 " + alias + " 已有文件：" + data.path + "\n覆盖后无法恢复原内容，继续？");
               if (accepted && item.active) { send(confirmText, true); return; }
               commit({ active: false, label: "已取消" });
@@ -2176,7 +2281,7 @@ function sshui() {
               resolve();
               return;
             }
-            if (xhr.status === 409 && data.needsConfirm && !confirmText) {
+            if ((xhr.status === 409 || data.needsConfirm) && data.needsConfirm && !confirmText) {
               const typed = await app.ask((data.error || "需要确认") + "\n主机：" + alias + "\n路径：" + remoteDir + "\n请输入：" + (data.confirm || alias));
               if (typed == null) {
                 commit({ active: false, label: "已取消" });
@@ -2214,7 +2319,8 @@ function sshui() {
       await this.ensureSession();
       const id = "dn" + Date.now().toString(36) + Math.floor(Math.random() * 1000);
       const name = entry.name || "download";
-      this.patchTransfer(id, { id: id, alias: alias, name: name, loaded: 0, total: 0, active: true, label: "下载中" });
+      const known = !entry.dir && Number(entry.size) > 0 ? Number(entry.size) : 0;
+      this.patchTransfer(id, { id: id, alias: alias, name: name, loaded: 0, total: known, active: true, label: "下载中" });
       const ctrl = new AbortController();
       transferCtl.set(id, ctrl);
       let confirmText = "";
@@ -2223,10 +2329,15 @@ function sshui() {
           const res = await this.api("/api/download", {
             method: "POST",
             signal: ctrl.signal,
-            headers: { "Content-Type": "application/json" },
+            headers: { "Content-Type": "application/json", "Accept": "application/x-ndjson" },
             body: JSON.stringify({ alias: alias, path: entry.path, local: this.downloadDir || "", confirm: confirmText })
           });
-          const data = await this.parseJSON(res);
+          const ctype = String(res.headers.get("content-type") || "");
+          const data = ctype.indexOf("ndjson") >= 0
+            ? await readNDJSON(res, (msg) => {
+              this.patchTransfer(id, { loaded: Number(msg.loaded) || 0, total: Number(msg.total) || known, active: true, label: "下载中" });
+            })
+            : await this.parseJSON(res);
           if (res.status === 409 && data.needsConfirm && !confirmText) {
             const typed = await this.ask((data.error || "需要确认") + "\n主机：" + alias + "\n路径：" + entry.path + "\n请输入：" + (data.confirm || alias));
             if (typed == null) {
@@ -2240,8 +2351,12 @@ function sshui() {
           if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
           const saved = data.local || "";
           const label = saved ? ("已保存到 " + saved) : "完成";
-          this.patchTransfer(id, { loaded: 1, total: 1, active: false, label: label });
-          this.finishTransfer(id, { loaded: 1, total: 1, label: label });
+          const current = (this.transfers || []).find((t) => t.id === id) || {};
+          let totalBytes = Number(current.total) || known || 0;
+          let loadedBytes = Number(current.loaded) || 0;
+          if (totalBytes > 0) loadedBytes = totalBytes;
+          this.patchTransfer(id, { loaded: loadedBytes, total: totalBytes, active: false, label: label });
+          this.finishTransfer(id, { loaded: loadedBytes, total: totalBytes, label: label });
           if (saved) this.toast(label);
           return;
         }
@@ -2281,10 +2396,12 @@ function sshui() {
 
     itemPct(item) {
       if (!item) return 0;
-      if (!item.active && item.label === "完成") return 100;
+      const label = String(item.label || "");
+      const done = !item.active && (label === "完成" || label.indexOf("已保存") === 0);
       const total = Number(item.total) || 0;
       const loaded = Number(item.loaded) || 0;
-      if (!total) return 0;
+      if (!total) return done ? 100 : 0;
+      if (done) return 100;
       return (100 * loaded) / total;
     },
 
