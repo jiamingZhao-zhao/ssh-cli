@@ -621,7 +621,7 @@ function sshui() {
 
     async pickDownloadDir() {
       try {
-        const data = await this.readJSON(await this.api("/api/download-dir", { method: "POST" }));
+        const data = await this.postJSON("/api/download-dir", {});
         if (!data || data.cancelled) return;
         const dir = String(data.path || "").trim();
         if (!dir) return;
@@ -1731,7 +1731,19 @@ function sshui() {
         const bv = key === "mem" ? (Number(b.rss) || 0) : (Number(b.cpu) || 0);
         return (av - bv) * dir;
       });
-      return rows.slice(0, 5);
+      return rows.slice(0, 7);
+    },
+
+    diskMountLabel(mount) {
+      let m = String(mount || "").trim();
+      if (!m) return "";
+      while (m.length > 1 && m.endsWith("/")) m = m.slice(0, -1);
+      return m;
+    },
+
+    visibleDisks() {
+      const disks = (this.metrics && this.metrics.disks) || [];
+      return disks.filter((d) => this.diskMountLabel(d && d.mount) === "/");
     },
 
     procShort(p) {
@@ -1764,7 +1776,7 @@ function sshui() {
       return pct + " · " + this.formatBytes(used) + " / " + this.formatBytes(total);
     },
 
-    diskEmpty() { return !this.metrics || !this.metrics.disks || this.metrics.disks.length === 0; },
+    diskEmpty() { return this.visibleDisks().length === 0; },
     procEmpty() { return !this.metrics || !this.metrics.procs || this.metrics.procs.length === 0; },
     metricsPending() {
       return this.workspaceLive() && !(this.errors && this.errors.metrics) && !(this.metrics && this.metrics.connected);

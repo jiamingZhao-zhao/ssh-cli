@@ -189,13 +189,13 @@
               <div class="empty" x-show="workspaceLive() && diskEmpty() && !metricsPending()">
                 <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">没有磁盘数据</p>
-                <p class="empty-subtitle">连接主机后会显示各挂载点用量。</p>
+                <p class="empty-subtitle">连接主机后会显示根分区用量。</p>
                 <div class="empty-action"><button class="btn btn-primary btn-sm" type="button" @click="refreshMetrics()">刷新</button></div>
               </div>
-              <template x-for="d in metrics.disks" :key="d.mount">
+              <template x-for="d in visibleDisks()" :key="d.mount">
                 <div class="ws-meter">
                   <div class="ws-meter-label">
-                    <span class="ws-disk-label">磁盘<span class="ws-disk-mount" x-show="d.mount" x-text="d.mount"></span></span>
+                    <span class="ws-disk-label">磁盘<span class="ws-disk-mount" x-show="diskMountLabel(d.mount) && diskMountLabel(d.mount) !== '/'" x-text="diskMountLabel(d.mount)"></span></span>
                     <span x-text="diskText(d)"></span>
                   </div>
                   <div class="ws-meter-track"><div class="ws-meter-bar" :style="barStyle(diskPct(d.percent))"></div></div>
@@ -240,8 +240,13 @@
               <p class="ws-quiet mb-0" x-show="workspaceLive() && noteText()" x-text="noteText()"></p>
               </div>
             </aside>
+            <div class="ws-side-gap" aria-hidden="true"></div>
             <aside class="ws-dl-rail" aria-label="传输队列">
-              <div class="ws-dl-head">
+              <div class="ws-dl-empty" x-show="!(transfers || []).length">
+                <div class="ws-kicker">传输队列</div>
+                <div class="ws-dl-empty-box" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')" @click="pickDownloadDir()" role="button" tabindex="0" aria-label="选择下载目录"></div>
+              </div>
+              <div class="ws-dl-head" x-show="(transfers || []).length">
                 <div class="ws-dl-title">
                   <div class="ws-kicker">传输队列</div>
                   <button type="button" class="ws-dl-path" @click="pickDownloadDir()" aria-label="选择下载目录" :title="downloadDirLabel()" x-text="downloadDirLabel()"></button>
@@ -249,13 +254,8 @@
                 </div>
                 <button type="button" class="btn btn-outline-secondary btn-sm" x-show="hasFinishedTransfers()" @click="clearFinishedTransfers()">清除已完成</button>
               </div>
-              <div class="ws-download-lane" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载。本机 ssh-cli 用和命令行相同的 SFTP 写到所选目录。</div>
-              <div class="ws-dl-list">
-                <div class="empty ws-dl-empty" x-show="!(transfers || []).length">
-                  <div class="empty-ico" aria-hidden="true"></div>
-                  <p class="empty-title">没有下载的文件</p>
-                  <p class="empty-subtitle">把远端文件拖到上面，就会保存到所选目录。未选择时用默认 Downloads。</p>
-                </div>
+              <div class="ws-download-lane" x-show="(transfers || []).length" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载。本机 ssh-cli 用和命令行相同的 SFTP 写到所选目录。</div>
+              <div class="ws-dl-list" x-show="(transfers || []).length">
                 <template x-for="item in transfers" :key="'q-' + item.id">
                   <div class="ws-queue-row">
                     <div class="ws-queue-name" :title="item.name" x-text="item.name"></div>
@@ -272,6 +272,19 @@
             <div class="ws-gutter ws-gutter-v" role="separator" aria-orientation="vertical" aria-label="调整概况宽度" @mousedown.prevent="beginSplit('side', $event)"></div>
               <div class="ws-upper" data-pane="terminal">
                 <div class="ws-term-bar">
+                  <div class="ws-tabs" x-show="termTabs.length > 0">
+                    <div class="term-tabs" role="tablist">
+                      <template x-for="tab in termTabs" :key="tab.id">
+                        <div class="term-tab" role="presentation" :class="{ active: tab.id === termActive }">
+                          <button class="term-tab-label" type="button" role="tab" :aria-selected="tab.id === termActive" @click="showPane(tab.id)" x-text="tab.alias"></button>
+                          <span class="term-tab-via" x-show="tab.id === termActive && viaOf(tab.alias)" x-text="viaOf(tab.alias)"></span>
+                          <span class="term-tab-busy" x-show="tabBusy(tab)" aria-hidden="true"></span>
+                          <span class="term-tab-state" x-show="tab.state === 'closed' || tab.state === 'expired'">已断开</span>
+                          <button class="term-tab-close" type="button" @click="closeTab(tab.id)" :aria-label="'关闭 ' + tab.alias">×</button>
+                        </div>
+                      </template>
+                    </div>
+                  </div>
                   <div class="btn-list">
                     <select class="form-select w-auto" x-model="termAlias" @change="onTermHost()" aria-label="终端主机">
                       <template x-for="h in sortedHosts()" :key="'term-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
@@ -279,19 +292,6 @@
                     <button class="btn btn-primary" type="button" :disabled="termOpening" @click="openTerminal(termAlias)" x-text="termOpening ? '连接中…' : '打开'">打开</button>
                     <button class="btn btn-outline-secondary" type="button" @click="openWorkspaceHost()">连接</button>
                     <button class="btn btn-outline-secondary" type="button" @click="closeWorkspaceHost()">断开</button>
-                  </div>
-                </div>
-                <div class="ws-tabs" x-show="termTabs.length > 0">
-                  <div class="term-tabs" role="tablist">
-                    <template x-for="tab in termTabs" :key="tab.id">
-                      <div class="term-tab" role="presentation" :class="{ active: tab.id === termActive }">
-                        <button class="term-tab-label" type="button" role="tab" :aria-selected="tab.id === termActive" @click="showPane(tab.id)" x-text="tab.alias"></button>
-                        <span class="term-tab-via" x-show="tab.id === termActive && viaOf(tab.alias)" x-text="viaOf(tab.alias)"></span>
-                        <span class="term-tab-busy" x-show="tabBusy(tab)" aria-hidden="true"></span>
-                        <span class="term-tab-state" x-show="tab.state === 'closed' || tab.state === 'expired'">已断开</span>
-                        <button class="term-tab-close" type="button" @click="closeTab(tab.id)" :aria-label="'关闭 ' + tab.alias">×</button>
-                      </div>
-                    </template>
                   </div>
                 </div>
                 <div class="ws-banner" x-show="errors.terminal">
