@@ -151,7 +151,8 @@
               <button type="button" class="btn btn-sm" :aria-pressed="panel === 'overview'" @click="selectPanel('overview')">概况</button>
               <button type="button" class="btn btn-sm" :aria-pressed="panel === 'files'" @click="selectPanel('files')">文件</button>
             </div>
-            <aside class="ws-overview" data-pane="overview" :style="sideStyle()">
+            <div class="ws-side" :style="sideStyle()">
+            <aside class="ws-overview" data-pane="overview">
               <div class="empty" x-show="!workspaceLive()">
                 <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">未连接</p>
@@ -159,7 +160,6 @@
               </div>
               <div x-show="workspaceLive()">
               <div class="ws-overview-head">
-                <div class="ws-kicker">主机</div>
                 <div class="ws-host" x-text="panelAlias() || '未选择'"></div>
                 <div class="ws-addr" x-text="overviewAddr()"></div>
                 <div class="ws-via" x-show="viaOf(panelAlias())" x-text="viaOf(panelAlias())"></div>
@@ -187,7 +187,6 @@
                 <div class="ws-meter-track"><div class="ws-meter-bar ws-meter-swap" :style="barStyle(memPct(metrics.swap))"></div></div>
               </div>
               <div class="ws-block" x-show="workspaceLive()">
-                <div class="ws-kicker">进程</div>
                 <div class="empty" x-show="procEmpty() && !metricsPending()">
                   <div class="empty-ico" aria-hidden="true"></div>
                   <p class="empty-title">没有进程数据</p>
@@ -196,9 +195,9 @@
                 </div>
                 <table class="table table-sm table-vcenter ws-proc mb-0" x-show="!procEmpty()">
                   <colgroup>
-                    <col class="ws-proc-eq">
-                    <col class="ws-proc-eq">
-                    <col class="ws-proc-eq">
+                    <col class="ws-proc-mem-col">
+                    <col class="ws-proc-cpu-col">
+                    <col class="ws-proc-cmd-col">
                   </colgroup>
                   <thead>
                     <tr>
@@ -213,18 +212,15 @@
                         <td class="ws-proc-mem" x-text="procMem(p)"></td>
                         <td class="ws-proc-cpu" x-text="procCpu(p)"></td>
                         <td class="ws-comm">
-                          <span class="ws-comm-text" :title="procCmd(p)" x-text="procCmd(p)"></span>
-                          <button type="button" class="btn btn-outline-secondary btn-sm ws-proc-detail" @click.stop="openProc(p)">详情</button>
+                          <div class="ws-comm-row">
+                            <span class="ws-comm-text" :title="procCmd(p)" x-text="procCmd(p)"></span>
+                            <button type="button" class="btn btn-outline-secondary btn-sm ws-proc-detail" @click.stop="openProc(p)">详情</button>
+                          </div>
                         </td>
                       </tr>
                     </template>
                   </tbody>
                 </table>
-              </div>
-              <div class="ws-block" x-show="workspaceLive()">
-                <div class="ws-kicker">网络</div>
-                <div class="ws-net-chart"><canvas id="ws-net-chart" aria-label="网络流量"></canvas></div>
-                <div class="ws-quiet mb-0" x-text="netText()"></div>
               </div>
               <div class="ws-block" x-show="workspaceLive()">
                 <div class="ws-kicker">磁盘</div>
@@ -244,6 +240,29 @@
               <p class="ws-quiet mb-0" x-show="workspaceLive() && noteText()" x-text="noteText()"></p>
               </div>
             </aside>
+            <aside class="ws-dl-rail" aria-label="传输队列">
+              <div class="ws-dl-head">
+                <div class="ws-kicker">传输队列</div>
+                <button type="button" class="btn btn-outline-secondary btn-sm" @click="clearFinishedTransfers()" :disabled="!hasFinishedTransfers()">清除已完成</button>
+              </div>
+              <label class="ws-dl-local">
+                <span class="ws-quiet">保存到</span>
+                <input class="form-control form-control-sm" x-model="downloadDir" @change="saveDownloadDir()" placeholder="留空使用本机 Downloads" aria-label="下载保存目录" autocomplete="off" spellcheck="false">
+              </label>
+              <div class="ws-download-lane" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载。本机 ssh-cli 用和命令行相同的 SFTP 写到上面的目录。</div>
+              <div class="ws-dl-list">
+                <p class="ws-quiet" x-show="!(transfers || []).length">没有传输记录。</p>
+                <template x-for="item in transfers" :key="'q-' + item.id">
+                  <div class="ws-queue-row">
+                    <div class="ws-queue-name" :title="item.name" x-text="item.name"></div>
+                    <div class="ws-meter-track"><div class="ws-meter-bar" :class="{ 'is-busy': item.active && !item.total }" :style="barStyle(itemPct(item))"></div></div>
+                    <div class="ws-queue-meta" x-text="transferDetail(item)"></div>
+                    <button type="button" class="ws-seg-btn" x-show="item.active" @click="cancelTransfer(item.id)">取消</button>
+                  </div>
+                </template>
+              </div>
+            </aside>
+            </div>
             <div class="ws-gutter ws-gutter-v" role="separator" aria-orientation="vertical" aria-label="调整概况宽度" @mousedown.prevent="beginSplit('side', $event)"></div>
               <section class="ws-stage" data-drop="workspace" @dragenter.prevent="dragEnter($event)" @dragover.prevent="dragOver($event, '')" @dragleave="dragLeave($event)" @drop.prevent="dropFiles($event, '')">
               <div class="ws-upper" data-pane="terminal">
@@ -332,9 +351,11 @@
                         <tbody>
                           <template x-for="e in files.entries" :key="e.path">
                             <tr :class="{ 'is-selected': selectedPath === e.path, 'is-drop': e.dir && drop.target === e.path }" draggable="true" @dragstart="dragRemoteStart($event, e)" @dragend="dragRemoteEnd($event, e)" @dragover.prevent.stop="dragOver($event, e.dir ? e.path : '')" @drop.prevent.stop="dropFiles($event, e.dir ? e.path : '')" @click="selectEntry(e)" @dblclick="openEntry(e)" @contextmenu.prevent="openMenu($event, e)">
-                              <td class="ws-name" :class="e.dir ? 'is-dir' : ''">
-                                <svg x-show="e.dir" class="ws-folder is-open" viewBox="0 0 16 14" aria-hidden="true"><path d="M1.2 2.4c0-.7.5-1.2 1.2-1.2h3.2L7 2.6h6.6c.7 0 1.2.5 1.2 1.2v7.4c0 .7-.5 1.2-1.2 1.2H2.4c-.7 0-1.2-.5-1.2-1.2V2.4z"/></svg>
-                                <span x-text="e.name"></span>
+                              <td class="ws-name-cell" :class="e.dir ? 'is-dir' : ''">
+                                <span class="ws-name">
+                                  <svg x-show="e.dir" class="ws-folder is-open" viewBox="0 0 16 14" aria-hidden="true"><path d="M1.2 2.4c0-.7.5-1.2 1.2-1.2h3.2L7 2.6h6.6c.7 0 1.2.5 1.2 1.2v7.4c0 .7-.5 1.2-1.2 1.2H2.4c-.7 0-1.2-.5-1.2-1.2V2.4z"/></svg>
+                                  <span x-text="e.name"></span>
+                                </span>
                               </td>
                               <td class="text-secondary" x-text="fileSize(e)"></td>
                               <td class="text-secondary" x-text="formatTime(e.mtime)"></td>
@@ -357,24 +378,6 @@
                         <div class="empty-action"><button class="btn btn-primary" type="button" @click="pickUpload()">上传</button></div>
                       </div>
                     </div>
-                    <aside class="ws-dl-rail" aria-label="传输队列">
-                      <div class="ws-dl-head">
-                        <div class="ws-kicker">传输队列</div>
-                        <button type="button" class="btn btn-outline-secondary btn-sm" @click="clearFinishedTransfers()" :disabled="!hasFinishedTransfers()">清除已完成</button>
-                      </div>
-                      <div class="ws-download-lane" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载到本机。浏览器不能直接拖进系统文件夹。</div>
-                      <div class="ws-dl-list">
-                        <p class="ws-quiet" x-show="!(transfers || []).length">没有传输记录。</p>
-                        <template x-for="item in transfers" :key="'q-' + item.id">
-                          <div class="ws-queue-row">
-                            <div class="ws-queue-name" :title="item.name" x-text="item.name"></div>
-                            <div class="ws-meter-track"><div class="ws-meter-bar" :style="barStyle(itemPct(item))"></div></div>
-                            <div class="ws-queue-meta" x-text="transferDetail(item)"></div>
-                            <button type="button" class="ws-seg-btn" x-show="item.active" @click="cancelTransfer(item.id)">取消</button>
-                          </div>
-                        </template>
-                      </div>
-                    </aside>
                   </div>
                 </div>
                 <div x-show="workspaceLive() && files.mode === 'history'" class="ws-history" data-pane="history-body">

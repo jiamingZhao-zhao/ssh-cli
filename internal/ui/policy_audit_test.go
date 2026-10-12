@@ -171,13 +171,18 @@ func TestForgedBrowserCannotSkipWritePolicy(t *testing.T) {
 	if okUpload.Code != 200 {
 		t.Fatalf("dev upload %d %s", okUpload.Code, okUpload.Body.String())
 	}
-	okDownBody, err := json.Marshal(map[string]string{"alias": "box", "path": remote})
+	saveDir := t.TempDir()
+	okDownBody, err := json.Marshal(map[string]string{"alias": "box", "path": remote, "local": saveDir})
 	if err != nil {
 		t.Fatal(err)
 	}
 	okDown := forge("/api/download", string(okDownBody), "application/json")
-	if okDown.Code != 200 || !bytes.Contains(okDown.Body.Bytes(), []byte("uploaded-marker")) {
+	if okDown.Code != 200 || bytes.Contains(okDown.Body.Bytes(), []byte("uploaded-marker")) {
 		t.Fatalf("dev download %d %q", okDown.Code, okDown.Body.String())
+	}
+	savedBytes, err := os.ReadFile(filepath.Join(saveDir, "up.txt"))
+	if err != nil || string(savedBytes) != "uploaded-marker" {
+		t.Fatalf("dev download file %q %v", savedBytes, err)
 	}
 
 	logged := auditText(t, dir)

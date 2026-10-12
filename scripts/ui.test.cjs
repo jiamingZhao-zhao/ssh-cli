@@ -73,3 +73,38 @@ test('host switch restores each host directory independently', () => {
   app.explicitAlias = app.termAlias = 'a'; app.syncWorkspace();
   assert.equal(app.files.path, '/work/a'); assert.equal(app.pathDraft, '/work/a');
 });
+test('file tree anchors at / and shows basenames', async () => {
+  const { app } = fixture();
+  app.termTabs = [{ id: 't', alias: 'a', state: 'connected' }];
+  app.termActive = 't';
+  const paths = [];
+  app.postRead = async (_url, body) => {
+    paths.push(body.path);
+    if (body.path === '/') {
+      return { path: '/', home: '/root', entries: [
+        { name: 'bin', path: '/bin', dir: true },
+        { name: 'mnt', path: '/mnt', dir: true },
+        { name: 'root', path: '/root', dir: true }
+      ] };
+    }
+    return { path: '/root', home: '/root', entries: [
+      { name: '.ansible', path: '/root/.ansible', dir: true }
+    ] };
+  };
+  app.tree['/root'] = { name: '/root', open: false, loaded: false, dirs: [] };
+  await app.listFiles('/root');
+  assert.equal(app.treeRoot, '/');
+  assert.equal(app.tree['/root'].name, 'root');
+  const rows = app.treeRows();
+  assert.equal(rows.find((row) => row.path === '/root').name, 'root');
+  assert.ok(rows.some((row) => row.path === '/bin' && row.name === 'bin'));
+  assert.ok(rows.some((row) => row.path === '/mnt' && row.name === 'mnt'));
+  assert.equal(rows.some((row) => row.name === '/root'), false);
+  assert.ok(paths.includes('/'));
+});
+test('transfers do not keep a browser byte cap', () => {
+  assert.equal(source.includes('128 MiB'), false);
+  assert.equal(source.includes('63 MiB'), false);
+  assert.equal(source.includes('new Blob(chunks)'), false);
+  assert.equal(source.includes('local: this.downloadDir'), true);
+});

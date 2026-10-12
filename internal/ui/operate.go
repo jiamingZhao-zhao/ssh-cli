@@ -1,9 +1,7 @@
 package ui
 
 import (
-	"archive/tar"
 	"bytes"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"errors"
@@ -13,7 +11,6 @@ import (
 	"os"
 	"path"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
@@ -181,7 +178,9 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 }
 
 func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 64<<20)
+	// No byte cap: the browser can only hand over the file bytes, then this
+	// process writes them with transfer.UploadWithOptions, the same SFTP path
+	// the CLI uses. Multipart spills past 32MiB onto disk instead of a blob.
 	if err := r.ParseMultipartForm(32 << 20); err != nil {
 		writeFail(w, err)
 		return
@@ -277,6 +276,7 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		Alias   string `json:"alias"`
 		Path    string `json:"path"`
+		Local   string `json:"local"`
 		Confirm string `json:"confirm"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&body); err != nil {
@@ -292,76 +292,79 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	if !s.requireCapability(w, h, eff, "download", body.Path, body.Confirm, audit.OpDownload, started) {
 		return
 	}
+	remote := transfer.RestoreRemotePath(body.Path)
+	dest, err := localDownloadDest(body.Local, remote)
+	if err != nil {
+		writeFail(w, err)
+		return
+	}
 	s.reconcile()
 	ctx := r.Context()
 	client, err := s.dialResolved(ctx, h)
 	if err != nil {
-		s.writeAudit(h, audit.OpDownload, audit.OpDownload, body.Path, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
 	defer client.Close()
-	// Closing the dedicated client unblocks a stalled SFTP read when the
-	// browser aborts. This connection is not the terminal's.
-	stop := make(chan struct{})
-	defer close(stop)
-	go func() {
-		select {
-		case <-ctx.Done():
-			_ = client.Close()
-		case <-stop:
-		}
-	}()
-	remote := transfer.RestoreRemotePath(body.Path)
-	sf, err := transfer.Client(client.Raw())
-	if err != nil {
-		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
+	// Same writer as `ssh-cli download`: SFTP straight onto this machine.
+	// The page only shows status. It does not buffer the file.
+	if err := transfer.DownloadContext(ctx, client.Raw(), remote, dest, nil); err != nil {
+		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
-	defer sf.Close()
-	info, err := sf.Stat(remote)
-	if err != nil {
-		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
-		writeFail(w, err)
-		return
+	s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusOK, 0, "download "+remote+" -> "+dest, "", false, started)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "remote": remote, "local": dest})
+}
+
+// localDownloadDest is the CLI local argument. An empty request uses
+// ~/Downloads when that directory exists, otherwise ~/ssh-cli-downloads.
+func localDownloadDest(requested, remote string) (string, error) {
+	base := path.Base(path.Clean(strings.ReplaceAll(remote, "\\", "/")))
+	if base == "." || base == "/" || base == "" {
+		base = "download"
 	}
-	if info.IsDir() {
-		tmp, err := os.MkdirTemp("", "ssh-cli-download-*")
+	dir := strings.TrimSpace(requested)
+	var err error
+	if dir == "" {
+		dir, err = defaultDownloadDir()
 		if err != nil {
-			writeFail(w, err)
-			return
+			return "", err
 		}
-		defer os.RemoveAll(tmp)
-		dest := filepath.Join(tmp, "payload")
-		if err := transfer.Download(client.Raw(), remote, dest, nil); err != nil {
-			s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
-			writeFail(w, err)
-			return
+	} else {
+		dir = filepath.Clean(dir)
+		if !filepath.IsAbs(dir) {
+			return "", fmt.Errorf("本机保存目录需要绝对路径")
 		}
-		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusOK, 0, "directory "+remote, "", false, started)
-		w.Header().Set("Content-Type", "application/gzip")
-		w.Header().Set("Content-Disposition", "attachment; filename=\"download.tar.gz\"")
-		_ = tarGz(w, dest)
-		return
+		if err = os.MkdirAll(dir, 0o755); err != nil {
+			return "", err
+		}
 	}
-	src, err := sf.Open(remote)
+	st, err := os.Stat(dir)
 	if err != nil {
-		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
-		writeFail(w, err)
-		return
+		return "", err
 	}
-	defer src.Close()
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", contentDisposition(remote))
-	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	// Read in small chunks so cancel closes the client between packets.
-	// io.Copy would use sftp's concurrent WriteTo.
-	if err := copyWithCancel(ctx, w, src); err != nil {
-		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
-		return
+	if !st.IsDir() {
+		return "", fmt.Errorf("本机保存位置不是目录")
 	}
-	s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, "", audit.StatusOK, 0, fmt.Sprintf("bytes=%d %s", info.Size(), remote), "", false, started)
+	return filepath.Join(dir, base), nil
+}
+
+func defaultDownloadDir() (string, error) {
+	home, err := os.UserHomeDir()
+	if err == nil && home != "" {
+		downloads := filepath.Join(home, "Downloads")
+		if st, statErr := os.Stat(downloads); statErr == nil && st.IsDir() {
+			return downloads, nil
+		}
+		dir := filepath.Join(home, "ssh-cli-downloads")
+		if mkErr := os.MkdirAll(dir, 0o755); mkErr != nil {
+			return "", mkErr
+		}
+		return dir, nil
+	}
+	return os.MkdirTemp("", "ssh-cli-downloads-")
 }
 
 // requireCapability applies upload and download checks for every caller,
@@ -387,37 +390,6 @@ func (s *service) requireCapability(w http.ResponseWriter, h config.ResolvedHost
 type capabilityError string
 
 func (e capabilityError) Error() string { return string(e) }
-
-func contentDisposition(name string) string {
-	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
-	if name == "." || name == "" || name == "/" {
-		name = "download"
-	}
-	return "attachment; filename=" + strconv.Quote(name)
-}
-
-func copyWithCancel(ctx context.Context, dst io.Writer, src io.Reader) error {
-	buf := make([]byte, 32*1024)
-	for {
-		if ctx != nil {
-			if err := ctx.Err(); err != nil {
-				return err
-			}
-		}
-		n, rerr := src.Read(buf)
-		if n > 0 {
-			if _, werr := dst.Write(buf[:n]); werr != nil {
-				return werr
-			}
-		}
-		if rerr != nil {
-			if rerr == io.EOF {
-				return nil
-			}
-			return rerr
-		}
-	}
-}
 
 func (s *service) relayAPI(w http.ResponseWriter, r *http.Request) {
 	var body struct {
@@ -665,48 +637,3 @@ func (b *limitBuf) Write(p []byte) (int, error) {
 }
 
 func (b *limitBuf) String() string { return b.buf.String() }
-
-func tarGz(w io.Writer, root string) error {
-	gz := gzip.NewWriter(w)
-	tw := tar.NewWriter(gz)
-	err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, path)
-		if err != nil {
-			return err
-		}
-		if rel == "." {
-			return nil
-		}
-		hdr, err := tar.FileInfoHeader(info, "")
-		if err != nil {
-			return err
-		}
-		hdr.Name = filepath.ToSlash(rel)
-		if err := tw.WriteHeader(hdr); err != nil {
-			return err
-		}
-		if info.IsDir() {
-			return nil
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			return err
-		}
-		_, err = io.Copy(tw, f)
-		_ = f.Close()
-		return err
-	})
-	if err != nil {
-		_ = tw.Close()
-		_ = gz.Close()
-		return err
-	}
-	if err := tw.Close(); err != nil {
-		_ = gz.Close()
-		return err
-	}
-	return gz.Close()
-}

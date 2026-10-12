@@ -118,13 +118,24 @@ func TestUIExecUploadDownload(t *testing.T) {
 		t.Fatalf("kept name %q %v entries %v", named, err, entries)
 	}
 
-	body, err := json.Marshal(map[string]string{"alias": "box", "path": remote})
+	saveDir := t.TempDir()
+	body, err := json.Marshal(map[string]string{"alias": "box", "path": remote, "local": saveDir})
 	if err != nil {
 		t.Fatal(err)
 	}
 	rr = post("/api/download", string(body))
-	if rr.Code != 200 || !bytes.Contains(rr.Body.Bytes(), []byte("uploaded")) {
+	if rr.Code != 200 {
 		t.Fatalf("download %d %q", rr.Code, rr.Body.String())
+	}
+	var saved struct {
+		Local string `json:"local"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &saved); err != nil {
+		t.Fatal(err)
+	}
+	gotFile, err := os.ReadFile(saved.Local)
+	if err != nil || string(gotFile) != "uploaded" || saved.Local != filepath.Join(saveDir, "up.txt") {
+		t.Fatalf("download wrote %q (%v) body %s", gotFile, err, rr.Body.String())
 	}
 
 	rr = post("/api/exec", `{"alias":"box","command":"rm -rf /"}`)
@@ -159,6 +170,30 @@ func TestUIExecUploadDownload(t *testing.T) {
 	imp := post("/api/config/import", `{"yaml":`+mustJSON(t, doc.YAML)+`}`)
 	if imp.Code != 200 {
 		t.Fatalf("import %d %s", imp.Code, imp.Body.String())
+	}
+}
+
+func TestDefaultDownloadDir(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	got, err := defaultDownloadDir()
+	if err != nil || got != filepath.Join(home, "ssh-cli-downloads") {
+		t.Fatalf("fallback dir %q %v", got, err)
+	}
+	if err := os.Mkdir(filepath.Join(home, "Downloads"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	got, err = defaultDownloadDir()
+	if err != nil || got != filepath.Join(home, "Downloads") {
+		t.Fatalf("downloads dir %q %v", got, err)
+	}
+	if _, err := localDownloadDest("relative", "/var/log/app.log"); err == nil {
+		t.Fatal("relative local dir should be rejected")
+	}
+	dest, err := localDownloadDest(home, "/var/log/app.log")
+	if err != nil || dest != filepath.Join(home, "app.log") {
+		t.Fatalf("dest %q %v", dest, err)
 	}
 }
 
