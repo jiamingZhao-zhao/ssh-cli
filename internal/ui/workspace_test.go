@@ -55,6 +55,12 @@ func TestWorkspaceChrome(t *testing.T) {
 		"传输队列",
 		"还没有打开的终端",
 		"ws-via",
+		"清除已完成",
+		"ws-net-chart",
+		"ws-folder",
+		"详情",
+		"openProc",
+		"fileSize",
 	} {
 		if !strings.Contains(chunk, s) {
 			t.Fatalf("workspace missing %s", s)
@@ -77,7 +83,7 @@ func TestWorkspaceChrome(t *testing.T) {
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}

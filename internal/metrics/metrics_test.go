@@ -32,6 +32,19 @@ func TestParseSnapshotPieces(t *testing.T) {
 	if len(aux) != 1 || aux[0].PID != "1" || aux[0].Comm != "init" || aux[0].RSS != 2048 {
 		t.Fatalf("aux %#v", aux)
 	}
+	wide := ParsePS("PID PPID USER %CPU %MEM RSS STAT ELAPSED COMMAND\n9 1 root 1.3 0.4 762573 Ssl 01:02:03 java -jar /opt/ag.jar\n")
+	if len(wide) != 1 || wide[0].PPID != "1" || wide[0].Stat != "Ssl" || wide[0].ETime != "01:02:03" || wide[0].Args != "java -jar /opt/ag.jar" || wide[0].Mem != "0.4" {
+		t.Fatalf("wide %#v", wide)
+	}
+	if _, _, err := ProcCommands("9"); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ProcCommands("abc"); err == nil {
+		t.Fatal("bad pid accepted")
+	}
+	if got := ParseCwd("lrwxrwxrwx 1 root root 0 Oct 12 10:00 /proc/9/cwd -> /opt/app\n"); got != "/opt/app" {
+		t.Fatalf("cwd %q", got)
+	}
 	rss := ParsePS("PID USER %CPU RSS COMMAND\n9 root 1.3 762573 java\n")
 	if len(rss) != 1 || rss[0].RSS != 762573 || rss[0].CPU != "1.3" || rss[0].Comm != "java" {
 		t.Fatalf("rss %#v", rss)

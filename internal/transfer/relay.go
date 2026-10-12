@@ -10,7 +10,6 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -27,12 +26,12 @@ type RelayResult struct {
 func Relay(src, dst *ssh.Client, srcPath, dstPath string) (RelayResult, error) {
 	srcPath = RestoreRemotePath(srcPath)
 	dstPath = RestoreRemotePath(dstPath)
-	sfSrc, err := sftp.NewClient(src)
+	sfSrc, err := Client(src)
 	if err != nil {
 		return RelayResult{}, err
 	}
 	defer sfSrc.Close()
-	sfDst, err := sftp.NewClient(dst)
+	sfDst, err := Client(dst)
 	if err != nil {
 		return RelayResult{}, err
 	}

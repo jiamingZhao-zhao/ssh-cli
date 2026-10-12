@@ -172,6 +172,38 @@ func TestExecKeepsBytesWithoutTrailingNewline(t *testing.T) {
 	}
 }
 
+func TestOpenConnThenExecStartsShell(t *testing.T) {
+	pool, _, reasons := testPool(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := pool.OpenConn(ctx, "main", testFingerprint); err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	code, err := pool.Exec(ctx, "main", testFingerprint, "printf ok", &out, nil)
+	if err != nil || code != 0 || out.String() != "ok" {
+		t.Fatalf("code %d err %v out %q reasons %v", code, err, out.String(), *reasons)
+	}
+	if len(pool.List()) != 1 {
+		t.Fatalf("session dropped: %+v reasons %v", pool.List(), *reasons)
+	}
+	for _, r := range *reasons {
+		if strings.Contains(r, "desync") {
+			t.Fatalf("desync %v", *reasons)
+		}
+	}
+	if strings.Contains(errString(err), "has no shell") {
+		t.Fatalf("noisy shell error %v", err)
+	}
+}
+
+func errString(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
 func TestExecTimeoutDropsSession(t *testing.T) {
 	pool, _, reasons := testPool(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)

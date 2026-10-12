@@ -213,29 +213,24 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	_ = tmp.Close()
 	s.reconcile()
-	fp := h.Host.ConnFingerprint()
-	if err := s.pool.Open(r.Context(), h.Alias, fp, false); err != nil {
+	client, err := s.dialResolved(r.Context(), h)
+	if err != nil {
 		writeFail(w, err)
 		return
 	}
-	err = s.pool.Use(h.Alias, fp, func() error {
-		client, ok := s.pool.Client(h.Alias, fp)
-		if !ok {
-			return fmt.Errorf("session %s is not open", h.Alias)
-		}
-		return transfer.UploadChecked(client, tmpName, remote, nil, func(dest string) error {
-			if human {
-				return nil
-			}
-			d := guard.DecideCapability(eff, "upload", dest)
-			if !d.Allowed {
-				return fmt.Errorf("%s", decisionText(d))
-			}
-			if d.NeedsConfirm && confirm != h.Alias {
-				return fmt.Errorf("type the host alias to confirm")
-			}
+	defer client.Close()
+	err = transfer.UploadChecked(client.Raw(), tmpName, remote, nil, func(dest string) error {
+		if human {
 			return nil
-		})
+		}
+		d := guard.DecideCapability(eff, "upload", dest)
+		if !d.Allowed {
+			return fmt.Errorf("%s", decisionText(d))
+		}
+		if d.NeedsConfirm && confirm != h.Alias {
+			return fmt.Errorf("type the host alias to confirm")
+		}
+		return nil
 	})
 	if err != nil {
 		writeFail(w, err)
@@ -267,52 +262,96 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	s.reconcile()
-	fp := h.Host.ConnFingerprint()
-	if err := s.pool.Open(r.Context(), h.Alias, fp, false); err != nil {
-		writeFail(w, err)
-		return
-	}
-	tmp, err := os.MkdirTemp("", "ssh-cli-download-*")
+	ctx := r.Context()
+	client, err := s.dialResolved(ctx, h)
 	if err != nil {
 		writeFail(w, err)
 		return
 	}
-	defer os.RemoveAll(tmp)
-	dest := filepath.Join(tmp, "payload")
-	err = s.pool.Use(h.Alias, fp, func() error {
-		client, ok := s.pool.Client(h.Alias, fp)
-		if !ok {
-			return fmt.Errorf("session %s is not open", h.Alias)
+	defer client.Close()
+	// Closing the dedicated client unblocks a stalled SFTP read when the
+	// browser aborts. This connection is not the terminal's.
+	stop := make(chan struct{})
+	defer close(stop)
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = client.Close()
+		case <-stop:
 		}
-		return transfer.Download(client, body.Path, dest, nil)
-	})
+	}()
+	remote := transfer.RestoreRemotePath(body.Path)
+	sf, err := transfer.Client(client.Raw())
 	if err != nil {
 		writeFail(w, err)
 		return
 	}
-	info, err := os.Stat(dest)
+	defer sf.Close()
+	info, err := sf.Stat(remote)
 	if err != nil {
 		writeFail(w, err)
 		return
 	}
 	if info.IsDir() {
-		w.Header().Set("Content-Type", "application/gzip")
-		w.Header().Set("Content-Disposition", "attachment; filename=\"download.tar.gz\"")
-		if err := tarGz(w, dest); err != nil {
+		tmp, err := os.MkdirTemp("", "ssh-cli-download-*")
+		if err != nil {
+			writeFail(w, err)
 			return
 		}
+		defer os.RemoveAll(tmp)
+		dest := filepath.Join(tmp, "payload")
+		if err := transfer.Download(client.Raw(), remote, dest, nil); err != nil {
+			writeFail(w, err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/gzip")
+		w.Header().Set("Content-Disposition", "attachment; filename=\"download.tar.gz\"")
+		_ = tarGz(w, dest)
 		return
 	}
-	f, err := os.Open(dest)
+	src, err := sf.Open(remote)
 	if err != nil {
 		writeFail(w, err)
 		return
 	}
-	defer f.Close()
+	defer src.Close()
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("Content-Disposition", "attachment; filename="+filepath.Base(body.Path))
+	w.Header().Set("Content-Disposition", contentDisposition(remote))
 	w.Header().Set("Content-Length", strconv.FormatInt(info.Size(), 10))
-	_, _ = io.Copy(w, f)
+	// Read in small chunks so cancel closes the client between packets.
+	// io.Copy would use sftp's concurrent WriteTo.
+	_ = copyWithCancel(ctx, w, src)
+}
+
+func contentDisposition(name string) string {
+	name = path.Base(strings.ReplaceAll(name, "\\", "/"))
+	if name == "." || name == "" || name == "/" {
+		name = "download"
+	}
+	return "attachment; filename=" + strconv.Quote(name)
+}
+
+func copyWithCancel(ctx context.Context, dst io.Writer, src io.Reader) error {
+	buf := make([]byte, 32*1024)
+	for {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+		}
+		n, rerr := src.Read(buf)
+		if n > 0 {
+			if _, werr := dst.Write(buf[:n]); werr != nil {
+				return werr
+			}
+		}
+		if rerr != nil {
+			if rerr == io.EOF {
+				return nil
+			}
+			return rerr
+		}
+	}
 }
 
 func (s *service) relayAPI(w http.ResponseWriter, r *http.Request) {

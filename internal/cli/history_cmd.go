@@ -41,9 +41,12 @@ contain secrets.
 noDataOutflow discards the lines unless --allow-outflow is set and confirmed.
 The attempt is audited as op history with source cli.
 
-Fish stores commands as "- cmd:" lines. zsh extended history timestamps and
-bash history timestamps are stripped. Multiline commands and history from
-shells other than bash, zsh, and fish are not reconstructed.`,
+Fish stores commands as "- cmd:" lines and a following "when:" unix time when
+the file has one. zsh extended history (: <unix>:0;command) keeps that time.
+Bash records a time only when HISTTIMEFORMAT wrote a #unix line before the
+command; otherwise the time is not in the file and is not shown. Multiline
+commands and history from shells other than bash, zsh, and fish are not
+reconstructed.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			return a.readHistory(timeout, lines, allowOutflow)
 		},
@@ -86,17 +89,18 @@ func (a *App) readHistory(timeout string, lines int, allowOutflow bool) error {
 		return err
 	}
 	type view struct {
-		Host      string   `json:"host"`
-		Group     string   `json:"group"`
-		Env       string   `json:"env"`
-		Found     bool     `json:"found"`
-		Status    string   `json:"status"`
-		Path      string   `json:"path,omitempty"`
-		Shell     string   `json:"shell,omitempty"`
-		Lines     []string `json:"lines"`
-		Truncated bool     `json:"truncated,omitempty"`
-		Notes     []string `json:"notes,omitempty"`
-		Error     string   `json:"error,omitempty"`
+		Host      string         `json:"host"`
+		Group     string         `json:"group"`
+		Env       string         `json:"env"`
+		Found     bool           `json:"found"`
+		Status    string         `json:"status"`
+		Path      string         `json:"path,omitempty"`
+		Shell     string         `json:"shell,omitempty"`
+		Lines     []string       `json:"lines"`
+		Entries   []history.Line `json:"entries,omitempty"`
+		Truncated bool           `json:"truncated,omitempty"`
+		Notes     []string       `json:"notes,omitempty"`
+		Error     string         `json:"error,omitempty"`
 	}
 	views := make([]view, 0, len(plan))
 	final := 0
@@ -143,8 +147,10 @@ func (a *App) readHistory(timeout string, lines int, allowOutflow bool) error {
 				v.Notes = res.Notes
 				v.Error = res.Error
 				v.Lines = res.Lines
+				v.Entries = res.Entries
 				if suppress {
 					v.Lines = []string{}
+					v.Entries = nil
 					v.Notes = append(v.Notes, guard.OutflowDiscarded)
 				}
 			}
@@ -165,6 +171,19 @@ func (a *App) readHistory(timeout string, lines int, allowOutflow bool) error {
 				fmt.Fprintln(a.Out)
 				if suppress {
 					fmt.Fprintln(a.Out, guard.OutflowDiscarded)
+				} else if len(v.Entries) > 0 {
+					for _, line := range v.Entries {
+						if line.Time != "" {
+							fmt.Fprintf(a.Out, "%s  %s\n", line.Time, line.Command)
+						} else {
+							fmt.Fprintln(a.Out, line.Command)
+						}
+					}
+					for _, note := range v.Notes {
+						if strings.Contains(note, "timestamp") {
+							fmt.Fprintf(a.Err, "note: %s\n", note)
+						}
+					}
 				} else {
 					for _, line := range v.Lines {
 						fmt.Fprintln(a.Out, line)

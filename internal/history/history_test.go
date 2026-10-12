@@ -5,6 +5,7 @@ import (
 	"errors"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
@@ -46,6 +47,29 @@ func TestNormalizeAndScrub(t *testing.T) {
 	fish := Normalize("~/.local/share/fish/fish_history", "- cmd: echo hi\n  when: 1\n- cmd: ls\n")
 	if strings.Join(fish, ",") != "echo hi,ls" {
 		t.Fatalf("fish %#v", fish)
+	}
+}
+
+func TestNormalizeLinesKeepsRecordedTimes(t *testing.T) {
+	want := time.Unix(1600000000, 0).Local().Format("2006-01-02 15:04:05")
+	bash := NormalizeLines("~/.bash_history", "#1600000000\nls\necho hi\n")
+	if len(bash) != 2 || bash[0].Command != "ls" || bash[0].Time != want || bash[1].Time != "" {
+		t.Fatalf("bash %#v want time %s", bash, want)
+	}
+	plain := NormalizeLines("~/.bash_history", "ls\n")
+	if len(plain) != 1 || plain[0].Time != "" {
+		t.Fatalf("unstamped bash %#v", plain)
+	}
+	zsh := NormalizeLines("~/.zsh_history", ": 1600000000:0;git status\n")
+	if len(zsh) != 1 || zsh[0].Command != "git status" || zsh[0].Time != want {
+		t.Fatalf("zsh %#v", zsh)
+	}
+	fish := NormalizeLines("~/.local/share/fish/fish_history", "- cmd: echo hi\n  when: 1600000000\n- cmd: ls\n  when: 1\n")
+	if len(fish) != 2 || fish[0].Time != want || fish[0].Command != "echo hi" || fish[1].Time != "" {
+		t.Fatalf("fish %#v", fish)
+	}
+	if strings.Contains(bash[0].Command, "#1600000000") {
+		t.Fatal("stamp leaked into command")
 	}
 }
 

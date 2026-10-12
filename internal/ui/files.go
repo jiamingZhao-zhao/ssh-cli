@@ -76,6 +76,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "path": listing.Path, "parent": listing.Parent,
+		"home":   listing.Home,
 		"crumbs": listing.Crumbs, "entries": listing.Entries, "truncated": listing.Truncated,
 	})
 }

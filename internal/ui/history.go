@@ -83,18 +83,24 @@ func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	lines := res.Lines
+	entries := res.Entries
 	notes := append([]string(nil), res.Notes...)
 	if suppress {
 		lines = []string{}
+		entries = nil
 		notes = append(notes, guard.OutflowDiscarded)
 	}
 	if lines == nil {
 		lines = []string{}
 	}
+	if entries == nil {
+		entries = []history.Line{}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "found": res.Found && !suppress, "status": res.Status,
-		"path": res.Path, "shell": res.Shell, "lines": lines, "truncated": res.Truncated && !suppress,
-		"notes": notes, "error": res.Error, "suppressed": suppress,
+		"path": res.Path, "shell": res.Shell, "lines": lines, "entries": entries,
+		"truncated": res.Truncated && !suppress,
+		"notes":     notes, "error": res.Error, "suppressed": suppress,
 	})
 }
 

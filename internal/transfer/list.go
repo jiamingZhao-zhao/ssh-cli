@@ -10,7 +10,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -41,6 +40,7 @@ type Listing struct {
 	Crumbs    []Crumb     `json:"crumbs"`
 	Entries   []FileEntry `json:"entries"`
 	Truncated bool        `json:"truncated,omitempty"`
+	Home      string      `json:"home,omitempty"`
 }
 
 // CleanListPath accepts a remote directory. Empty means the login directory.
@@ -66,7 +66,7 @@ func List(client *ssh.Client, remote string) (Listing, error) {
 	if err != nil {
 		return Listing{}, err
 	}
-	sf, err := sftp.NewClient(client)
+	sf, err := Client(client)
 	if err != nil {
 		return Listing{}, err
 	}
@@ -128,7 +128,7 @@ func List(client *ssh.Client, remote string) (Listing, error) {
 	}
 	return Listing{
 		Path: target, Parent: parent, Crumbs: crumbs(target),
-		Entries: out, Truncated: truncated,
+		Entries: out, Truncated: truncated, Home: path.Clean(home),
 	}, nil
 }
 

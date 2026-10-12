@@ -29,7 +29,7 @@ func Upload(client *ssh.Client, local, remote string, log LogFunc) error {
 // UploadChecked plans every destination, runs check on each path, then writes.
 // A check error leaves the remote tree unchanged by this call.
 func UploadChecked(client *ssh.Client, local, remote string, log LogFunc, check CheckFunc) error {
-	sf, err := sftp.NewClient(client)
+	sf, err := Client(client)
 	if err != nil {
 		return err
 	}
@@ -155,7 +155,7 @@ func missingParents(sf *sftp.Client, remote string) []plannedUpload {
 
 // Download copies a remote file or directory to local.
 func Download(client *ssh.Client, remote, local string, log LogFunc) error {
-	sf, err := sftp.NewClient(client)
+	sf, err := Client(client)
 	if err != nil {
 		return err
 	}

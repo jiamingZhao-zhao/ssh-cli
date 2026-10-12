@@ -4,6 +4,7 @@ const termMap = new Map();
 const transferCtl = new Map();
 let chartDays = null;
 let chartOps = null;
+let netChart = null;
 let rangePicker = null;
 let suppressRange = false;
 
@@ -141,6 +142,57 @@ function destroyCharts() {
   }
 }
 
+function destroyNetChart() {
+  if (netChart) {
+    netChart.destroy();
+    netChart = null;
+  }
+}
+
+function paintNetChart(series) {
+  if (typeof Chart === "undefined") return;
+  const el = document.getElementById("ws-net-chart");
+  if (!el) return;
+  const theme = chartTheme();
+  const rows = series || [];
+  const labels = [];
+  const rx = [];
+  const tx = [];
+  for (let i = 0; i < rows.length; i++) {
+    const d = new Date(rows[i].t || Date.now());
+    labels.push(pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()));
+    rx.push(Math.round(rows[i].rxRate || 0));
+    tx.push(Math.round(rows[i].txRate || 0));
+  }
+  if (netChart) {
+    netChart.data.labels = labels;
+    netChart.data.datasets[0].data = rx;
+    netChart.data.datasets[1].data = tx;
+    netChart.update();
+    return;
+  }
+  netChart = new Chart(el, {
+    type: "bar",
+    data: {
+      labels: labels,
+      datasets: [
+        { type: "bar", label: "收", data: rx, backgroundColor: "rgba(0,82,204,0.55)", borderRadius: 3, order: 2 },
+        { type: "line", label: "发", data: tx, borderColor: "#36b37e", backgroundColor: "transparent", tension: 0.25, pointRadius: 2, borderWidth: 2, order: 1 }
+      ]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      animation: false,
+      plugins: { legend: { position: "bottom", labels: { color: theme.ink, boxWidth: 10 } } },
+      scales: {
+        x: { ticks: { color: theme.ink, maxTicksLimit: 6 }, grid: { color: theme.grid } },
+        y: { beginAtZero: true, ticks: { color: theme.ink }, grid: { color: theme.grid } }
+      }
+    }
+  });
+}
+
 function chartTheme() {
   const dark = document.documentElement.getAttribute("data-bs-theme") === "dark";
   return {
@@ -254,7 +306,7 @@ function sshui() {
     pickAll: false,
     tagDraft: {},
     tagBulk: {},
-    dialog: { host: false, group: false, policy: false, env: false, batch: false, detail: false },
+    dialog: { host: false, group: false, policy: false, env: false, batch: false, detail: false, proc: false },
     bundleYaml: "",
     bundleImport: "",
     cleanupNote: "",
@@ -286,13 +338,15 @@ function sshui() {
     pathError: "",
     pathFocused: false,
     tree: {},
+    treeRoot: "",
     ws: { side: 280, lower: 280 },
     metrics: { alias: "", connected: false, address: "", port: "", user: "", hostname: "", uptime: "", load: "", cpuPercent: null, mem: null, swap: null, procs: [], disks: [], notes: [], netRx: 0, netTx: 0, netRxRate: 0, netTxRate: 0 },
     netSeries: {},
     metricsTimer: 0,
     metricsSeq: 0,
     readAbort: {},
-    files: { alias: "", mode: "files", path: "", parent: "", crumbs: [], entries: [], truncated: false },
+    files: { alias: "", mode: "files", path: "", parent: "", home: "", crumbs: [], entries: [], truncated: false },
+    procView: { pid: "", ppid: "", user: "", cpu: "", mem: "", memPct: "", stat: "", etime: "", cmd: "", cwd: "", cwdNote: "" },
     drop: { over: false, target: "", label: "" },
     transfers: [],
     toasts: [],
@@ -1122,7 +1176,10 @@ function sshui() {
       this.files.crumbs = [];
       this.files.entries = [];
       this.files.truncated = false;
+      this.files.home = "";
       this.tree = {};
+      this.treeRoot = "";
+      destroyNetChart();
       if (!this.pathFocused) this.pathDraft = "";
       this.pathError = "";
       this.historyView = { alias: "", found: false, status: "", path: "", shell: "", lines: [], notes: [], truncated: false, error: "", suppressed: false };
@@ -1207,7 +1264,9 @@ function sshui() {
         this.files.crumbs = [];
         this.files.entries = [];
         this.files.truncated = false;
+        this.files.home = "";
         this.tree = {};
+        this.treeRoot = "";
         if (this.files.mode !== "history") this.refreshFiles();
       }
       if (this.files.mode === "history" && this.historyView.alias !== alias) this.loadHistory(alias);
@@ -1260,10 +1319,21 @@ function sshui() {
     },
 
     pushNet(alias, rx, tx) {
+      const now = Date.now();
       if (!this.netSeries[alias]) this.netSeries[alias] = [];
       const series = this.netSeries[alias];
-      series.push({ rx: Number(rx) || 0, tx: Number(tx) || 0 });
+      const prev = series.length ? series[series.length - 1] : null;
+      const point = { t: now, rx: Number(rx) || 0, tx: Number(tx) || 0, rxRate: 0, txRate: 0 };
+      if (prev && now > prev.t) {
+        const dt = (now - prev.t) / 1000;
+        if (dt > 0) {
+          point.rxRate = Math.max(0, (point.rx - prev.rx) / dt);
+          point.txRate = Math.max(0, (point.tx - prev.tx) / dt);
+        }
+      }
+      series.push(point);
       if (series.length > 24) series.shift();
+      paintNetChart(series);
     },
 
     sparkPoints() {
@@ -1357,7 +1427,67 @@ function sshui() {
 
     netText() {
       const m = this.metrics || {};
-      return "收 " + this.formatBytes(m.netRx) + " · 发 " + this.formatBytes(m.netTx);
+      const alias = this.liveAlias();
+      const series = (this.netSeries && this.netSeries[alias]) || [];
+      const last = series.length ? series[series.length - 1] : null;
+      let rate = "";
+      if (last && (last.rxRate || last.txRate)) {
+        rate = " · 收 " + this.formatBytes(last.rxRate) + "/s · 发 " + this.formatBytes(last.txRate) + "/s";
+      }
+      return "累计收 " + this.formatBytes(m.netRx) + " · 发 " + this.formatBytes(m.netTx) + rate;
+    },
+
+    procCmd(p) {
+      if (!p) return "";
+      return p.args || p.comm || "";
+    },
+
+    procState(stat) {
+      const s = String(stat || "");
+      if (!s) return "—";
+      const gloss = { R: "运行", S: "睡眠", D: "不可中断", T: "停止", Z: "僵尸", I: "空闲", t: "跟踪停止" }[s.charAt(0)] || "";
+      return gloss ? (s + " · " + gloss) : s;
+    },
+
+    procMemText() {
+      const v = this.procView || {};
+      const bits = [];
+      if (v.mem) bits.push(v.mem);
+      if (v.memPct) bits.push(v.memPct + "%");
+      return bits.length ? bits.join(" · ") : "—";
+    },
+
+    async openProc(p) {
+      if (!p) return;
+      const pid = String(p.pid || "");
+      this.procView = {
+        pid: pid,
+        ppid: p.ppid || "",
+        user: p.user || "",
+        cpu: this.procCpu(p),
+        mem: this.procMem(p),
+        memPct: p.mem || "",
+        stat: p.stat || "",
+        etime: p.etime || p.start || "",
+        cmd: this.procCmd(p),
+        cwd: "",
+        cwdNote: ""
+      };
+      this.openDialog("proc");
+      const alias = this.liveAlias();
+      if (!alias || !/^\d+$/.test(pid)) {
+        this.procView.cwdNote = "没有可用的工作目录";
+        return;
+      }
+      try {
+        const data = await this.postJSON("/api/metrics/proc", { alias: alias, pid: pid });
+        if (!this.procView || this.procView.pid !== pid) return;
+        if (data.args) this.procView.cmd = data.args;
+        this.procView.cwd = data.cwd || "";
+        this.procView.cwdNote = data.cwd ? "" : (data.note || "读不到工作目录");
+      } catch (err) {
+        if (this.procView && this.procView.pid === pid) this.procView.cwdNote = err.message || "读不到工作目录";
+      }
     },
 
     formatBytes(n) {
@@ -1439,6 +1569,7 @@ function sshui() {
         this.files.crumbs = data.crumbs || [];
         this.files.entries = data.entries || [];
         this.files.truncated = !!data.truncated;
+        if (data.home) this.files.home = data.home;
         if (!this.pathFocused) this.pathDraft = this.files.path;
         this.pathError = "";
         this.noteTree(this.files.path, this.files.entries);
@@ -1451,29 +1582,43 @@ function sshui() {
       }
     },
 
+    pathUnder(root, path) {
+      if (!root || !path) return false;
+      if (path === root) return true;
+      const prefix = root === "/" ? "/" : root + "/";
+      return String(path).indexOf(prefix) === 0;
+    },
+
     noteTree(abs, entries) {
       let path = String(abs || "");
       if (!path) return;
       if (path.charAt(0) !== "/") path = "/" + path;
-      if (!this.tree["/"]) this.tree["/"] = { name: "/", open: true, loaded: false, dirs: [] };
-      const parts = path === "/" ? [] : path.split("/").filter(Boolean);
-      let parent = "/";
-      for (let i = 0; i < parts.length; i++) {
-        const cur = parent === "/" ? "/" + parts[i] : parent + "/" + parts[i];
-        if (!this.tree[parent]) this.tree[parent] = { name: parent === "/" ? "/" : parent.slice(parent.lastIndexOf("/") + 1), open: true, loaded: false, dirs: [] };
-        this.tree[parent].open = true;
-        const dirs = this.tree[parent].dirs || [];
-        let seen = false;
-        for (let j = 0; j < dirs.length; j++) if (dirs[j].path === cur) seen = true;
-        if (!seen) dirs.push({ name: parts[i], path: cur });
-        this.tree[parent].dirs = dirs;
-        if (!this.tree[cur]) this.tree[cur] = { name: parts[i], open: false, loaded: false, dirs: [] };
-        parent = cur;
+      const home = String(this.files.home || path);
+      let root = home;
+      if (!this.pathUnder(home, path)) root = path;
+      this.treeRoot = root;
+      if (!this.tree[root]) this.tree[root] = { name: root, open: true, loaded: false, dirs: [] };
+      if (path !== root && this.pathUnder(root, path)) {
+        const rest = root === "/" ? path.slice(1) : path.slice(root.length + 1);
+        const parts = rest.split("/").filter(Boolean);
+        let parent = root;
+        for (let i = 0; i < parts.length; i++) {
+          const cur = parent === "/" ? "/" + parts[i] : parent + "/" + parts[i];
+          if (!this.tree[parent]) this.tree[parent] = { name: parent === root ? root : parent.slice(parent.lastIndexOf("/") + 1), open: true, loaded: false, dirs: [] };
+          this.tree[parent].open = true;
+          const dirs = this.tree[parent].dirs || [];
+          let seen = false;
+          for (let j = 0; j < dirs.length; j++) if (dirs[j].path === cur) seen = true;
+          if (!seen) dirs.push({ name: parts[i], path: cur });
+          this.tree[parent].dirs = dirs;
+          if (!this.tree[cur]) this.tree[cur] = { name: parts[i], open: false, loaded: false, dirs: [] };
+          parent = cur;
+        }
       }
-      const node = this.tree[path];
+      const node = this.tree[path] || { name: path === root ? root : path.slice(path.lastIndexOf("/") + 1), open: true, loaded: false, dirs: [] };
       node.open = true;
       node.loaded = true;
-      node.name = path === "/" ? "/" : parts[parts.length - 1];
+      node.name = path === root ? root : path.slice(path.lastIndexOf("/") + 1);
       node.dirs = [];
       const list = entries || [];
       for (let i = 0; i < list.length; i++) {
@@ -1481,20 +1626,22 @@ function sshui() {
         node.dirs.push({ name: list[i].name, path: list[i].path });
         if (!this.tree[list[i].path]) this.tree[list[i].path] = { name: list[i].name, open: false, loaded: false, dirs: [] };
       }
+      this.tree[path] = node;
       this.tree = Object.assign({}, this.tree);
     },
 
     treeRows() {
       const rows = [];
+      const root = this.treeRoot || "";
       const walk = (path, depth) => {
         const node = this.tree[path];
         if (!node) return;
-        rows.push({ path: path, name: node.name || "/", depth: depth, open: !!node.open });
+        rows.push({ path: path, name: node.name || path, depth: depth, open: !!node.open });
         if (!node.open) return;
         const dirs = node.dirs || [];
         for (let i = 0; i < dirs.length; i++) walk(dirs[i].path, depth + 1);
       };
-      if (this.tree["/"]) walk("/", 0);
+      if (root && this.tree[root]) walk(root, 0);
       return rows;
     },
 
@@ -1635,10 +1782,30 @@ function sshui() {
 
     finishTransfer(id, patch) {
       this.patchTransfer(id, Object.assign({ active: false }, patch));
-      const app = this;
-      setTimeout(() => {
-        app.transfers = (app.transfers || []).filter((t) => t.id !== id || t.active);
-      }, 6000);
+    },
+
+    hasFinishedTransfers() {
+      const items = this.transfers || [];
+      for (let i = 0; i < items.length; i++) if (!items[i].active) return true;
+      return false;
+    },
+
+    clearFinishedTransfers() {
+      this.transfers = (this.transfers || []).filter((t) => t.active);
+    },
+
+    transferDetail(item) {
+      if (!item) return "";
+      const loaded = this.formatBytes(item.loaded || 0);
+      const total = Number(item.total) || 0;
+      const status = item.label || "";
+      if (total) return loaded + " / " + this.formatBytes(total) + " · " + this.pct(this.itemPct(item)) + (status ? " · " + status : "");
+      return status + (item.loaded ? " · " + loaded : "");
+    },
+
+    fileSize(entry) {
+      if (!entry || entry.dir) return "—";
+      return this.formatBytes(entry.size);
     },
 
     async enqueueUploads(fileList, remoteDir) {
@@ -1936,8 +2103,33 @@ function sshui() {
 
     openMenu(ev, entry) {
       if (entry) this.selectedPath = entry.path || "";
-      this.menu = { open: true, x: ev.clientX, y: ev.clientY, entry: entry || null, newOpen: false };
+      const menuW = 240;
+      const menuH = 380;
+      let x = ev.clientX;
+      let y = ev.clientY;
+      const vw = window.innerWidth || 0;
+      const vh = window.innerHeight || 0;
+      if (x + menuW > vw - 8) x = Math.max(8, vw - menuW - 8);
+      if (y + menuH > vh - 8) y = Math.max(8, y - menuH);
+      if (y + menuH > vh - 8) y = Math.max(8, vh - menuH - 8);
+      if (x < 8) x = 8;
+      if (y < 8) y = 8;
+      this.menu = { open: true, x: x, y: y, entry: entry || null, newOpen: false };
       const app = this;
+      const place = () => {
+        const el = document.querySelector(".ws-menu");
+        if (!el || !app.menu.open) return;
+        const r = el.getBoundingClientRect();
+        let nx = app.menu.x;
+        let ny = app.menu.y;
+        if (r.right > window.innerWidth - 8) nx -= r.right - window.innerWidth + 8;
+        if (r.bottom > window.innerHeight - 8) ny -= r.bottom - window.innerHeight + 8;
+        if (nx < 8) nx = 8;
+        if (ny < 8) ny = 8;
+        if (nx !== app.menu.x || ny !== app.menu.y) app.menu = Object.assign({}, app.menu, { x: nx, y: ny });
+      };
+      if (this.$nextTick) this.$nextTick(place);
+      else setTimeout(place, 0);
       const close = (e) => {
         if (e.type === "keydown" && e.key !== "Escape") return;
         if (e.type === "click" && e.target && e.target.closest && e.target.closest(".ws-menu")) return;
@@ -2052,6 +2244,7 @@ function sshui() {
         const data = await this.postRead("/api/history", { alias: name, lines: 100 }, signal);
         if (this.liveAlias() !== name) return;
         data.lines = data.lines || [];
+        data.entries = data.entries || [];
         data.notes = data.notes || [];
         this.historyView = data;
       } catch (err) {
@@ -2071,12 +2264,25 @@ function sshui() {
       if (h.shell) bits.push(h.shell);
       if (h.status && h.status !== "ok") bits.push(h.status);
       if (h.truncated) bits.push("已截断");
+      const entries = h.entries || [];
+      let timed = false;
+      for (let i = 0; i < entries.length; i++) if (entries[i].time) timed = true;
+      if (entries.length && !timed) bits.push("无执行时间：bash 需 HISTTIMEFORMAT 才有 #unix 行；zsh / fish 有记录时会显示");
       bits.push("只读，可能含密钥");
       return bits.join(" · ");
     },
 
     historyText() {
       const h = this.historyView || {};
+      const entries = h.entries || [];
+      if (entries.length) {
+        const rows = [];
+        for (let i = 0; i < entries.length; i++) {
+          const cmd = entries[i].command || "";
+          rows.push(entries[i].time ? (entries[i].time + "  " + cmd) : cmd);
+        }
+        return rows.join("\n");
+      }
       const lines = h.lines || [];
       if (lines.length) return lines.join("\n");
       const notes = (h.notes || []).join("\n");
@@ -2766,6 +2972,7 @@ function sshui() {
       this.dialog.env = false;
       this.dialog.batch = false;
       this.dialog.detail = false;
+      this.dialog.proc = false;
       document.body.classList.remove("overflow-hidden");
     },
 
