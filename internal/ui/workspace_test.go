@@ -72,8 +72,13 @@ func TestWorkspaceChrome(t *testing.T) {
 		"openProc",
 		"procShort",
 		"ws-proc-row",
+		"procRows",
+		"ws-proc-empty",
+		"ws-dl-foot",
+		"openDownloadFolder",
+		"打开所在目录",
 		"fileSize",
-		`@click="openProc(p)"`,
+		`@click="openProcRow(p)"`,
 	} {
 		if !strings.Contains(chunk, s) {
 			t.Fatalf("workspace missing %s", s)
@@ -128,7 +133,7 @@ func TestWorkspaceChrome(t *testing.T) {
 	jsRR := httptest.NewRecorder()
 	h.ServeHTTP(jsRR, jsReq)
 	script := jsRR.Body.String()
-	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "pickDownloadDir", "downloadDirLabel", "useDefaultDownloadDir", "paintNetChart", "openProc", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "diskMountLabel", "visibleDisks", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端", `postJSON("/api/download-dir"`, "slice(0, 5)"} {
+	for _, s := range []string{"refreshFiles", "loadHistory", "refreshMetrics", "beginSplit", "wsDownload", "wsUpload", "wsSide", "enqueueUploads", "cancelTransfer", "clearFinishedTransfers", "pickDownloadDir", "downloadDirLabel", "useDefaultDownloadDir", "paintNetChart", "openProc", "openProcRow", "procRows", "canOpenDownload", "openDownloadFolder", "fileSize", "abortRead", "postRead", "互相绕回去", "先添加那台跳板并保存", "_sessionWait", "plainBodyMessage", "请求被拒绝：缺少 CSRF，请刷新页面", "navCollapsed", "X-CSRF-Token", "ensureFsRoot", "treeLabel", "diskText", "diskMountLabel", "visibleDisks", "procShort", "terminalStatusLine", "application/x-ndjson", "readNDJSON", "写入远端", `postJSON("/api/download-dir"`, `postJSON("/api/download-dir/reveal"`, "slice(0, 5)"} {
 		if !strings.Contains(script, s) {
 			t.Fatalf("app.js missing %s", s)
 		}
@@ -173,7 +178,10 @@ func TestWorkspaceChrome(t *testing.T) {
 		side = side[:end]
 	}
 	if !strings.Contains(side, "grid-row: 1 / span 3") || !strings.Contains(side, "display: flex") {
-		t.Fatal("side column should hug the process table instead of stretching a blank row")
+		t.Fatal("side column should stay full height so the transfer queue can sit at the bottom")
+	}
+	if !strings.Contains(style, ".ws-dl-foot") {
+		t.Fatal("transfer queue header should be a fixed footer")
 	}
 	railAt := strings.Index(style, ".ws-dl-rail {")
 	if railAt < 0 {

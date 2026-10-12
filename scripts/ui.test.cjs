@@ -121,6 +121,21 @@ test('overview shows disk bytes, top 5 memory rows, and a short command', () => 
   assert.equal(detail, '30% · 3.0 MB / 10.0 MB');
   assert.equal(sandbox.lastJSONObject('{"loaded":1,"total":2}\n{"ok":true,"local":"/tmp/a"}\n').local, '/tmp/a');
 });
+test('process table stays five rows when overview data is missing', () => {
+  const { app } = fixture();
+  app.metrics = { procs: [] };
+  let rows = app.procRows();
+  assert.equal(rows.length, 5);
+  assert.equal(rows.every((row) => row.empty), true);
+  app.metrics.procs = [{ pid: '9', rss: 1000, cpu: '1', comm: 'nginx' }];
+  rows = app.procRows();
+  assert.equal(rows.length, 5);
+  assert.equal(rows.filter((row) => !row.empty).length, 1);
+  assert.equal(rows[0].pid, '9');
+  assert.equal(app.canOpenDownload({ active: true, kind: 'download', local: '/tmp/a' }), false);
+  assert.equal(app.canOpenDownload({ active: false, kind: 'upload', local: '/tmp/a' }), false);
+  assert.equal(app.canOpenDownload({ active: false, kind: 'download', local: '/tmp/a' }), true);
+});
 test('clear button only applies when a transfer is finished', () => {
   const { app } = fixture();
   assert.equal(app.hasFinishedTransfers(), false);

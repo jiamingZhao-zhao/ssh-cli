@@ -1734,6 +1734,19 @@ function sshui() {
       return rows.slice(0, 5);
     },
 
+    procRows() {
+      const rows = this.sortedProcs();
+      const out = [];
+      for (let i = 0; i < rows.length && out.length < 5; i++) out.push(rows[i]);
+      while (out.length < 5) out.push({ empty: true, pid: "pad-" + out.length });
+      return out;
+    },
+
+    openProcRow(p) {
+      if (!p || p.empty) return;
+      return this.openProc(p);
+    },
+
     diskMountLabel(mount) {
       let m = String(mount || "").trim();
       if (!m) return "";
@@ -2185,6 +2198,19 @@ function sshui() {
       this.transfers = (this.transfers || []).filter((t) => t.active);
     },
 
+    canOpenDownload(item) {
+      return !!(item && !item.active && item.kind === "download" && String(item.local || "").trim());
+    },
+
+    async openDownloadFolder(item) {
+      if (!this.canOpenDownload(item)) return;
+      try {
+        await this.postJSON("/api/download-dir/reveal", { path: item.local });
+      } catch (err) {
+        this.toast((err && err.message) || "打不开所在目录", "bad");
+      }
+    },
+
     transferDetail(item) {
       if (!item) return "";
       const loadedN = Number(item.loaded) || 0;
@@ -2390,8 +2416,8 @@ function sshui() {
           let totalBytes = Number(current.total) || known || 0;
           let loadedBytes = Number(current.loaded) || 0;
           if (totalBytes > 0) loadedBytes = totalBytes;
-          this.patchTransfer(id, { loaded: loadedBytes, total: totalBytes, active: false, label: label });
-          this.finishTransfer(id, { loaded: loadedBytes, total: totalBytes, label: label });
+          this.patchTransfer(id, { loaded: loadedBytes, total: totalBytes, active: false, label: label, local: saved, kind: "download" });
+          this.finishTransfer(id, { loaded: loadedBytes, total: totalBytes, label: label, local: saved, kind: "download" });
           if (saved) this.toast(label);
           return;
         }
