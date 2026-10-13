@@ -137,6 +137,12 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ws.Close()
+	_ = ws.c.SetReadDeadline(time.Now().Add(5 * time.Second))
+	op, payload, err := ws.ReadMessage()
+	var state map[string]string
+	if err != nil || op != wsText || json.Unmarshal(payload, &state) != nil || state["type"] != "terminal" || state["state"] != "ready" {
+		t.Fatalf("PTY readiness: op=%d payload=%s err=%v", op, payload, err)
+	}
 	if err := ws.Write(wsBinary, []byte("echo ui-term-ok\n")); err != nil {
 		t.Fatal(err)
 	}
@@ -528,10 +534,11 @@ func TestTerminalDialFailureWritesReason(t *testing.T) {
 		t.Fatalf("opcode %d", op)
 	}
 	text := string(payload)
-	if !strings.HasPrefix(text, "终端连接失败: ") || !strings.HasSuffix(text, "\r\n") || strings.Contains(text, "ui-secret") {
+	var state map[string]string
+	if json.Unmarshal(payload, &state) != nil || state["type"] != "terminal" || state["state"] != "error" || state["category"] != "connect" || strings.Contains(text, "ui-secret") {
 		t.Fatalf("failure frame %q", text)
 	}
-	reason := strings.TrimSuffix(strings.TrimPrefix(text, "终端连接失败: "), "\r\n")
+	reason := state["message"]
 	if reason == "" || strings.Contains(reason, "\n") {
 		t.Fatalf("failure reason %q", text)
 	}
@@ -547,53 +554,6 @@ func TestTerminalDialFailureWritesReason(t *testing.T) {
 			t.Fatalf("missing connect audit %#v frame %q", recs, text)
 		}
 		time.Sleep(40 * time.Millisecond)
-	}
-}
-
-func TestTerminalUIDoesNotStickFalseBanner(t *testing.T) {
-	dir := t.TempDir()
-	h := Handler(dir, false)
-	req := httptest.NewRequest(http.MethodGet, "/app.js", nil)
-	req.RemoteAddr = "127.0.0.1:9"
-	req.Host = "127.0.0.1"
-	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, req)
-	if rr.Code != http.StatusOK {
-		t.Fatalf("app.js %d", rr.Code)
-	}
-	script := rr.Body.String()
-	msgAt := strings.Index(script, "ws.onmessage = (ev) => {")
-	openAt := strings.Index(script, "ws.onopen = () => {")
-	errAt := strings.Index(script, "ws.onerror = () => {")
-	closeAt := strings.Index(script, "ws.onclose = (ev) => {")
-	if msgAt < 0 || openAt < msgAt || errAt < openAt || closeAt < errAt {
-		t.Fatal("mountTerm handlers out of order")
-	}
-	onmessage := script[msgAt:openAt]
-	onopen := script[openAt:errAt]
-	onerror := script[errAt:closeAt]
-	end := closeAt + 500
-	if end > len(script) {
-		end = len(script)
-	}
-	onclose := script[closeAt:end]
-	if !strings.Contains(onmessage, "entry.saw = true") || !strings.Contains(onmessage, `app.setError("terminal", "")`) {
-		t.Fatalf("first message must clear the banner: %s", onmessage)
-	}
-	if strings.Contains(onopen, "setError") || strings.Contains(onopen, "entry.saw") {
-		t.Fatalf("open must not mark success: %s", onopen)
-	}
-	if strings.Contains(onerror, "setError") || !strings.Contains(onerror, "entry.hadError = true") {
-		t.Fatalf("error event must not raise the banner: %s", onerror)
-	}
-	if !strings.Contains(onclose, "!entry.saw") || !strings.Contains(onclose, `app.setError("terminal", "终端连接失败")`) || !strings.Contains(script, "终端连接已断开 (") {
-		t.Fatalf("close copy: %s", onclose)
-	}
-	if !strings.Contains(onmessage, "已达到最长时限") || !strings.Contains(onmessage, "entry.maxLife = true") || !strings.Contains(onclose, "entry.maxLife") {
-		t.Fatalf("max-life tip missing: %s", onmessage)
-	}
-	if !strings.Contains(onmessage, `app.toast("会话已达到最长时限，连接已关闭", "bad")`) {
-		t.Fatalf("max-life toast missing: %s", onmessage)
 	}
 }
 
@@ -626,7 +586,7 @@ func TestTerminalTabAliasIsNotNestedButton(t *testing.T) {
 	for _, s := range []string{
 		`class="term-tab"`,
 		`:class="{ active: tab.id === termActive }"`,
-		`x-text="tab.alias"`,
+		`x-text="terminalTabLabel(tab)"`,
 		`showPane(tab.id)`,
 		`closeTab(tab.id)`,
 		`class="term-tab-label"`,

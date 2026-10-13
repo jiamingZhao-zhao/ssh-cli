@@ -1,6 +1,8 @@
 const DEFAULT_PAGE_SIZE = 10;
 const PAGE_SIZES = [10, 20, 50];
 const termMap = new Map();
+const TERM_CHUNK = 32 << 10;
+const TERM_INPUT_LIMIT = 4 << 20;
 const transferCtl = new Map();
 let chartDays = null;
 let chartOps = null;
@@ -447,6 +449,8 @@ function sshui() {
     hostSeq: 0,
     hostLoading: false,
     termOpening: false,
+    termFontSize: 14,
+    filesCollapsed: false,
     workspaceCache: Object.create(null),
     workspaceSeq: 0,
     filesReadSeq: 0,
@@ -612,6 +616,8 @@ function sshui() {
       this.navCollapsed = !!prefs.navCollapsed;
       if (prefs.wsSide >= 220 && prefs.wsSide <= 460) this.ws.side = prefs.wsSide;
       if (prefs.wsLower >= 160 && prefs.wsLower <= 4096) this.ws.lower = prefs.wsLower;
+      if (Number.isInteger(prefs.termFontSize) && prefs.termFontSize >= 12 && prefs.termFontSize <= 22) this.termFontSize = prefs.termFontSize;
+      this.filesCollapsed = prefs.filesCollapsed === true;
       this.downloadDir = typeof prefs.downloadDir === "string" ? prefs.downloadDir : "";
       this.exec.timeout = this.draft.commandTimeout;
       this.audit.pageSize = this.draft.pageSize;
@@ -1305,15 +1311,19 @@ function sshui() {
         this.setError("terminal", "终端组件没有加载。");
         return;
       }
-      const id = "t" + Date.now().toString(36) + this.termTabs.length;
+      const id = "t" + operationID();
       const pane = document.createElement("div");
       pane.className = "term-pane";
       pane.dataset.id = id;
+      pane.id = "pane-" + id;
+      pane.setAttribute("role", "tabpanel");
+      pane.setAttribute("aria-labelledby", "tab-" + id);
       screen.appendChild(pane);
       const term = new Terminal({
         cursorBlink: true,
+        disableStdin: true,
         fontFamily: '"SF Mono", Menlo, Consolas, monospace',
-        fontSize: 14,
+        fontSize: this.termFontSize,
         theme: { background: "#1d1d1f", foreground: "#f5f5f7", cursor: "#f5f5f7" }
       });
       const fit = new FitAddon.FitAddon();
@@ -1321,92 +1331,219 @@ function sshui() {
       term.open(pane);
       fit.fit();
       const app = this;
-      let opened;
-      try {
-        opened = await this.postJSON("/api/terminal/open", { alias: alias, cols: term.cols || 80, rows: term.rows || 24 });
-      } catch (err) {
-        term.dispose();
-        pane.remove();
-        this.setError("terminal", err.message || "终端连接失败");
-        return;
-      }
-      const proto = location.protocol === "https:" ? "wss:" : "ws:";
-      const ws = new WebSocket(proto + "//" + location.host + "/api/terminal/ws?ticket=" + encodeURIComponent(opened.ticket));
-      ws.binaryType = "arraybuffer";
-      const entry = { id: id, alias: alias, term: term, fit: fit, ws: ws, pane: pane, saw: false, hadError: false, maxLife: false };
+      const ordinal = 1 + this.termTabs.filter((t) => t.alias === alias).reduce((n, t) => Math.max(n, t.ordinal || 1), 0);
+      const entry = { id: id, alias: alias, term: term, fit: fit, pane: pane, ws: null, generation: 0, ready: false, input: [], inputBytes: 0, inputTimer: 0 };
       termMap.set(id, entry);
-      this.termTabs.push({ id: id, alias: alias, busy: true, state: "connecting" });
+      this.termTabs.push({ id: id, alias: alias, ordinal: ordinal, busy: true, state: "connecting", error: "" });
       if (typeof ResizeObserver !== "undefined") {
         entry.observer = new ResizeObserver(() => { if (app.termActive === id) app.fitActive(); });
         entry.observer.observe(pane);
       }
+      term.onData((data) => app.queueTerminalInput(entry, data));
+      term.onResize(({ cols, rows }) => {
+        if (entry.ws && entry.ws.readyState === 1) entry.ws.send(JSON.stringify({ type: "resize", cols: cols, rows: rows }));
+      });
+      term.attachCustomKeyEventHandler((ev) => {
+        if (ev.type === "keydown" && (ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "c") {
+          ev.preventDefault();
+          app.copyTerminal(entry);
+          return false;
+        }
+        return true;
+      });
       this.showPane(id);
-      const closeLine = (ev) => {
-        const code = ev && Number(ev.code);
-        if (code) return "终端连接已断开 (" + code + ")";
-        return "终端连接已断开";
-      };
-      const writeFrame = (data) => {
-        if (typeof data === "string") term.write(data);
-        else term.write(new Uint8Array(data));
-      };
+      await this.connectTerm(entry);
+    },
+
+    async connectTerm(entry) {
+      const app = this, id = entry.id, term = entry.term;
+      const generation = ++entry.generation;
+      let ws;
+      const current = () => termMap.get(id) === entry && entry.generation === generation;
+      entry.ready = false;
+      entry.maxLife = false;
+      entry.hadError = false;
+      term.options.disableStdin = true;
+      this.setTabState(id, "connecting");
+      this.setTerminalError(id, "");
+      try {
+        const opened = await this.postJSON("/api/terminal/open", { alias: entry.alias, cols: term.cols || 80, rows: term.rows || 24 });
+        if (!current()) return;
+        if (!opened.ticket) throw new Error("未收到终端连接凭据，请刷新页面后重试。");
+        const proto = location.protocol === "https:" ? "wss:" : "ws:";
+        ws = new WebSocket(proto + "//" + location.host + "/api/terminal/ws?ticket=" + encodeURIComponent(opened.ticket));
+      } catch (err) {
+        if (!current()) return;
+        this.setTabState(id, "closed");
+        this.setTerminalError(id, err.message || "终端连接失败");
+        if (this.termActive === id) this.syncWorkspace();
+        return;
+      }
+      ws.binaryType = "arraybuffer";
+      entry.ws = ws;
       ws.onmessage = (ev) => {
-        entry.saw = true;
-        app.markTabIdle(id);
+        if (!current()) return;
         const text = typeof ev.data === "string" ? ev.data : "";
+        if (text) {
+          let state;
+          try { state = JSON.parse(text); } catch (err) { /* Legacy close notices are plain text. */ }
+          if (state && state.type === "terminal") {
+            if (state.state === "ready") {
+              entry.ready = true;
+              term.options.disableStdin = false;
+              app.setTabState(id, "connected");
+              app.setTerminalError(id, "");
+              if (app.termActive === id) { app.syncWorkspace(); app.fitActive(true); }
+            } else if (state.state === "error") {
+              const labels = { auth: "认证失败", connect: "连接失败", timeout: "连接超时", pty: "远端终端启动失败" };
+              const message = (labels[state.category] || "终端连接失败") + "：" + String(state.message || "请检查连接").replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
+              entry.ready = false;
+              term.options.disableStdin = true;
+              app.setTabState(id, "closed");
+              app.setTerminalError(id, message);
+              term.write("\r\n" + message + "\r\n");
+              if (app.termActive === id) app.syncWorkspace();
+            }
+            return;
+          }
+        }
         if (text.indexOf("已达到最长时限") >= 0) {
           entry.maxLife = true;
           term.write(text);
-          app.setError("terminal", "会话已达到最长时限，连接已关闭");
+          app.setTerminalError(id, "会话已达到最长时限，连接已关闭");
           app.toast("会话已达到最长时限，连接已关闭", "bad");
           return;
         }
-        if (entry.maxLife) {
-          writeFrame(ev.data);
-          return;
-        }
-        app.setError("terminal", "");
-        writeFrame(ev.data);
+        app.markTabIdle(id);
+        term.write(text || new Uint8Array(ev.data));
       };
       ws.onopen = () => {
-        app.setTabState(id, "connected");
-        if (app.termActive === id) {
-          app.syncWorkspace();
-          app.fitActive();
-          const active = document.activeElement;
-          if (app.view === "terminal" && pane.clientWidth && pane.clientHeight && !app.anyDialog() && (!active || !active.matches("input,textarea,select,[contenteditable='true']") || pane.contains(active))) term.focus();
-        }
-        if (ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+        if (current() && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
       };
       ws.onerror = () => {
-        entry.hadError = true;
+        if (current()) entry.hadError = true;
       };
       ws.onclose = (ev) => {
+        if (!current()) return;
+        const wasReady = entry.ready;
+        const pendingInput = entry.inputBytes > 0 || ws.bufferedAmount > 0;
+        entry.ready = false;
+        term.options.disableStdin = true;
+        app.clearTerminalInput(entry);
         app.setTabState(id, entry.maxLife ? "expired" : "closed");
         if (app.termActive === id) app.syncWorkspace();
         if (entry.maxLife) return;
-        if (!entry.saw) {
-          term.write("终端连接失败\r\n");
-          app.setError("terminal", "终端连接失败");
-          return;
-        }
-        term.write("\r\n" + closeLine(ev) + "\r\n");
+        const tab = app.termTabs.find((t) => t.id === id);
+        if (tab && tab.error) return;
+        let message = wasReady ? "终端连接已断开 (" + ev.code + ")；重新连接会启动新的 shell。" : "终端连接失败，远端终端尚未就绪。";
+        if (pendingInput) message += " 未发送输入已丢弃，部分内容可能已到达远端，请核验；不会自动重发。";
+        app.setTerminalError(id, message);
+        term.write("\r\n" + message + "\r\n");
       };
-      term.onData((data) => {
-        if (ws.readyState === 1) ws.send(new TextEncoder().encode(data));
-      });
-      term.onResize(({ cols, rows }) => {
-        if (ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: cols, rows: rows }));
-      });
     },
 
-    showPane(id) {
+    setTerminalError(id, message) {
+      this.termTabs = this.termTabs.map((tab) => tab.id === id ? Object.assign({}, tab, { error: message }) : tab);
+    },
+
+    terminalError() {
+      const tab = this.termTabs.find((t) => t.id === this.termActive);
+      return (tab && tab.error) || this.errors.terminal || "";
+    },
+
+    terminalTabLabel(tab) {
+      return tab.alias + " · " + (tab.ordinal || 1);
+    },
+
+    async copyTerminal(entry) {
+      entry = entry || termMap.get(this.termActive);
+      if (!entry || !entry.term.hasSelection()) return;
+      try { await navigator.clipboard.writeText(entry.term.getSelection()); }
+      catch (err) { this.toast("复制失败，请检查浏览器剪贴板权限。", "bad"); }
+    },
+
+    queueTerminalInput(entry, text) {
+      if (!entry.ready || !entry.ws || entry.ws.readyState !== 1) return;
+      // Reject oversized input before sending any part of this command.
+      const size = new Blob([text]).size;
+      if (size + entry.inputBytes + entry.ws.bufferedAmount > TERM_INPUT_LIMIT) {
+        this.toast("待发送内容超过 4 MiB，本次输入未发送，请使用文件上传。", "bad");
+        return;
+      }
+      const bytes = new TextEncoder().encode(text);
+      entry.input.push({ bytes: bytes, offset: 0 });
+      entry.inputBytes += bytes.length;
+      this.flushTerminalInput(entry);
+    },
+
+    flushTerminalInput(entry) {
+      if (entry.inputTimer) return;
+      if (!entry.ready || !entry.ws || entry.ws.readyState !== 1 || termMap.get(entry.id) !== entry) { this.clearTerminalInput(entry); return; }
+      let chunks = 0;
+      try {
+        while (entry.input.length && entry.ws.bufferedAmount < (128 << 10) && chunks++ < 8) {
+          const item = entry.input[0], end = Math.min(item.bytes.length, item.offset + TERM_CHUNK);
+          entry.ws.send(item.bytes.subarray(item.offset, end));
+          entry.inputBytes -= end - item.offset;
+          item.offset = end;
+          if (end === item.bytes.length) entry.input.shift();
+        }
+      } catch (err) {
+        this.clearTerminalInput(entry);
+        this.setTerminalError(entry.id, "输入发送中断，部分内容可能已到达远端。请核验，不会自动重发。");
+        entry.ws.close();
+        return;
+      }
+      if (entry.input.length) entry.inputTimer = setTimeout(() => { entry.inputTimer = 0; this.flushTerminalInput(entry); }, 16);
+    },
+
+    clearTerminalInput(entry) {
+      if (entry.inputTimer) clearTimeout(entry.inputTimer);
+      entry.inputTimer = 0; entry.input = []; entry.inputBytes = 0;
+    },
+
+    changeTermFont(delta) {
+      this.termFontSize = Math.max(12, Math.min(22, this.termFontSize + delta));
+      termMap.forEach((entry) => { entry.term.options.fontSize = this.termFontSize; });
+      this.savePrefs({ termFontSize: this.termFontSize });
+      this.fitActive();
+    },
+
+    toggleFiles() {
+      this.filesCollapsed = !this.filesCollapsed;
+      this.savePrefs({ filesCollapsed: this.filesCollapsed });
+      this.fitActive();
+    },
+
+    showPane(id, focus) {
       this.termActive = id;
+      this.setError("terminal", "");
       termMap.forEach((entry) => {
         entry.pane.classList.toggle("active", entry.id === id);
       });
-      this.fitActive(true);
+      this.fitActive(focus !== false);
       this.syncWorkspace();
+      const reveal = () => {
+        const tab = document.querySelector && document.querySelector(".term-tab.active");
+        if (tab) tab.scrollIntoView({ block: "nearest", inline: "nearest" });
+      };
+      if (this.$nextTick) this.$nextTick(reveal);
+    },
+
+    terminalTabKey(ev) {
+      if (ev.isComposing || ev.ctrlKey || ev.metaKey || ev.altKey || !ev.target.closest("[role='tab']")) return;
+      const tabs = this.termTabs, index = tabs.findIndex((t) => t.id === this.termActive);
+      if (!tabs.length || index < 0) return;
+      let next;
+      if (ev.key === "ArrowRight") next = (index + 1) % tabs.length;
+      else if (ev.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
+      else if (ev.key === "Home") next = 0;
+      else if (ev.key === "End") next = tabs.length - 1;
+      else return;
+      ev.preventDefault();
+      this.showPane(tabs[next].id, false);
+      const focus = () => { const el = document.getElementById("tab-" + tabs[next].id); if (el) el.focus(); };
+      if (this.$nextTick) this.$nextTick(focus); else focus();
     },
 
     fitActive(focus) {
@@ -1418,25 +1555,32 @@ function sshui() {
         entry.fitTimer = 0;
         if (termMap.get(entry.id) !== entry || this.view !== "terminal" || !entry.pane.classList.contains("active") || !entry.pane.clientWidth || !entry.pane.clientHeight) return;
         entry.fit.fit();
-        if (entry.focusAfterFit && !this.anyDialog() && entry.ws.readyState === 1) entry.term.focus();
+        const active = document.activeElement;
+        if (entry.focusAfterFit && !this.anyDialog() && entry.ready && (!active || !active.matches("input,textarea,select,[contenteditable='true']") || entry.pane.contains(active))) entry.term.focus();
         entry.focusAfterFit = false;
       }, 30);
     },
 
     closeTab(id) {
+      const index = this.termTabs.findIndex((tab) => tab.id === id);
       const entry = termMap.get(id);
       if (entry) {
+        entry.generation++;
+        entry.ready = false;
+        this.clearTerminalInput(entry);
         if (entry.fitTimer) clearTimeout(entry.fitTimer);
         if (entry.observer) entry.observer.disconnect();
-        entry.ws.onclose = null;
-        try { entry.ws.close(); } catch (err) { /* already closed */ }
+        if (entry.ws) {
+          entry.ws.onclose = entry.ws.onmessage = entry.ws.onopen = entry.ws.onerror = null;
+          try { entry.ws.close(); } catch (err) { /* already closed */ }
+        }
         entry.term.dispose();
         entry.pane.remove();
         termMap.delete(id);
       }
       this.termTabs = this.termTabs.filter((tab) => tab.id !== id);
       if (this.termActive === id) {
-        const next = this.termTabs[this.termTabs.length - 1];
+        const next = this.termTabs[Math.min(Math.max(0, index), this.termTabs.length - 1)];
         this.termActive = next ? next.id : "";
         if (next) this.showPane(next.id);
         else this.syncWorkspace();
@@ -1472,10 +1616,26 @@ function sshui() {
     },
 
     async reconnectTerminal() {
-      const alias = this.tabAlias();
-      if (!alias || this.termOpening) return;
-      this.closeTab(this.termActive);
-      await this.openTerminal(alias);
+      const entry = termMap.get(this.termActive);
+      const tab = this.termTabs.find((t) => t.id === this.termActive);
+      if (!entry || !tab || tab.state === "connecting" || tab.state === "connected" || this.termOpening) return;
+      this.termOpening = true;
+      this.clearTerminalInput(entry);
+      if (entry.ws) { entry.generation++; entry.ws.close(); }
+      // Leave full-screen modes and soft-reset terminal modes without clearing scrollback.
+      // Preserve an alternate-screen application's last visible frame as plain text.
+      const buffer = entry.term.buffer && entry.term.buffer.active;
+      let snapshot = "";
+      if (buffer && buffer.type === "alternate") {
+        const lines = [];
+        for (let i = 0; i < Math.min(entry.term.rows, 500); i++) {
+          const line = buffer.getLine(i);
+          lines.push(line ? line.translateToString(true) : "");
+        }
+        snapshot = "\r\n── 断线前的全屏画面（纯文本） ──\r\n" + lines.join("\r\n");
+      }
+      entry.term.write("\x1b[?1049l\x1b[?1000l\x1b[?1002l\x1b[?1003l\x1b[?1006l\x1b[!p" + snapshot + "\r\n── 重新连接：新的 shell，之前的命令不会重发 ──\r\n");
+      try { await this.connectTerm(entry); } finally { this.termOpening = false; }
     },
 
     selectPanel(name) { this.panel = name; this.fitActive(name === "terminal"); },

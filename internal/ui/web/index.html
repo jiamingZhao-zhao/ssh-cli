@@ -145,7 +145,7 @@
             </div>
           </div>
 
-          <div x-show="is('terminal')" data-view="terminal" class="ws" :class="{ 'panel-overview': panel === 'overview', 'panel-files': panel === 'files' }" :style="workspaceGrid()" @dragenter.prevent="dragEnter($event)" @dragover.prevent="dragOver($event, '')" @dragleave="dragLeave($event)" @drop.prevent="dropFiles($event, '')">
+          <div x-show="is('terminal')" data-view="terminal" class="ws" :class="{ 'panel-overview': panel === 'overview', 'panel-files': panel === 'files', 'files-collapsed': filesCollapsed }" :style="workspaceGrid()" @dragenter.prevent="dragEnter($event)" @dragover.prevent="dragOver($event, '')" @dragleave="dragLeave($event)" @drop.prevent="dropFiles($event, '')">
             <div class="ws-mobile-nav" role="group" aria-label="工作区面板">
               <button type="button" class="btn btn-sm" :aria-pressed="panel === 'terminal'" @click="selectPanel('terminal')">终端</button>
               <button type="button" class="btn btn-sm" :aria-pressed="panel === 'overview'" @click="selectPanel('overview')">概况</button>
@@ -269,42 +269,49 @@
               <div class="ws-upper" data-pane="terminal">
                 <div class="ws-term-bar">
                   <div class="ws-tabs" x-show="termTabs.length > 0">
-                    <div class="term-tabs" role="tablist">
+                    <div class="term-tabs" role="tablist" aria-label="终端会话" @keydown="terminalTabKey($event)">
                       <template x-for="tab in termTabs" :key="tab.id">
                         <div class="term-tab" role="presentation" :class="{ active: tab.id === termActive }">
-                          <button class="term-tab-label" type="button" role="tab" :aria-selected="tab.id === termActive" @click="showPane(tab.id)" x-text="tab.alias"></button>
+                          <button class="term-tab-label" type="button" role="tab" :id="'tab-' + tab.id" :aria-controls="'pane-' + tab.id" :tabindex="tab.id === termActive ? 0 : -1" :aria-selected="tab.id === termActive" :title="terminalTabLabel(tab)" @click="showPane(tab.id)" x-text="terminalTabLabel(tab)"></button>
                           <span class="term-tab-via" x-show="tab.id === termActive && viaOf(tab.alias)" x-text="viaOf(tab.alias)"></span>
                           <span class="term-tab-busy" x-show="tabBusy(tab)" aria-hidden="true"></span>
-                          <span class="term-tab-state" x-show="tab.state === 'closed' || tab.state === 'expired'">已断开</span>
-                          <button class="term-tab-close" type="button" @click="closeTab(tab.id)" :aria-label="'关闭 ' + tab.alias">×</button>
+                          <span class="term-tab-state" x-show="tab.state !== 'connected'" x-text="tab.state === 'connecting' ? '连接中' : (tab.state === 'expired' ? '已到期' : '已断开')"></span>
+                          <button class="term-tab-close" type="button" @click="closeTab(tab.id)" :aria-label="'关闭 ' + terminalTabLabel(tab)" title="关闭此终端，会结束此 shell">×</button>
                         </div>
                       </template>
                     </div>
                   </div>
-                  <div class="btn-list">
+                  <div class="btn-list ws-connect-actions">
                     <select class="form-select w-auto" x-model="termAlias" @change="onTermHost()" aria-label="终端主机">
                       <template x-for="h in sortedHosts()" :key="'term-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
                     </select>
-                    <button class="btn btn-primary" type="button" :disabled="termOpening" @click="openTerminal(termAlias)" x-text="termOpening ? '连接中…' : '打开'">打开</button>
-                    <button class="btn btn-outline-secondary" type="button" @click="openWorkspaceHost()">连接</button>
-                    <button class="btn btn-outline-secondary" type="button" @click="closeWorkspaceHost()">断开</button>
+                    <button class="btn btn-primary" type="button" :disabled="termOpening || !termAlias" @click="openTerminal(termAlias)" x-text="termOpening ? '连接中…' : '打开终端'">打开终端</button>
+                    <button class="btn btn-outline-secondary" type="button" :disabled="!panelAlias() || workspaceLive()" @click="openWorkspaceHost()" :title="'连接当前工作区 ' + panelAlias() + ' 的文件与监控，不创建终端'">连接文件</button>
+                    <button class="btn btn-outline-secondary" type="button" :disabled="!panelAlias()" @click="closeWorkspaceHost()" :title="'断开 ' + panelAlias() + ' 的文件连接和全部终端'">断开此主机</button>
                   </div>
                 </div>
-                <div class="ws-banner" x-show="errors.terminal">
-                  <div class="alert alert-danger mb-0" role="alert" x-text="errors.terminal"></div>
+                <div class="ws-term-tools" role="group" aria-label="终端显示与复制">
+                  <button type="button" class="ws-seg-btn" @click="changeTermFont(-1)" :disabled="termFontSize <= 12" aria-label="缩小终端字号">A−</button>
+                  <span class="ws-quiet mb-0" x-text="termFontSize + ' px'"></span>
+                  <button type="button" class="ws-seg-btn" @click="changeTermFont(1)" :disabled="termFontSize >= 22" aria-label="放大终端字号">A+</button>
+                  <button type="button" class="ws-seg-btn" @click="copyTerminal()" title="复制所选文字：Ctrl+Shift+C；Ctrl+C 保持中断命令">复制选中</button>
+                  <button type="button" class="ws-seg-btn ws-files-toggle" @click="toggleFiles()" :aria-expanded="!filesCollapsed" x-text="filesCollapsed ? '展开文件区' : '收起文件区'"></button>
+                </div>
+                <div class="ws-banner" x-show="terminalError()">
+                  <div class="alert alert-danger mb-0" role="alert" x-text="terminalError()"></div>
                 </div>
                 <div class="empty" x-show="termTabs.length === 0">
                   <div class="empty-ico" aria-hidden="true"></div>
                   <p class="empty-title">还没有打开的终端</p>
-                  <p class="empty-subtitle text-secondary">选一台主机后点「打开」。可以同时开多个。连接失败时会写「终端连接失败」。到达最长时限时会先提示再断开。</p>
+                  <p class="empty-subtitle text-secondary">选一台主机后点「打开终端」，也可以同时打开多个。只浏览文件时点「连接文件」。</p>
                   <div class="empty-action"><button class="btn btn-primary" type="button" @click="openTerminal(termAlias)">打开终端</button></div>
                 </div>
                 <div id="term-screen" class="term-screen" x-show="termTabs.length > 0"></div>
               </div>
               <div class="ws-split" role="separator" aria-orientation="horizontal" aria-label="调整文件区高度" @mousedown.prevent="beginSplit('lower', $event)">
                 <div class="ws-split-status" @mousedown.stop>
-                  <span class="ws-identity-line" x-text="terminalStatusLine()"></span>
-                  <span class="ws-session-line" x-text="workspaceSession()"></span>
+                  <span class="ws-identity-line" :title="terminalStatusLine()" x-text="terminalStatusLine()"></span>
+                  <span class="ws-session-line" :title="workspaceSession()" x-text="workspaceSession()"></span>
                   <button type="button" class="btn btn-sm btn-outline-primary" x-show="tabAlias() && !workspaceLive()" :disabled="termOpening" @click="reconnectTerminal()">重新连接</button>
                   <button type="button" class="btn btn-sm btn-outline-secondary" x-show="terminalBlocked(panelAlias())" @click="show('operate')">执行受策略检查的命令</button>
                 </div>
@@ -316,8 +323,8 @@
                     <button type="button" class="ws-seg-btn" data-pane="history" :class="{ active: files.mode === 'history' }" @click="showHistory()">历史</button>
                   </div>
                   <div class="ws-file-status">
-                    <span class="ws-identity-line" x-text="terminalStatusLine()"></span>
-                    <span class="ws-session-line" x-text="workspaceSession()"></span>
+                    <span class="ws-identity-line" :title="terminalStatusLine()" x-text="terminalStatusLine()"></span>
+                    <span class="ws-session-line" :title="workspaceSession()" x-text="workspaceSession()"></span>
                     <button type="button" class="btn btn-sm btn-outline-primary" x-show="tabAlias() && !workspaceLive()" :disabled="termOpening" @click="reconnectTerminal()">重新连接</button>
                     <button type="button" class="btn btn-sm btn-outline-secondary" x-show="terminalBlocked(panelAlias())" @click="show('operate')">执行受策略检查的命令</button>
                   </div>
