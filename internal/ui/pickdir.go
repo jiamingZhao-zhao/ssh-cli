@@ -22,6 +22,9 @@ var errPickCancelled = errors.New("cancelled")
 // Tests replace it so the UI handler does not pop a dialog.
 var chooseDownloadDir = chooseDownloadDirOS
 
+// Windows PowerShell otherwise pipes paths using the active legacy code page.
+const windowsPickerEncoding = `[Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false; `
+
 func (s *service) pickDownloadDirAPI(w http.ResponseWriter, r *http.Request) {
 	dir, err := chooseDownloadDir(r.Context())
 	if errors.Is(err, errPickCancelled) {
@@ -44,7 +47,7 @@ func chooseDownloadDirOS(ctx context.Context) (string, error) {
 	switch runtime.GOOS {
 	case "windows":
 		script := `Add-Type -AssemblyName System.Windows.Forms; $d = New-Object System.Windows.Forms.FolderBrowserDialog; $d.Description = '选择下载保存目录'; $d.ShowNewFolderButton = $true; if ($d.ShowDialog() -eq [System.Windows.Forms.DialogResult]::OK) { Write-Output $d.SelectedPath }`
-		return runDirPicker(ctx, "powershell", "-NoProfile", "-STA", "-Command", script)
+		return runDirPicker(ctx, "powershell", "-NoProfile", "-STA", "-Command", windowsPickerEncoding+script)
 	case "darwin":
 		return runDirPicker(ctx, "osascript", "-e", `POSIX path of (choose folder with prompt "选择下载保存目录")`)
 	default:

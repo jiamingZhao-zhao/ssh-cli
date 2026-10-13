@@ -170,6 +170,7 @@
               </div>
               <div x-show="workspaceLive()">
               <p class="ws-quiet" x-show="workspaceLive() && metricsPending()">正在读取概况…</p>
+              <p class="ws-quiet ws-freshness" role="status" x-show="workspaceLive() && metricsCaption()" x-text="metricsCaption()" :class="{ 'is-stale': errors.metrics || metricsClock - metricsUpdated > 15000 }"></p>
               <div class="alert alert-warning py-2" role="alert" x-show="workspaceLive() && errors.metrics" x-text="errors.metrics"></div>
               <dl class="ws-metrics" x-show="workspaceLive()">
                 <div><dt>运行</dt><dd x-text="uptimeText()"></dd></div>
@@ -257,6 +258,7 @@
                         <span class="ws-queue-meta" x-text="transferDetail(item)"></span>
                         <button type="button" class="ws-seg-btn" x-show="item.active" @click="cancelTransfer(item.id)">取消</button>
                       </div>
+                      <p class="ws-transfer-error" x-show="item.error" x-text="item.error" role="status"></p>
                     </div>
                   </template>
                 </div>
@@ -348,7 +350,8 @@
                       </template>
                       <p class="ws-quiet px-2" x-show="!files.path">选择主机后列出目录。</p>
                     </div>
-                    <div class="ws-table-wrap">
+                    <div class="ws-table-wrap" :aria-busy="filesLoading">
+                      <p class="ws-loading" role="status" x-show="filesLoading" x-text="'正在读取目录：' + filesPendingPath"></p>
                       <table class="table table-sm table-vcenter card-table">
                         <thead><tr><th>名称</th><th>大小</th><th>修改时间</th><th></th></tr></thead>
                         <tbody>
@@ -374,7 +377,7 @@
                         <p class="empty-subtitle text-secondary">选择主机并连接后，这里显示远端文件。</p>
                         <div class="empty-action"><button class="btn btn-primary" type="button" @click="openWorkspaceHost()">连接</button></div>
                       </div>
-                      <div class="empty" x-show="files.path && !(files.entries || []).length && !errors.files">
+                      <div class="empty" x-show="files.path && !(files.entries || []).length && !errors.files && !filesLoading">
                         <div class="empty-ico" aria-hidden="true"></div>
                         <p class="empty-title">这个目录是空的</p>
                         <p class="empty-subtitle text-secondary">可以把本机文件拖进来，或从这里上传。</p>
@@ -383,7 +386,8 @@
                     </div>
                   </div>
                 </div>
-                <div x-show="workspaceLive() && files.mode === 'history'" class="ws-history" data-pane="history-body">
+                <div x-show="workspaceLive() && files.mode === 'history'" class="ws-history" data-pane="history-body" :aria-busy="filesLoading">
+                  <p class="ws-loading" role="status" x-show="filesLoading">正在读取历史…</p>
                   <p class="ws-quiet" x-text="historyCaption()"></p>
                   <pre class="history-pre mb-0" x-text="historyText()"></pre>
                 </div>
@@ -902,7 +906,7 @@
               <div class="empty" x-show="audit.records.length === 0">
                 <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">这个筛选下没有记录</p>
-                <p class="empty-subtitle text-secondary">默认只看命令行。终端里的文件、历史和概况不写入审计。需要看页面上的终端开关时，把来源改成全部或 ui。</p>
+                <p class="empty-subtitle text-secondary">默认只看命令行。查看网页中的命令、文件、历史、概况和终端连接记录，请把来源改成全部或 ui。</p>
                 <div class="empty-action"><button class="btn btn-primary" type="button" @click="showAllAudit()">查看全部来源</button></div>
               </div>
               <div class="table-responsive" x-show="audit.records.length > 0">
@@ -1043,7 +1047,7 @@
                 <form class="card" @submit.prevent="runExec()">
                   <div class="card-header"><h3 class="card-title">执行命令</h3></div>
                   <div class="card-body">
-                    <p class="text-secondary">这是高级入口，仍套用命令策略，但不写入审计。日常操作在终端页：那里的终端、文件和历史不记账。审计默认只统计命令行。</p>
+                    <p class="text-secondary">此入口执行命令策略并记录审计。网页中的文件、历史和概况操作也记录审计；交互终端记录连接事件，不记录输入内容。审计默认只显示命令行来源，可切换为全部或 ui。</p>
                     <div class="row g-3">
                       <div class="col-md-4"><label class="form-label">主机</label>
                         <select class="form-select" x-model="exec.alias" required>
@@ -1056,7 +1060,7 @@
                       <div class="col-md-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="exec.allowOutflow"><span class="form-check-label">允许带回命令输出（noDataOutflow 需再确认 outflow）</span></label></div>
                     </div>
                   </div>
-                  <div class="card-footer"><button class="btn btn-primary" type="submit">执行</button></div>
+                  <div class="card-footer"><button class="btn btn-primary" type="submit" :disabled="execBusy" x-text="execBusy ? '执行中…' : '执行'">执行</button></div>
                 </form>
               </div>
               <div class="col-lg-6">

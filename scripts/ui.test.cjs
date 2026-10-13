@@ -5,6 +5,18 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 const vm = require('node:vm');
 const source = readFileSync(join(__dirname, '../internal/ui/web/app.js'), 'utf8');
+
+test('owned UI sources are strict UTF-8 and retain Chinese labels', () => {
+  for (const file of ['app.js', 'app.css', 'index.html']) {
+    const bytes = readFileSync(join(__dirname, '../internal/ui/web', file));
+    const text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
+    assert.ok(!text.includes('\uFFFD'), file + ' contains a replacement character');
+    if (file === 'index.html') {
+      for (const label of ['主机名称：', '主机别名：', '传输队列', '文件', '历史']) assert.ok(text.includes(label), label);
+      assert.ok(!text.includes('不写入审计'));
+    }
+  }
+});
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -12,15 +24,186 @@ function deferred() {
 }
 function fixture() {
   const timers = [];
-  const sandbox = { AbortController, crypto: require('node:crypto').webcrypto,
+  const sandbox = { AbortController, TextDecoder, TextEncoder, crypto: require('node:crypto').webcrypto,
     document: { hidden: false, addEventListener() {}, getElementById() { return null; } },
-    setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout() {} };
+    setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout(id) { timers[id - 1] = null; } };
   sandbox.window = sandbox;
   vm.createContext(sandbox); vm.runInContext(source, sandbox);
   const app = sandbox.sshui();
   app.loadAudit = app.loadDashboard = app.loadSessions = () => {};
   return { app, timers, sandbox };
 }
+
+function connected(app) {
+  app.view = 'terminal'; app.termAlias = app.explicitAlias = 'a'; app.files.alias = 'a';
+  app.startMetrics = () => {};
+}
+
+test('later directory wins even if the old transport ignores abort', async () => {
+  const { app } = fixture(); connected(app);
+  const slow = deferred(), fast = deferred();
+  app.postRead = (_url, body) => body.path === '/slow' ? slow.promise : fast.promise;
+  app.ensureFsRoot = () => {};
+  const first = app.listFiles('/slow'), second = app.listFiles('/fast');
+  assert.equal(app.filesLoading, true);
+  fast.resolve({ path: '/fast', entries: [] }); await second;
+  slow.resolve({ path: '/slow', entries: [] }); await first;
+  assert.equal(app.files.path, '/fast'); assert.equal(app.filesLoading, false);
+});
+
+test('old history error cannot overwrite files after changing pane', async () => {
+  const { app } = fixture(); connected(app);
+  const history = deferred();
+  app.postRead = (url) => url === '/api/history' ? history.promise : Promise.resolve({ path: '/', entries: [] });
+  const pending = app.loadHistory('a');
+  app.showFiles(); await app.listFiles('/');
+  history.reject(new Error('old history error')); await pending;
+  assert.equal(app.errors.files, ''); assert.equal(app.files.mode, 'files');
+});
+
+test('root response from an earlier host visit cannot contaminate a later visit', async () => {
+  const { app } = fixture(); connected(app);
+  const old = deferred(), fresh = deferred(); let calls = 0;
+  app.postRead = () => (++calls === 1 ? old.promise : fresh.promise);
+  app.refreshFiles = () => {};
+  const pending = app.ensureFsRoot();
+  app.termAlias = app.explicitAlias = 'b'; app.syncWorkspace();
+  app.termAlias = app.explicitAlias = 'a'; app.syncWorkspace();
+  const current = app.ensureFsRoot();
+  fresh.resolve({ path: '/', entries: [{ path: '/new', name: 'new', dir: true }] }); await current;
+  old.resolve({ path: '/', entries: [{ path: '/old', name: 'old', dir: true }] }); await pending;
+  assert.ok(app.treeRows().some(row => row.path === '/new'));
+  assert.ok(!app.treeRows().some(row => row.path === '/old'));
+});
+
+test('refresh keeps selection and scroll; navigation clears them', async () => {
+  const { app, sandbox } = fixture(); connected(app);
+  const list = { clientHeight: 200, scrollTop: 90 };
+  sandbox.document.querySelector = selector => selector === '.ws-table-wrap' ? list : null;
+  app.files.path = '/work'; app.selectedPath = '/work/a';
+  app.ensureFsRoot = () => {};
+  app.postRead = async (_url, body) => ({ path: body.path, entries: [{ path: '/work/a', name: 'a' }] });
+  await app.listFiles('/work');
+  assert.equal(app.selectedPath, '/work/a'); assert.equal(list.scrollTop, 90);
+  await app.listFiles('/other');
+  assert.equal(app.selectedPath, ''); assert.equal(list.scrollTop, 0);
+});
+
+test('host switch restores selection and scroll independently', () => {
+  const { app, sandbox } = fixture(); connected(app);
+  const list = { clientHeight: 200, scrollTop: 90 };
+  sandbox.document.querySelector = selector => selector === '.ws-table-wrap' ? list : null;
+  app.refreshFiles = () => {};
+  app.files.path = '/work'; app.selectedPath = '/work/a';
+  app.termAlias = app.explicitAlias = 'b'; app.syncWorkspace();
+  list.scrollTop = 20;
+  app.termAlias = app.explicitAlias = 'a'; app.syncWorkspace();
+  assert.equal(list.scrollTop, 90); assert.equal(app.selectedPath, '/work/a');
+});
+
+test('monitoring failure retains terminal state and labels old samples', () => {
+  const { app } = fixture(); connected(app);
+  app.termTabs = [{ id: 't', alias: 'a', state: 'connected' }]; app.termActive = 't';
+  app.metrics.alias = 'a'; app.metricsUpdated = 1000; app.metricsClock = 31000;
+  app.errors.metrics = 'read timeout';
+  assert.equal(app.overviewStatus(), '在线'); assert.match(app.metricsCaption(), /未更新.*30 秒前/);
+  app.clearLivePanes(); assert.equal(app.metricsUpdated, 0); assert.equal(app.errors.metrics, '');
+});
+
+test('NDJSON requires a final result and decodes Chinese across byte boundaries', async () => {
+  const { sandbox } = fixture();
+  const response = text => {
+    const bytes = Buffer.from(text); let i = 0;
+    return { body: { getReader: () => ({ read: async () => i < bytes.length ? { value: bytes.subarray(i, ++i), done: false } : { done: true } }) } };
+  };
+  const result = await sandbox.readNDJSON(response('{"loaded":2,"total":2}\n{"ok":true,"local":"中文目录"}'), () => {});
+  assert.equal(result.local, '中文目录');
+  await assert.rejects(sandbox.readNDJSON(response('{"loaded":2,"total":2}\n')), /未确认/);
+  await assert.rejects(sandbox.readNDJSON({ text: async () => '{"loaded":2}' }), /未确认/);
+});
+
+function uploadFixture() {
+  const ctx = fixture(), requests = [];
+  ctx.sandbox.FormData = class { set() {} };
+  ctx.sandbox.sessionStorage = { getItem: () => '' };
+  ctx.sandbox.XMLHttpRequest = class {
+    constructor() { this.upload = {}; requests.push(this); }
+    open() {} setRequestHeader() {} send() {}
+    abort() { this.onabort(); }
+  };
+  return { ...ctx, requests };
+}
+
+test('100 percent local upload waits for remote completion and ignores late local progress', async () => {
+  const { app, requests } = uploadFixture();
+  const pending = app.uploadOne('a', { name: '中文.txt', size: 100 }, '/work');
+  const xhr = requests[0];
+  xhr.upload.onprogress({ lengthComputable: true, loaded: 120, total: 120 });
+  assert.equal(app.transfers[0].active, true); assert.match(app.transferDetail(app.transfers[0]), /等待远端确认/);
+  xhr.responseText = '{"loaded":40,"total":100}\n'; xhr.onprogress();
+  xhr.upload.onprogress({ lengthComputable: true, loaded: 120, total: 120 });
+  assert.equal(app.transfers[0].loaded, 40); assert.equal(app.transfers[0].label, '写入远端');
+  xhr.status = 200; xhr.responseText += '{"ok":true}\n'; await xhr.onload(); await pending;
+  assert.equal(app.transfers[0].label, '完成'); assert.equal(app.transfers[0].active, false);
+});
+
+test('cancelled upload cannot be revived by late progress or success', async () => {
+  const { app, requests } = uploadFixture();
+  const pending = app.uploadOne('a', { name: 'a', size: 100 }, '/work');
+  const xhr = requests[0]; app.cancelTransfer(app.transfers[0].id); await pending;
+  xhr.responseText = '{"loaded":100,"total":100}\n'; xhr.onprogress();
+  xhr.status = 200; xhr.responseText += '{"ok":true}'; await xhr.onload();
+  assert.equal(app.transfers[0].active, false); assert.equal(app.transfers[0].label, '已请求取消');
+  assert.match(app.transfers[0].error, /核验/);
+});
+
+test('cancel while overwrite confirmation is pending never sends a second request', async () => {
+  const { app, requests } = uploadFixture(), answer = deferred();
+  app.askConfirm = () => answer.promise;
+  const pending = app.uploadOne('a', { name: 'a', size: 100 }, '/work');
+  const xhr = requests[0]; xhr.status = 409; xhr.responseText = '{"ok":false,"needsOverwrite":true}';
+  const onload = xhr.onload(); app.cancelTransfer(app.transfers[0].id);
+  answer.resolve(true); await onload; await pending;
+  assert.equal(requests.length, 1); assert.equal(app.transfers[0].label, '已取消');
+});
+
+test('missing upload result stays uncertain with a persistent explanation', async () => {
+  const { app, requests } = uploadFixture();
+  const pending = app.uploadOne('a', { name: 'a', size: 100 }, '/work');
+  const xhr = requests[0]; xhr.status = 200; xhr.responseText = '{"loaded":100,"total":100}\n';
+  await xhr.onload(); await pending;
+  assert.equal(app.transfers[0].label, '结果待确认'); assert.match(app.transfers[0].error, /不要直接重试/);
+});
+
+test('single command double click sends once and never retries a lost reply', async () => {
+  const { app } = fixture(), reply = deferred(); let calls = 0;
+  app.postJSON = () => { calls++; return reply.promise; };
+  app.exec.command = 'echo once';
+  const pending = app.runExec(); await app.runExec(); assert.equal(calls, 1);
+  reply.reject(new Error('lost reply')); await pending;
+  assert.equal(calls, 1); assert.equal(app.execBusy, false); assert.match(app.errors.operate, /不要直接重复执行/);
+});
+
+test('terminal resize debounces, focuses on explicit switch, and ignores hidden panes', () => {
+  const { app, sandbox, timers } = fixture(); let fits = 0, focuses = 0;
+  const pane = { classList: { contains: () => true }, clientWidth: 800, clientHeight: 400 };
+  const entry = { id: 't', pane, ws: { readyState: 1, send: () => assert.fail('fit must not duplicate onResize') },
+    fit: { fit() { fits++; } }, term: { focus() { focuses++; } } };
+  sandbox.entry = entry; vm.runInContext("termMap.set('t', entry)", sandbox);
+  app.view = 'terminal'; app.termActive = 't';
+  app.fitActive(); app.fitActive(true); app.fitActive();
+  for (const timer of timers.splice(0)) if (timer) timer();
+  assert.equal(fits, 1); assert.equal(focuses, 1);
+  pane.clientWidth = 0; app.fitActive(); timers.at(-1)(); assert.equal(fits, 1);
+});
+
+test('incomplete command result does not clear the command or look successful', async () => {
+  const { app } = fixture();
+  app.postJSON = async () => ({ ok: true }); app.exec.command = 'echo once';
+  await app.runExec();
+  assert.equal(app.exec.command, 'echo once'); assert.equal(app.operateOut, '');
+  assert.match(app.errors.operate, /未收到完整执行结果.*不要直接重复执行/);
+});
 test('slow metrics complete before next refresh is scheduled', async () => {
   const { app, timers } = fixture(), response = deferred();
   app.view = 'terminal'; app.explicitAlias = app.termAlias = 'a';
@@ -118,7 +301,7 @@ test('overview shows disk bytes, top 5 memory rows, and a short command', () => 
   assert.equal(app.procShort(rows[0]), 'java');
   assert.equal(app.procShort({ comm: 'nginx: master process /usr/sbin/nginx' }), 'nginx:');
   const detail = app.transferDetail({ loaded: 3 * 1024 * 1024, total: 10 * 1024 * 1024, active: true, label: '下载中' });
-  assert.equal(detail, '30% · 3.0 MB / 10.0 MB');
+  assert.equal(detail, '30% · 3.0 MB / 10.0 MB · 下载中');
   assert.equal(sandbox.lastJSONObject('{"loaded":1,"total":2}\n{"ok":true,"local":"/tmp/a"}\n').local, '/tmp/a');
 });
 test('process table stays five rows when overview data is missing', () => {

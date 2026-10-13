@@ -2,10 +2,12 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -78,8 +80,18 @@ func TestRevealDownloadAPI(t *testing.T) {
 		h.ServeHTTP(rr, req)
 		return rr
 	}
-	rr := post(`{"path":"`+file+`"}`, "application/json")
-	if rr.Code != 200 || !got.file || got.path != file || !strings.Contains(rr.Body.String(), dir) {
+	body, err := json.Marshal(map[string]string{"path": file})
+	if err != nil {
+		t.Fatal(err)
+	}
+	rr := post(string(body), "application/json")
+	var reply struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &reply); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != 200 || !got.file || got.path != file || reply.Path != dir {
 		t.Fatalf("reveal %d %s %#v", rr.Code, rr.Body.String(), got)
 	}
 	rr = post(`{"path":"relative"}`, "application/json")
@@ -107,10 +119,19 @@ func TestPickDownloadDirAPI(t *testing.T) {
 		h.ServeHTTP(rr, req)
 		return rr
 	}
-	dir := t.TempDir()
+	dir := filepath.Join(t.TempDir(), "中文 保存目录")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
 	chooseDownloadDir = func(context.Context) (string, error) { return dir, nil }
 	rr := post()
-	if rr.Code != 200 || !strings.Contains(rr.Body.String(), dir) || strings.Contains(rr.Body.String(), `"cancelled":true`) {
+	var reply struct {
+		Path string `json:"path"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &reply); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != 200 || reply.Path != dir || strings.Contains(rr.Body.String(), `"cancelled":true`) {
 		t.Fatalf("pick %d %s", rr.Code, rr.Body.String())
 	}
 	chooseDownloadDir = func(context.Context) (string, error) { return "", errPickCancelled }
@@ -132,5 +153,20 @@ func TestPickDownloadDirAPI(t *testing.T) {
 	h.ServeHTTP(rr, bare)
 	if rr.Code != http.StatusUnsupportedMediaType || !strings.Contains(rr.Body.String(), "mutating requests must use JSON") {
 		t.Fatalf("non-json %d %s", rr.Code, rr.Body.String())
+	}
+}
+
+func TestWindowsPickerUTF8(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("native Windows PowerShell encoding")
+	}
+	dir := filepath.Join(t.TempDir(), "中文 保存目录")
+	if err := os.Mkdir(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	script := windowsPickerEncoding + "Write-Output '" + strings.ReplaceAll(dir, "'", "''") + "'"
+	got, err := runDirPicker(context.Background(), "powershell", "-NoProfile", "-Command", script)
+	if err != nil || got != dir {
+		t.Fatalf("unicode path %q, want %q: %v", got, dir, err)
 	}
 }

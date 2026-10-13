@@ -108,6 +108,9 @@ type execResult struct {
 	Group            string `json:"group"`
 	Env              string `json:"env"`
 	ExitCode         int    `json:"exitCode"`
+	Status           string `json:"status"`
+	Outcome          string `json:"outcome"`
+	RetrySafe        bool   `json:"retrySafe"`
 	Stdout           string `json:"stdout,omitempty"`
 	Stderr           string `json:"stderr,omitempty"`
 	StdoutSuppressed bool   `json:"stdoutSuppressed,omitempty"`
@@ -170,6 +173,7 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 			res.Stderr = errBuf.String()
 		}
 		st, exitCode := statusOf(res.ExitCode, runErr)
+		res.Status, res.Outcome = st, executionOutcome(runErr)
 		extra := ""
 		if runErr != nil {
 			extra = runErr.Error()
@@ -304,6 +308,7 @@ func (a *App) execCaptured(meta auditMeta, p planned, remote, scriptBody string,
 	}
 	printMu.Unlock()
 	st, exitCode := statusOf(res.ExitCode, runErr)
+	res.Status, res.Outcome = st, executionOutcome(runErr)
 	extra := ""
 	if runErr != nil {
 		extra = runErr.Error()
@@ -319,6 +324,15 @@ func (a *App) execCaptured(meta auditMeta, p planned, remote, scriptBody string,
 		return res, err
 	}
 	return res, nil
+}
+
+// A transport failure cannot prove that a command never reached the host.
+// Even a completed nonzero command may have produced side effects.
+func executionOutcome(err error) string {
+	if err != nil {
+		return "unknown"
+	}
+	return "completed"
 }
 
 func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Writer, timeout time.Duration) (int, error) {
