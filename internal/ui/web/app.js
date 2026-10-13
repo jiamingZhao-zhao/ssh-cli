@@ -457,6 +457,7 @@ function sshui() {
     hostLoading: false,
     termOpening: false,
     termFontSize: 14,
+	termSearch: { open: false, text: "", found: true },
     filesCollapsed: false,
     workspaceCache: Object.create(null),
     workspaceSeq: 0,
@@ -563,6 +564,7 @@ function sshui() {
     },
 
     init() {
+      this.restorePending();
       this.hostForm = this.blankHost();
       this.groupForm = this.blankGroup();
       this.policyForm = this.blankPolicy();
@@ -826,6 +828,13 @@ function sshui() {
         if (beforeSend) beforeSend();
         res = await fetch(url, opts);
       }
+      if (res.status === 403 && res.headers && res.headers.get("X-SSH-CLI-Session-Expired") === "1") {
+        this.csrf = "";
+        await this.ensureSession();
+        headers["X-CSRF-Token"] = this.csrf;
+        if (beforeSend) beforeSend();
+        res = await fetch(url, opts);
+      }
       if (res.headers && res.headers.get(auditHeader)) this.noteAudit({ auditWarning: true });
       return res;
     },
@@ -850,6 +859,38 @@ function sshui() {
       const data = await this.parseJSON(res);
       if (!res.ok || data.ok === false) throw new Error(friendlyError(data && data.error, res.statusText));
       return data;
+    },
+
+    persistPending() {
+      // No file bytes, command text, command output, or credentials are stored.
+      try {
+        const transfers = (this.transfers || []).filter((t) => t.started && t.active || this.transferNeedsVerification(t)).slice(-TRANSFER_LIMIT).map((t) => ({
+          id: t.id, alias: t.alias, kind: t.kind, name: t.name, remote: t.remote, local: t.local,
+          active: false, needsVerification: true, label: "结果待确认"
+        }));
+        sessionStorage.setItem("sshCliPending", JSON.stringify({ transfers: transfers,
+          file: this.fileAction && !this.fileAction.done && (this.fileAction.uncertain || this.fileBusy) ? { alias: this.fileAction.scope.alias, path: this.fileAction.path, op: this.fileAction.op } : null,
+          exec: (this.execBusy || this.execUncertain) ? this.execOperationID : "",
+          batch: (this.batchBusy || this.batchUncertain) ? this.batchOperationID : "" }));
+      } catch (err) { /* Storage may be disabled; in-page verification still works. */ }
+    },
+
+    restorePending() {
+      try {
+        const raw = sessionStorage.getItem("sshCliPending") || "{}";
+        if (raw.length > 512 * 1024) return;
+        const saved = JSON.parse(raw);
+        if (saved.file && typeof saved.file.alias === "string" && typeof saved.file.path === "string") {
+          this.fileAction = { scope: { alias: saved.file.alias }, path: saved.file.path, op: saved.file.op, uncertain: true,
+            message: saved.file.alias + " · " + saved.file.path + "：页面已重新载入，请核验原主机文件后清除提示。" };
+        }
+        this.transfers = (Array.isArray(saved.transfers) ? saved.transfers : []).slice(-TRANSFER_LIMIT).filter((t) => t && typeof t.id === "string" && typeof t.name === "string").map((t) => ({
+          id: t.id, alias: t.alias, kind: t.kind, name: t.name, remote: t.remote, local: t.local,
+          active: false, needsVerification: true, label: "结果待确认", error: "页面已重新载入，请核验原目标；不会自动重新传输。"
+        }));
+        if (/^[A-Za-z0-9_-]{16,80}$/.test(saved.exec || "")) { this.execOperationID = saved.exec; this.execUncertain = true; }
+        if (/^[A-Za-z0-9_-]{16,80}$/.test(saved.batch || "")) { this.batchOperationID = saved.batch; this.batchUncertain = true; }
+      } catch (err) { /* Ignore malformed browser state. */ }
     },
 
     async ensureSession() {
@@ -1365,11 +1406,13 @@ function sshui() {
       });
       const fit = new FitAddon.FitAddon();
       term.loadAddon(fit);
+	  const search = typeof SearchAddon !== "undefined" ? new SearchAddon.SearchAddon() : null;
+	  if (search) term.loadAddon(search);
       term.open(pane);
       fit.fit();
       const app = this;
       const ordinal = 1 + this.termTabs.filter((t) => t.alias === alias).reduce((n, t) => Math.max(n, t.ordinal || 1), 0);
-      const entry = { id: id, alias: alias, term: term, fit: fit, pane: pane, ws: null, generation: 0, ready: false, input: [], inputBytes: 0, inputTimer: 0 };
+      const entry = { id: id, alias: alias, term: term, fit: fit, search: search, pane: pane, ws: null, generation: 0, ready: false, input: [], inputBytes: 0, inputTimer: 0 };
       termMap.set(id, entry);
       this.termTabs.push({ id: id, alias: alias, ordinal: ordinal, busy: true, state: "connecting", error: "" });
       if (typeof ResizeObserver !== "undefined") {
@@ -1381,6 +1424,9 @@ function sshui() {
         if (entry.ws && entry.ws.readyState === 1) entry.ws.send(JSON.stringify({ type: "resize", cols: cols, rows: rows }));
       });
       term.attachCustomKeyEventHandler((ev) => {
+	    if (ev.type === "keydown" && (ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "f") {
+	      ev.preventDefault(); app.openTermSearch(); return false;
+	    }
         if (ev.type === "keydown" && (ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "c") {
           ev.preventDefault();
           app.copyTerminal(entry);
@@ -1390,6 +1436,24 @@ function sshui() {
       });
       this.showPane(id);
       await this.connectTerm(entry);
+    },
+
+    openTermSearch() {
+      if (!termMap.get(this.termActive)) return;
+      this.termSearch.open = true; this.termSearch.found = true;
+      this.$nextTick(() => { const input = document.getElementById("term-search"); if (input) { input.focus(); input.select(); } });
+    },
+
+    searchTerminal(previous) {
+      const entry = termMap.get(this.termActive), text = this.termSearch.text;
+      if (!entry || !entry.search || !text) { this.termSearch.found = true; return; }
+      this.termSearch.found = previous ? entry.search.findPrevious(text) : entry.search.findNext(text);
+    },
+
+    closeTermSearch() {
+      this.termSearch.open = false;
+      const entry = termMap.get(this.termActive);
+      if (entry) { if (entry.search) entry.search.clearDecorations(); entry.term.focus(); }
     },
 
     async connectTerm(entry) {
@@ -2517,6 +2581,7 @@ function sshui() {
         guard();
         action.message = "正在处理：" + action.scope.alias + " · " + action.path;
         requested = true;
+        this.persistPending();
         const data = await this.postJSON("/api/files/change", { alias: action.scope.alias, op: action.op, path: action.path, name: action.name || "" }, guard);
         if (data.outcome !== "completed" || !data.path) throw new Error("未收到完整文件操作结果");
         action.done = true;
@@ -2539,13 +2604,14 @@ function sshui() {
         action.uncertain = requested && err.outcome !== "not_started";
         action.message = action.scope.alias + " · " + action.path + "：" + (err.message || "操作失败") +
           (action.uncertain ? "；结果待确认，请核验远端文件，禁止直接重试。" : "；未执行，输入已保留。");
-      } finally { this.fileBusy = false; }
+      } finally { this.fileBusy = false; this.persistPending(); }
     },
 
     async clearFileAction() {
       if (this.fileBusy) return;
       if (this.fileAction && this.fileAction.uncertain && !await this.askConfirm("请先核验原主机上的文件。清除提示不会撤销操作，确认已核验？")) return;
       this.fileAction = null;
+      this.persistPending();
     },
 
     createEntry(kind) {
@@ -2616,6 +2682,7 @@ function sshui() {
       if (!found) next.push(Object.assign({ id: id }, patch));
       this.transfers = next;
       if (patch.active === false) this.pruneTransfers();
+      if (patch.started != null || patch.active === false || patch.needsVerification != null) this.persistPending();
     },
 
     progressTransfer(id, patch) {
@@ -2783,7 +2850,7 @@ function sshui() {
         else app.patchTransfer(id, patch);
       };
       return new Promise((resolve) => {
-        let authAsked = false;
+        let authAsked = false, sessionRenewed = false;
         const send = (confirmText, overwrite) => {
           const xhr = new XMLHttpRequest();
           transferCtl.set(id, { abort() { xhr.abort(); transferCtl.delete(id); resolve(); } });
@@ -2845,6 +2912,15 @@ function sshui() {
           };
           xhr.onload = async () => {
             if (!alive()) { transferCtl.delete(id); resolve(); return; }
+            if (xhr.status === 403 && xhr.getResponseHeader && xhr.getResponseHeader("X-SSH-CLI-Session-Expired") === "1") {
+              commit({ started: false, label: "正在恢复会话" });
+              try {
+                if (sessionRenewed) throw new Error("会话恢复失败，请刷新页面。");
+                sessionRenewed = true; app.csrf = ""; await app.ensureSession();
+                if (alive()) { send(confirmText, overwrite); return; }
+              } catch (err) { commit({ active: false, label: "失败", error: err.message }); }
+              transferCtl.delete(id); resolve(); return;
+            }
             if (xhr.status === 401) {
               commit({ started: false, label: "等待身份验证" });
               try {
@@ -3382,7 +3458,7 @@ function sshui() {
 
     blankHost() {
       return {
-        editing: false, alias: "", group: "", host: "", port: "", user: "", password: "", identity: "",
+        editing: false, alias: "", group: "", host: "", port: "", user: "", password: "", identity: "", agent: false,
         policy: "", tags: "", useVia: false, via: "", allowMode: "all", allow: [], deny: [], confirm: [], setDefault: false
       };
     },
@@ -3416,6 +3492,7 @@ function sshui() {
           user: h.user || "",
           password: "",
           identity: "",
+          agent: h.auth === "agent",
           policy: h.policy || "",
           tags: (h.tags || []).join(","),
           useVia: !!h.via,
@@ -3460,6 +3537,7 @@ function sshui() {
       }, this.rulePayload(form));
       if (String(form.port) !== "") body.port = Number(form.port);
       if (form.password) body.password = form.password;
+      if (form.agent) body.agent = true;
       if (String(form.identity || "").trim()) body.identity = String(form.identity).trim();
       try {
         await this.postJSON(form.editing ? "/api/hosts/update" : "/api/hosts", body);
@@ -3767,12 +3845,12 @@ function sshui() {
       this.execBusy = true;
       try { this.applyExecResult(await this.operationResult(this.execOperationID)); }
       catch (err) { this.setError("operate", err.message); }
-      finally { this.execBusy = false; }
+      finally { this.execBusy = false; this.persistPending(); }
     },
 
     async clearExecOperation() {
       if (this.execBusy || !await this.askConfirm("请先核验原主机上的命令结果。清除记录后重新执行可能重复写入，确认已核验？")) return;
-      this.execUncertain = false; this.execOperationID = ""; this.execSnapshot = null;
+      this.execUncertain = false; this.execOperationID = ""; this.execSnapshot = null; this.persistPending();
       this.setError("operate", "");
     },
 
@@ -3791,13 +3869,13 @@ function sshui() {
           operationId: operationID()
         };
         this.execSnapshot = payload;
-        this.execOperationID = payload.operationId;
+        this.execOperationID = payload.operationId; this.persistPending();
         this.applyExecResult(await this.postJSON("/api/exec", payload));
       } catch (err) {
         this.execUncertain = err.outcome !== "not_started" && err.outcome !== "completed";
         this.setError("operate", err.message + (this.execUncertain ? "；请查询原操作结果并核验远端状态，不要直接重复执行。" : err.outcome === "completed" ? "；远端操作已结束，请核对返回结果。" : "；未执行，可修改后重新提交。"));
       } finally {
-        this.execBusy = false;
+        this.execBusy = false; this.persistPending();
       }
     },
 
@@ -3904,7 +3982,7 @@ function sshui() {
         this.batchPreviewKey = JSON.stringify(payload);
         this.batchOut = data.notice + "\n\n" + data.hosts.map((h) => h.alias + " · " + h.env + " · " + h.user + "@" + h.address + " · " + h.mode + " · " + (!h.allowed ? "拒绝：" + h.reason : h.needsConfirm ? "需要确认" : "允许") + (h.outputSuppressed ? " · 不带回输出" : "")).join("\n");
       } catch (err) { this.batchOut = this.explain(err.message); }
-      finally { this.batchBusy = false; }
+      finally { this.batchBusy = false; this.persistPending(); }
     },
 
     async checkBatchResult() {
@@ -3916,13 +3994,13 @@ function sshui() {
         this.batchPreview = null;
         this.batchOut = result.results ? batchSummary(result.results).text : (result.error || "操作结束");
       } catch (err) { this.batchOut = this.explain(err.message); }
-      finally { this.batchBusy = false; }
+      finally { this.batchBusy = false; this.persistPending(); }
     },
 
     async clearBatchOperation() {
       if (this.batchBusy || !await this.askConfirm("请先核验远端状态。清除记录后重新执行可能重复写入，确认已核验？")) return;
       this.batchUncertain = false;
-      this.batchOperationID = "";
+      this.batchOperationID = ""; this.persistPending();
       this.batchPreview = null;
       this.batchOut = "";
     },
@@ -3934,7 +4012,7 @@ function sshui() {
       if (!this.batchPreview.canExecute) { this.batchOut += "\n预检未通过，请调整后重新预检。"; return; }
       payload.planDigest = this.batchPreview.planDigest;
       payload.operationId = operationID();
-      this.batchOperationID = payload.operationId;
+      this.batchOperationID = payload.operationId; this.persistPending();
       this.batchBusy = true;
       let sent = false;
       this.batchOut = "正在执行，请勿重复提交。";
@@ -3987,7 +4065,7 @@ function sshui() {
       } catch (err) {
         this.batchUncertain = sent;
         this.batchOut = this.explain(err.message) + (sent ? "\n执行结果未知，请查询操作记录并核验远端状态，不要重复执行。" : "");
-      } finally { this.batchBusy = false; }
+      } finally { this.batchBusy = false; this.persistPending(); }
     },
 
     batchCommand: "",

@@ -242,6 +242,7 @@
               <span class="ws-quiet mb-0" x-text="termFontSize + ' px'"></span>
               <button type="button" class="ws-seg-btn" @click="changeTermFont(1)" :disabled="termFontSize >= 22" aria-label="放大终端字号">A+</button>
               <button type="button" class="ws-seg-btn" @click="copyTerminal()" title="复制所选文字：Ctrl+Shift+C；Ctrl+C 保持中断命令">复制选中</button>
+              <button type="button" class="ws-seg-btn" @click="openTermSearch()" :disabled="!termActive" title="查找终端回看内容：Ctrl+Shift+F">查找</button>
               <button type="button" class="ws-seg-btn ws-files-toggle" @click="toggleFiles()" :aria-expanded="!filesCollapsed" :aria-label="filesCollapsed ? '展开文件区' : '收起文件区'" :title="filesCollapsed ? '展开文件区' : '收起文件区'" x-text="filesCollapsed ? '▴' : '▾'"></button>
             </div>
             <aside class="ws-dl-rail" aria-label="传输队列">
@@ -281,6 +282,13 @@
             </div>
             <div class="ws-gutter ws-gutter-v" role="separator" aria-orientation="vertical" aria-label="调整概况宽度" @mousedown.prevent="beginSplit('side', $event)"></div>
               <div class="ws-upper" data-pane="terminal">
+                <div class="ws-search" x-show="termSearch.open" role="search" aria-label="查找当前终端回看内容" @keydown.escape.stop.prevent="closeTermSearch()">
+                  <input id="term-search" type="search" maxlength="256" placeholder="查找当前终端" aria-label="查找内容" x-model="termSearch.text" @input="termSearch.found = true" @keydown.enter.prevent="searchTerminal($event.shiftKey)">
+                  <button type="button" @click="searchTerminal(true)" aria-label="上一个匹配">↑</button>
+                  <button type="button" @click="searchTerminal(false)" aria-label="下一个匹配">↓</button>
+                  <span x-show="!termSearch.found" role="status">无匹配</span>
+                  <button type="button" @click="closeTermSearch()" aria-label="关闭终端查找">×</button>
+                </div>
                 <div class="ws-banner" x-show="terminalError()">
                   <div class="alert alert-danger mb-0" role="alert" x-text="terminalError()"></div>
                 </div>
@@ -1265,8 +1273,9 @@
               <div class="col-md-8"><label class="form-label">地址</label><input class="form-control" x-model="hostForm.host" required placeholder="192.0.2.10" autocomplete="off"></div>
               <div class="col-md-4"><label class="form-label">端口</label><input class="form-control" type="number" min="0" max="65535" x-model="hostForm.port" placeholder="22"></div>
               <div class="col-md-6"><label class="form-label">用户</label><input class="form-control" x-model="hostForm.user" required autocomplete="off"></div>
-              <div class="col-md-6"><label class="form-label">密码</label><input class="form-control" type="password" x-model="hostForm.password" autocomplete="new-password"></div>
-              <div class="col-md-6"><label class="form-label">私钥路径</label><input class="form-control" x-model="hostForm.identity" placeholder="~/.ssh/id_ed25519" autocomplete="off"></div>
+              <div class="col-md-6"><label class="form-label">密码</label><input class="form-control" type="password" x-model="hostForm.password" :disabled="hostForm.agent" autocomplete="new-password"></div>
+              <div class="col-md-6"><label class="form-label">私钥路径</label><input class="form-control" x-model="hostForm.identity" :disabled="hostForm.agent" placeholder="~/.ssh/id_ed25519" autocomplete="off"></div>
+              <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="hostForm.agent"><span class="form-check-label">使用本机 SSH agent（不转发、不保存私钥）</span></label></div>
               <div class="col-md-6"><label class="form-label">命名策略</label>
                 <select class="form-select" x-model="hostForm.policy">
                   <option value="">不引用</option>
@@ -1555,6 +1564,7 @@
   <script src="/litepicker.js"></script>
   <script src="/xterm.js"></script>
   <script src="/xterm-addon-fit.js"></script>
+  <script src="/xterm-addon-search.js"></script>
   <script src="/app.js"></script>
   <script src="/alpine-csp.min.js"></script>
 </body>

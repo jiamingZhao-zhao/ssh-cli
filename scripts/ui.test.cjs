@@ -872,7 +872,7 @@ test('cancel just after an overwrite retry requires verification even before pro
 
 test('upload authentication retries only after a known 401 and cancellation stops a late retry', async () => {
   const { app, requests, sandbox } = uploadFixture(); let token;
-  sandbox.sessionStorage.setItem = (_key, value) => { token = value; }; app.ask = async () => 'new-token';
+  sandbox.sessionStorage.setItem = (key, value) => { if (key === 'sshCliBearer') token = value; }; app.ask = async () => 'new-token';
   const pending = app.uploadOne('a', { name: 'a', size: 1 }, '/work');
   requests[0].status = 401; requests[0].responseText = 'unauthorized'; await requests[0].onload();
   assert.equal(requests.length, 2); assert.equal(token, 'new-token');
@@ -883,6 +883,44 @@ test('upload authentication retries only after a known 401 and cancellation stop
   const prompt = second.requests[0].onload(); second.app.cancelTransfer(second.app.transfers[0].id);
   answer.resolve('token'); await prompt; await stopped; assert.equal(second.requests.length, 1);
   assert.equal(second.app.transferNeedsVerification(second.app.transfers[0]), false);
+});
+
+test('expired session refreshes credentials only for an explicitly rejected request', async () => {
+  const { app, sandbox } = fixture(); app.csrf = 'old';
+  sandbox.sessionStorage = { getItem: () => '' }; const calls = [];
+  sandbox.fetch = async (url, opts) => {
+    calls.push([url, opts && opts.headers && opts.headers['X-CSRF-Token']]);
+    if (url === '/api/session') return jsonReply({ ok: true, csrf: 'new' });
+    if (calls.length === 1) { const reply = jsonReply({}, 403); reply.headers.get = key => key === 'X-SSH-CLI-Session-Expired' ? '1' : ''; return reply; }
+    return jsonReply({ ok: true });
+  };
+  await app.api('/write', { method: 'POST', body: '{}' });
+  assert.deepEqual(calls.map(row => row[0]), ['/write', '/api/session', '/write']);
+  assert.equal(calls[2][1], 'new');
+  let denied = 0; sandbox.fetch = async () => { denied++; return jsonReply({}, 403); };
+  await app.api('/write', { method: 'POST', body: '{}' }); assert.equal(denied, 1);
+});
+
+test('reload restores verification metadata without file bytes, secrets, commands or replay', () => {
+  const { app, sandbox } = fixture(); const storage = new Map();
+  sandbox.sessionStorage = { setItem: (key, value) => storage.set(key, value), getItem: key => storage.get(key) };
+  app.execOperationID = 'operation_123456789'; app.execUncertain = true; app.exec.command = 'secret-command';
+  app.transfers = [{ id: 'up1', alias: 'a', name: 'file', remote: '/work', kind: 'upload', started: true, active: true, file: 'PRIVATE_BYTES' }];
+  app.persistPending(); const saved = storage.get('sshCliPending');
+  assert.ok(!saved.includes('PRIVATE_BYTES')); assert.ok(!saved.includes('secret-command'));
+  app.transfers = []; app.execUncertain = false; app.restorePending();
+  assert.equal(app.transfers.length, 1); assert.equal(app.transfers[0].active, false); assert.equal(app.transfers[0].needsVerification, true);
+  assert.equal(app.execUncertain, true); assert.equal(app.execOperationID, 'operation_123456789');
+  app.transfers[0].needsVerification = false; app.transfers[0].label = '已核验'; app.execUncertain = false;
+  app.persistPending(); assert.equal(JSON.parse(storage.get('sshCliPending')).transfers.length, 0);
+});
+
+test('terminal search is scoped to the active tab and never sends shell input', () => {
+  const { app, sandbox } = fixture(); const calls = [];
+  vm.runInContext('termMap.set("a", { search: { findNext: (s) => { window.searchCalls.push(s); return false; }, findPrevious: () => true, clearDecorations() {} }, term: { focus() {} } });', Object.assign(sandbox, { searchCalls: calls }));
+  app.termActive = 'a'; app.termSearch.text = 'needle'; app.searchTerminal(false);
+  assert.deepEqual(calls, ['needle']); assert.equal(app.termSearch.found, false);
+  app.termActive = 'missing'; app.searchTerminal(false); assert.equal(calls.length, 1);
 });
 
 test('cancelled HTTP authentication is not mistaken for an accepted command or download', async () => {

@@ -143,7 +143,7 @@ type Policy struct {
 	ProtectedPaths []string      `yaml:"protectedPaths,omitempty"`
 }
 
-// BreakGlass is stored for a later iteration and is not enforced yet.
+// BreakGlass explicitly enables a human-confirmed single-command elevation.
 type BreakGlass struct {
 	Enabled bool   `yaml:"enabled,omitempty"`
 	MaxTTL  string `yaml:"maxTtl,omitempty"`
@@ -293,6 +293,7 @@ type SessionDefaults struct {
 
 // Config is the on-disk document.
 type Config struct {
+	Audit    *AuditSettings     `yaml:"audit,omitempty"`
 	Version  int                `yaml:"version"`
 	Default  string             `yaml:"default,omitempty"`
 	Policies map[string]*Policy `yaml:"policies,omitempty"`
@@ -303,6 +304,13 @@ type Config struct {
 	// PolicySigned is set once a master key has been used to write policy.mac.
 	// Load then refuses a missing sidecar instead of treating the file as unsigned.
 	PolicySigned bool `yaml:"policySigned,omitempty"`
+}
+
+// Zero retention disables automatic deletion. Integrity is explicitly enabled.
+type AuditSettings struct {
+	Integrity       bool `yaml:"integrity,omitempty" json:"integrity,omitempty"`
+	RetentionDays   int  `yaml:"retentionDays,omitempty" json:"retentionDays,omitempty"`
+	RequireWritable bool `yaml:"requireWritable,omitempty" json:"requireWritable,omitempty"`
 }
 
 // VerifyPolicy checks policy integrity after parse and prepare. The default
@@ -401,6 +409,9 @@ func (c *Config) Normalize() error { return c.prepare() }
 
 // prepare inserts the locked built-in envs and validates the document.
 func (c *Config) prepare() error {
+	if c.Audit != nil && c.Audit.RetentionDays != 0 && (c.Audit.RetentionDays < 30 || c.Audit.RetentionDays > 3650) {
+		return fmt.Errorf("audit.retentionDays must be 0 (disabled) or 30..3650")
+	}
 	if c.Version == 0 {
 		c.Version = 1
 	}
@@ -549,7 +560,7 @@ func (c *Config) Validate() error {
 				return fmt.Errorf("host %q: invalid port %d", alias, h.Port)
 			}
 			switch h.Auth {
-			case "", "password", "key":
+			case "", "password", "key", "agent":
 			default:
 				return fmt.Errorf("host %q: unsupported auth %q", alias, h.Auth)
 			}

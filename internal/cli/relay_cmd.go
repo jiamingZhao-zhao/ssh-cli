@@ -83,7 +83,18 @@ Relay does not use -H. A protected destination path asks for the destination ali
 				return err
 			}
 			defer dstClient.Close()
-			res, err := transfer.Relay(srcClient.Raw(), dstClient.Raw(), srcPath, dstPath)
+			res, err := transfer.RelayWithOptions(srcClient.Raw(), dstClient.Raw(), srcPath, dstPath, transfer.UploadOptions{Context: cmd.Context(), Protected: dstEff.Protected, Check: func(dest string, protected []string) error {
+				resolved := dstEff
+				resolved.Protected = protected
+				d := guard.DecideRelay(srcEff, resolved, src.EnvName, dst.EnvName, dest, a.AllowCrossEnv)
+				if !d.Allowed {
+					return exitcode.New(exitcode.Denied, "%s", decisionReason(d))
+				}
+				if d.NeedsConfirm && !dec.NeedsConfirm {
+					return confirmAlias(dst.Alias, a.Yes)
+				}
+				return nil
+			}})
 			meta.started = start
 			if err != nil {
 				_ = a.logRemote(meta, dst, dec, audit.StatusError, exitcode.Connect, err.Error(), err.Error())

@@ -89,6 +89,17 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "ui session required")
 		return
 	}
+	// Reserve before upgrading/dialing so simultaneous redemptions cannot bypass
+	// the cap after one-time tickets leave the pending table.
+	s.mu.Lock()
+	if s.activeTerminals >= maxTermTickets {
+		s.mu.Unlock()
+		writeErr(w, http.StatusTooManyRequests, "too many terminal sessions")
+		return
+	}
+	s.activeTerminals++
+	s.mu.Unlock()
+	defer func() { s.mu.Lock(); s.activeTerminals--; s.mu.Unlock() }()
 	_, h, eff, err := s.hostPlan(ticket.alias)
 	if err != nil {
 		writeFail(w, err)
@@ -215,7 +226,7 @@ func (s *service) mintTicket(sid, alias string, cols, rows int) (string, error) 
 			delete(s.tickets, k)
 		}
 	}
-	if len(s.tickets) >= maxTermTickets {
+	if len(s.tickets)+s.activeTerminals >= maxTermTickets {
 		return "", errTooManyTerms
 	}
 	tok := newToken()
@@ -502,17 +513,18 @@ func bridgePTY(ws *wsConn, pty *sshclient.PTY, outputAck bool, clientClosed <-ch
 			if op == wsText {
 				if n, ok := parseOutputAck(payload); ok {
 					if flow != nil {
-						if err := flow.acknowledge(n); err != nil {
-							errCh <- err
-							return
-						}
+						// Reject invalid credits without killing a healthy PTY or
+						// forwarding a control frame into its shell.
+						_ = flow.acknowledge(n)
 					}
 					continue
 				}
 				if cols, rows, ok := parseResize(payload); ok {
-					if err := pty.Resize(cols, rows); err != nil {
-						errCh <- err
-						return
+					if cols > 0 && rows > 0 {
+						if err := pty.Resize(cols, rows); err != nil {
+							errCh <- err
+							return
+						}
 					}
 					continue
 				}
@@ -554,9 +566,15 @@ func bridgePTY(ws *wsConn, pty *sshclient.PTY, outputAck bool, clientClosed <-ch
 }
 
 func parseResize(p []byte) (int, int, bool) {
-	var msg resizeMsg
-	if json.Unmarshal(p, &msg) != nil || msg.Type != "resize" {
+	var kind struct {
+		Type string `json:"type"`
+	}
+	if json.Unmarshal(p, &kind) != nil || kind.Type != "resize" {
 		return 0, 0, false
+	}
+	var msg resizeMsg
+	if json.Unmarshal(p, &msg) != nil || msg.Cols <= 0 || msg.Rows <= 0 {
+		return 0, 0, true
 	}
 	return clampDim(msg.Cols, 80), clampDim(msg.Rows, 24), true
 }

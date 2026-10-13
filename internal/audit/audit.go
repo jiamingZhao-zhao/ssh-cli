@@ -25,6 +25,7 @@ const (
 	DirName = "audit"
 
 	OpExec         = "exec"
+	OpElevate      = "elevate"
 	OpUpload       = "upload"
 	OpDownload     = "download"
 	OpPolicyCheck  = "policy_check"
@@ -111,7 +112,7 @@ func ValidStatus(s string) bool {
 // ValidOp reports whether s is a known operation filter value.
 func ValidOp(s string) bool {
 	switch s {
-	case OpExec, OpUpload, OpDownload, OpPolicyCheck, OpStatus, OpService, OpKeys, OpConfigChange, OpSession, OpRelay, OpTerminal, OpHistory, OpList, OpMetrics, OpFileChange:
+	case OpExec, OpElevate, OpUpload, OpDownload, OpPolicyCheck, OpStatus, OpService, OpKeys, OpConfigChange, OpSession, OpRelay, OpTerminal, OpHistory, OpList, OpMetrics, OpFileChange:
 		return true
 	default:
 		return false
@@ -170,6 +171,16 @@ func Append(dir string, rec Record) (Record, error) {
 	}
 	path := filepath.Join(auditDir, when.Format("2006-01-02")+".jsonl")
 	err = fsutil.WithLock(auditDir, func() error {
+		state, key, err := loadIntegrity(dir)
+		if err != nil {
+			return err
+		}
+		if state != nil {
+			want, tracked := state.Files[filepath.Base(path)]
+			if err := checkAppendChain(path, want, tracked, key); err != nil {
+				return err
+			}
+		}
 		f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 		if err != nil {
 			return err
@@ -186,7 +197,18 @@ func Append(dir string, rec Record) (Record, error) {
 			_ = f.Close()
 			return err
 		}
-		return f.Close()
+		if err := f.Close(); err != nil {
+			return err
+		}
+		if state != nil {
+			day := filepath.Base(path)
+			state.Files[day] = advanceChain(state.Files[day], day, line, key)
+			if err := saveIntegrity(dir, state, key); err != nil {
+				return err
+			}
+			rememberVerified(path, state.Files[day])
+		}
+		return nil
 	})
 	if err != nil {
 		return Record{}, err
@@ -273,16 +295,18 @@ func scrubRecord(rec *Record) {
 }
 
 var (
-	pemRE  = regexp.MustCompile(`(?i)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----`)
-	kvRE   = regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key|authorization|ssh_cli_master_key)\b(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|(?:bearer|basic)\s+\S+|\S+)`)
-	flagRE = regexp.MustCompile(`(?i)(--(?:password|pass|master-key|token|secret|api-key|access-token|auth-token|bearer))(\s+|=)(?:"[^"]*"|'[^']*'|\S+)`)
-	urlRE  = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@`)
+	pemRE       = regexp.MustCompile(`(?i)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----`)
+	kvRE        = regexp.MustCompile(`(?i)\b(password|passwd|secret|token|api[_-]?key|authorization|ssh_cli_master_key)\b(\s*[=:]\s*)(?:"[^"]*"|'[^']*'|(?:bearer|basic)\s+\S+|\S+)`)
+	flagRE      = regexp.MustCompile(`(?i)(--(?:password|pass|master-key|token|secret|api-key|access-token|auth-token|bearer))(\s+|=)(?:"[^"]*"|'[^']*'|\S+)`)
+	urlRE       = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@`)
+	shortPassRE = regexp.MustCompile(`(^|[\s;|&])(-p)(?:"[^"]*"|'[^']*'|[^\s;|&]+)`)
 )
 
 // Scrub redacts obvious secrets using the same patterns as the audit log.
 // History lines and metric notes call it before they are shown. Patterns cover
 // PEM private keys, password=/token= assignments, common secret flags, and
-// userinfo in URLs. Short flags such as -psecret are not recognized.
+// userinfo in URLs and attached -p secrets. The short-flag heuristic can also
+// hide a non-secret -p argument (for example a port); redaction is best effort.
 func Scrub(s string) string { return scrub(s) }
 
 func scrub(s string) string {
@@ -292,6 +316,7 @@ func scrub(s string) string {
 	s = pemRE.ReplaceAllString(s, "[redacted-key]")
 	s = kvRE.ReplaceAllString(s, "${1}${2}[redacted]")
 	s = flagRE.ReplaceAllString(s, "${1}${2}[redacted]")
+	s = shortPassRE.ReplaceAllString(s, "${1}${2}[redacted]")
 	s = urlRE.ReplaceAllString(s, "${1}[redacted]@")
 	return s
 }

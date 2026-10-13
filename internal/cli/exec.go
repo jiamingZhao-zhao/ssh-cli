@@ -336,15 +336,29 @@ func executionOutcome(err error) string {
 }
 
 func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Writer, timeout time.Duration) (int, error) {
+	if a.OperationContext != nil {
+		if err := a.OperationContext.Err(); err != nil {
+			return 0, err
+		}
+	}
+	if a.UseDaemon {
+		if scriptBody != "" {
+			return 0, exitcode.New(exitcode.Usage, "--daemon accepts literal exec commands, not --stdin/--script")
+		}
+		return a.runViaDaemon(p, remote, stdout, stderr, timeout)
+	}
 	client, err := a.dial(p.host, timeout)
 	if err != nil {
 		return 0, err
 	}
 	defer client.Close()
 	ctx := context.Background()
+	if a.OperationContext != nil {
+		ctx = a.OperationContext
+	}
 	var cancel context.CancelFunc
 	if timeout > 0 {
-		ctx, cancel = context.WithTimeout(context.Background(), timeout)
+		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
 	var stdin io.Reader

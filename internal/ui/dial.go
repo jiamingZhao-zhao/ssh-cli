@@ -121,6 +121,12 @@ func (s *service) dialVia(ctx context.Context, h config.ResolvedHost) (*sshclien
 
 func (s *service) authMethods(h config.ResolvedHost) ([]ssh.AuthMethod, error) {
 	switch h.Host.Auth {
+	case "agent":
+		method, err := sshclient.AgentAuth()
+		if err != nil {
+			return nil, err
+		}
+		return []ssh.AuthMethod{method}, nil
 	case "key":
 		if h.Host.Identity == "" {
 			return nil, fmt.Errorf("host %s: auth is key but identity is empty", h.Alias)

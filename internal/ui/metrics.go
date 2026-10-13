@@ -66,7 +66,7 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 	s.reconcile()
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
-	snap, runErr := metrics.Collect(ctx, func(ctx context.Context, command string) (string, int, error) {
+	snap, runErr := metrics.Parallel(ctx, func(ctx context.Context, command string) (string, int, error) {
 		stdout, _, code, err := s.probeRun(ctx, h, command)
 		return stdout, code, err
 	}, func(command string) error {

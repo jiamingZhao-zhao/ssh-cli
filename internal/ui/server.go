@@ -134,6 +134,11 @@ func newService(dir string, allowRemote bool, bearer string) *service {
 // Serve listens until ctx is cancelled, then shuts the server down.
 // The UI process owns the session pool. Cancel closes every session it still holds.
 func Serve(ctx context.Context, addr, dir string, allowRemote bool, bearer string) error {
+	policyhmac.Install()
+	confirmgate.Install()
+	if err := audit.Maintain(dir); err != nil {
+		return fmt.Errorf("audit: %w", err)
+	}
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -182,6 +187,9 @@ type service struct {
 	operations      map[string]*operation
 	// A pool close has no HTTP response; retain its audit failure for the UI.
 	auditCloseFailed bool
+	activeTransfers  int
+	activeTerminals  int
+	sessionSeen      map[string]time.Time
 }
 
 func (s *service) guard(next http.Handler) http.Handler {
@@ -198,6 +206,15 @@ func (s *service) guard(next http.Handler) http.Handler {
 		}
 		if !s.authorize(w, r) {
 			return
+		}
+		switch r.URL.Path {
+		case "/api/exec", "/api/exec/batch", "/api/upload", "/api/download", "/api/relay", "/api/files/change", "/api/terminal/open":
+			if r.Method == http.MethodPost {
+				if err := audit.Preflight(s.dir, audit.SourceUI, r.URL.Path); err != nil {
+					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "审计不可写，已阻止操作：" + err.Error(), "outcome": "not_started", "retrySafe": true})
+					return
+				}
+			}
 		}
 		s.mu.Lock()
 		auditCloseFailed := s.auditCloseFailed
@@ -554,6 +571,13 @@ func draftFromMap(raw map[string]json.RawMessage) (HostDraft, error) {
 	if v, ok := raw["identity"]; ok {
 		d.HasIdentity = true
 		_ = json.Unmarshal(v, &d.Identity)
+	}
+	if v, ok := raw["agent"]; ok {
+		var agent bool
+		if json.Unmarshal(v, &agent) != nil || !agent {
+			return HostDraft{}, fmt.Errorf("agent must be true; use a password or identity to switch authentication")
+		}
+		d.Agent, d.HasAgent = true, true
 	}
 	if v, ok := raw["via"]; ok {
 		d.HasVia = true
