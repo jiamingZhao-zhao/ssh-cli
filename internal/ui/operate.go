@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"os"
 	"path"
@@ -81,19 +82,19 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) execHit {
 	cfg, h, eff, err := s.hostPlan(body.Alias)
 	if err != nil {
-		return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": err.Error(), "alias": body.Alias}}
+		return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": err.Error(), "alias": body.Alias, "outcome": "not_started", "retrySafe": false}}
 	}
 	preview := body.previewRequest
 	if preview == nil {
 		preview = &body
 	}
 	if preview.PlanDigest != "" && planDigest(cfg, *preview) != preview.PlanDigest {
-		return execHit{status: http.StatusConflict, payload: map[string]any{"ok": false, "alias": body.Alias, "planChanged": true, "error": "主机、策略或执行内容已变化，请重新预检。"}}
+		return execHit{status: http.StatusConflict, payload: map[string]any{"ok": false, "alias": body.Alias, "planChanged": true, "error": "主机、策略或执行内容已变化，请重新预检。", "outcome": "not_started", "retrySafe": false}}
 	}
 	if forceReadonly {
 		eff, err = guard.Resolve(cfg, h, true)
 		if err != nil {
-			return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": err.Error(), "alias": h.Alias}}
+			return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": err.Error(), "alias": h.Alias, "outcome": "not_started", "retrySafe": false}}
 		}
 	}
 	started := time.Now()
@@ -109,11 +110,13 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 		s.writeAudit(h, audit.OpPolicyCheck, body.Command, "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
 		return execHit{status: http.StatusForbidden, payload: map[string]any{
 			"ok": false, "alias": h.Alias, "error": text, "status": audit.StatusDenied,
+			"outcome": "not_started", "retrySafe": false,
 		}}
 	}
 	if dec.NeedsConfirm && phrase != h.Alias {
 		return execHit{status: http.StatusConflict, payload: map[string]any{
 			"ok": false, "needsConfirm": true, "confirm": h.Alias, "alias": h.Alias,
+			"status": "confirmation_required", "outcome": "not_started", "retrySafe": false,
 			"error": "type the host alias to confirm",
 		}}
 	}
@@ -121,6 +124,7 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 	if needsOut && body.OutflowConfirm != guard.OutflowPhrase {
 		return execHit{status: http.StatusConflict, payload: map[string]any{
 			"ok": false, "needsConfirm": true, "confirm": guard.OutflowPhrase, "confirmField": "outflowConfirm",
+			"status": "confirmation_required", "outcome": "not_started", "retrySafe": false,
 			"alias": h.Alias, "error": "type outflow to return command output",
 		}}
 	}
@@ -128,7 +132,7 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 	if strings.TrimSpace(body.Timeout) != "" {
 		d, err := time.ParseDuration(body.Timeout)
 		if err != nil || d <= 0 || d > 5*time.Minute {
-			return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": "invalid timeout", "alias": h.Alias}}
+			return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": "invalid timeout", "alias": h.Alias, "outcome": "not_started", "retrySafe": false}}
 		}
 		timeout = d
 	}
@@ -153,9 +157,11 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 		summary = guard.OutflowDiscarded
 	}
 	if err != nil {
-		s.writeAudit(h, audit.OpExec, body.Command, "", "", audit.StatusError, code, err.Error(), err.Error(), false, started)
+		status := execFailureStatus(runCtx, err)
+		s.writeAudit(h, audit.OpExec, body.Command, "", "", status, code, err.Error(), err.Error(), false, started)
 		return execHit{status: http.StatusBadRequest, payload: map[string]any{
-			"ok": false, "alias": h.Alias, "error": err.Error(), "exitCode": code, "status": audit.StatusError,
+			"ok": false, "alias": h.Alias, "error": err.Error(), "exitCode": code, "status": status,
+			"outcome": "unknown", "retrySafe": false,
 		}}
 	}
 	status := audit.StatusOK
@@ -166,6 +172,7 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 	resp := map[string]any{
 		"ok": true, "alias": h.Alias, "exitCode": code, "stdout": stdout.String(), "stderr": stderr.String(),
 		"truncated": stdout.cut || stderr.cut, "status": status,
+		"outcome": "completed", "retrySafe": false,
 	}
 	if suppress {
 		resp["stdout"] = ""
@@ -175,6 +182,23 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 		resp["truncated"] = false
 	}
 	return execHit{status: http.StatusOK, payload: resp}
+}
+
+func execFailureStatus(ctx context.Context, err error) string {
+	var networkError net.Error
+	if errors.Is(err, context.DeadlineExceeded) || errors.Is(ctx.Err(), context.DeadlineExceeded) || (errors.As(err, &networkError) && networkError.Timeout()) {
+		return audit.StatusTimeout
+	}
+	switch exitcode.From(err) {
+	case exitcode.Auth:
+		return audit.StatusAuth
+	case exitcode.Connect, exitcode.HostKey:
+		return audit.StatusConnect
+	case exitcode.Denied:
+		return audit.StatusDenied
+	default:
+		return audit.StatusError
+	}
 }
 
 func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {

@@ -28,6 +28,19 @@ jobs:
           go install golang.org/x/vuln/cmd/govulncheck@v1.8.0
           govulncheck ./...
 
+  windows-ui:
+    name: native Windows paths and UI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.27"
+      - name: native folder and Unicode path tests
+        run: go test ./internal/ui -run 'Test(CleanPickedDir|RevealTarget|RevealDownloadAPI|PickDownloadDirAPI|WindowsPickerUTF8|WorkspaceChrome|ExecFailureStatus|OperationDedupAndIsolation|InterruptedOperationIsUnknownAndNotReplayed)$' -count=1
+      - name: UI behavior and UTF-8 regressions
+        run: node --test scripts/ui.test.cjs
+
   integration:
     name: openssh integration
     runs-on: ubuntu-latest

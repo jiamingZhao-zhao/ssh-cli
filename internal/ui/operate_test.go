@@ -65,6 +65,20 @@ func TestUIExecUploadDownload(t *testing.T) {
 	if !strings.Contains(text, `"op":"exec"`) || !strings.Contains(text, `"source":"ui"`) || strings.Contains(text, "ui-secret") {
 		t.Fatalf("ui exec audit\n%s", text)
 	}
+	// Remote 251 is a completed command, not a local connection failure.
+	rr = post("/api/exec", `{"alias":"box","command":"sh -c 'exit 251'"}`)
+	var outcome struct {
+		ExitCode  int    `json:"exitCode"`
+		Status    string `json:"status"`
+		Outcome   string `json:"outcome"`
+		RetrySafe *bool  `json:"retrySafe"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &outcome); err != nil {
+		t.Fatal(err)
+	}
+	if rr.Code != 200 || outcome.ExitCode != 251 || outcome.Status != "error" || outcome.Outcome != "completed" || outcome.RetrySafe == nil || *outcome.RetrySafe {
+		t.Fatalf("remote exit semantics: %d %s", rr.Code, rr.Body.String())
+	}
 
 	remote := filepath.Join(t.TempDir(), "up.txt")
 	var buf bytes.Buffer

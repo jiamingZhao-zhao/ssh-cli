@@ -102,7 +102,7 @@ func (s *service) runOperation(w http.ResponseWriter, r *http.Request, body exec
 		if p := recover(); p != nil {
 			s.opMu.Lock()
 			op.state, op.status = "unknown", http.StatusInternalServerError
-			op.result = json.RawMessage(`{"ok":false,"error":"操作中断，执行结果未知；请核验远端状态，不要重放。"}`)
+			op.result = json.RawMessage(`{"ok":false,"outcome":"unknown","retrySafe":false,"error":"操作中断，执行结果未知；请核验远端状态，不要重放。"}`)
 			s.opMu.Unlock()
 			panic(p)
 		}

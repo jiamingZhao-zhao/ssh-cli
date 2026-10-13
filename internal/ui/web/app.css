@@ -1662,10 +1662,12 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
 .ws-queue-foot .ws-queue-meta {
   flex: 1 1 auto;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
+  white-space: normal;
 }
+.ws-queue-foot .ws-seg-btn { flex-shrink: 0; }
+/* xterm measures glyphs in a wide offscreen element attached to body. */
+body:has(.page.is-terminal) { overflow-x: clip; }
 .ws-toasts {
   position: fixed;
   right: 1rem;
@@ -1763,3 +1765,8 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }
+/* Keep progress failures readable after the transient toast disappears. */
+.ws-transfer-error { margin: 4px 0 0; color: var(--tblr-danger, #d63939); font-size: 12px; overflow-wrap: anywhere; }
+.ws-loading { margin: 0; padding: 6px 10px; color: var(--tblr-secondary, #626976); font-size: 12px; }
+.ws-freshness { margin-bottom: 4px; }
+.ws-freshness.is-stale { color: var(--tblr-warning, #b56b00); }
