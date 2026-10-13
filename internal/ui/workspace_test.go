@@ -193,8 +193,8 @@ func TestWorkspaceChrome(t *testing.T) {
 	if end := strings.Index(side, "}"); end >= 0 {
 		side = side[:end]
 	}
-	if !strings.Contains(side, "grid-row: 1 / span 3") || !strings.Contains(side, "display: grid") {
-		t.Fatal("side column should share the workspace rows")
+	if !strings.Contains(side, "grid-row: 1 / span 3") || !strings.Contains(side, "display: flex") || strings.Contains(side, "--ws-lower") {
+		t.Fatal("side column should fill the workspace independently of the file split")
 	}
 	if strings.Contains(chunk, "ws-dl-foot") || strings.Index(chunk, "ws-dl-head") > strings.Index(chunk, "ws-dl-body") {
 		t.Fatal("transfer queue heading should appear above the queue body")
@@ -207,8 +207,8 @@ func TestWorkspaceChrome(t *testing.T) {
 	if end := strings.Index(rail, "}"); end >= 0 {
 		rail = rail[:end]
 	}
-	if !strings.Contains(rail, "grid-row: 3") {
-		t.Fatal("transfer queue should align with the files row")
+	if !strings.Contains(rail, "flex: 1") || strings.Contains(rail, "grid-row: 3") {
+		t.Fatal("transfer queue should fill the remaining sidebar height")
 	}
 }
 

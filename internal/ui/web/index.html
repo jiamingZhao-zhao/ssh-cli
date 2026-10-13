@@ -233,21 +233,29 @@
                 <div class="ws-net-caption" title="不含回环网卡 lo">网卡合计 · 最近 24 次采样</div>
               </section>
             </aside>
-            <div class="ws-side-gap" aria-hidden="true"></div>
+            <div class="ws-term-tools" role="group" aria-label="终端显示与复制">
+              <button type="button" class="ws-seg-btn" @click="changeTermFont(-1)" :disabled="termFontSize <= 12" aria-label="缩小终端字号">A−</button>
+              <span class="ws-quiet mb-0" x-text="termFontSize + ' px'"></span>
+              <button type="button" class="ws-seg-btn" @click="changeTermFont(1)" :disabled="termFontSize >= 22" aria-label="放大终端字号">A+</button>
+              <button type="button" class="ws-seg-btn" @click="copyTerminal()" title="复制所选文字：Ctrl+Shift+C；Ctrl+C 保持中断命令">复制选中</button>
+              <button type="button" class="ws-seg-btn ws-files-toggle" @click="toggleFiles()" :aria-expanded="!filesCollapsed" :aria-label="filesCollapsed ? '展开文件区' : '收起文件区'" :title="filesCollapsed ? '展开文件区' : '收起文件区'" x-text="filesCollapsed ? '▴' : '▾'"></button>
+            </div>
             <aside class="ws-dl-rail" aria-label="传输队列">
               <div class="ws-dl-head">
                 <div class="ws-kicker">传输队列</div>
-                <button type="button" class="ws-dl-clear" x-show="hasFinishedTransfers()" @click="clearFinishedTransfers()">清除已完成</button>
-              </div>
-              <div class="ws-dl-dir">
-                <button type="button" class="ws-dl-path" @click="pickDownloadDir()" aria-label="选择下载目录" :title="downloadDirLabel()" x-text="downloadDirLabel()"></button>
-                <button type="button" class="ws-dl-default" x-show="downloadDir" @click="useDefaultDownloadDir()">默认</button>
+                <button type="button" class="ws-dl-clear" x-show="hasFinishedTransfers()" @click="clearFinishedTransfers()" aria-label="清除已完成的传输记录" title="清除已完成">
+                  <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>
+                </button>
+                <div class="ws-dl-dir">
+                  <button type="button" class="ws-dl-path" @click="pickDownloadDir()" aria-label="选择下载目录" :title="downloadDirLabel()" x-text="downloadDirLabel()"></button>
+                  <button type="button" class="ws-dl-default" x-show="downloadDir" @click="useDefaultDownloadDir()" title="恢复默认下载目录">默认</button>
+                </div>
               </div>
               <div class="ws-dl-body">
                 <div class="ws-dl-empty" x-show="!(transfers || []).length">
                   <div class="ws-dl-empty-box" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')" @click="pickDownloadDir()" @keydown.enter.prevent="pickDownloadDir()" @keydown.space.prevent="pickDownloadDir()" role="button" tabindex="0" aria-label="选择下载目录">拖到这里下载<br>点击选择下载目录</div>
                 </div>
-                <div class="ws-download-lane" x-show="(transfers || []).length" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载。本机 ssh-cli 用和命令行相同的 SFTP 写到所选目录。</div>
+                <div class="ws-download-lane" x-show="(transfers || []).length" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')" title="本机 ssh-cli 用和命令行相同的 SFTP 写到所选目录">拖到这里下载</div>
                 <div class="ws-dl-list" x-show="(transfers || []).length">
                   <template x-for="item in transfers" :key="'q-' + item.id">
                     <div class="ws-queue-row">
@@ -267,6 +275,9 @@
             </div>
             <div class="ws-gutter ws-gutter-v" role="separator" aria-orientation="vertical" aria-label="调整概况宽度" @mousedown.prevent="beginSplit('side', $event)"></div>
               <div class="ws-upper" data-pane="terminal">
+                <div class="ws-banner" x-show="terminalError()">
+                  <div class="alert alert-danger mb-0" role="alert" x-text="terminalError()"></div>
+                </div>
                 <div class="ws-term-bar">
                   <div class="ws-tabs" x-show="termTabs.length > 0">
                     <div class="term-tabs" role="tablist" aria-label="终端会话" @keydown="terminalTabKey($event)">
@@ -289,16 +300,6 @@
                     <button class="btn btn-outline-secondary" type="button" :disabled="!panelAlias() || workspaceLive()" @click="openWorkspaceHost()" :title="'连接当前工作区 ' + panelAlias() + ' 的文件与监控，不创建终端'">连接文件</button>
                     <button class="btn btn-outline-secondary" type="button" :disabled="!panelAlias()" @click="closeWorkspaceHost()" :title="'断开 ' + panelAlias() + ' 的文件连接和全部终端'">断开此主机</button>
                   </div>
-                </div>
-                <div class="ws-term-tools" role="group" aria-label="终端显示与复制">
-                  <button type="button" class="ws-seg-btn" @click="changeTermFont(-1)" :disabled="termFontSize <= 12" aria-label="缩小终端字号">A−</button>
-                  <span class="ws-quiet mb-0" x-text="termFontSize + ' px'"></span>
-                  <button type="button" class="ws-seg-btn" @click="changeTermFont(1)" :disabled="termFontSize >= 22" aria-label="放大终端字号">A+</button>
-                  <button type="button" class="ws-seg-btn" @click="copyTerminal()" title="复制所选文字：Ctrl+Shift+C；Ctrl+C 保持中断命令">复制选中</button>
-                  <button type="button" class="ws-seg-btn ws-files-toggle" @click="toggleFiles()" :aria-expanded="!filesCollapsed" x-text="filesCollapsed ? '展开文件区' : '收起文件区'"></button>
-                </div>
-                <div class="ws-banner" x-show="terminalError()">
-                  <div class="alert alert-danger mb-0" role="alert" x-text="terminalError()"></div>
                 </div>
                 <div class="empty" x-show="termTabs.length === 0">
                   <div class="empty-ico" aria-hidden="true"></div>
