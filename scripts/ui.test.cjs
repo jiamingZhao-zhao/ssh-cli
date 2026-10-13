@@ -198,7 +198,13 @@ test('workspace uses a responsive third by default and retains a manual split', 
   handlers.mousemove({ clientX: 0, clientY: 550 }); handlers.mouseup();
   assert.equal(app.ws.lower, 350); assert.equal(prefs.wsLower, 350);
   assert.match(app.workspaceGrid(), /350px/);
-  app.ws.lower = 9999; assert.match(app.workspaceGrid(), /520px/);
+  app.ws.lower = 9999; assert.match(app.workspaceGrid(), /4096px/);
+  sandbox.innerHeight = 2160;
+  sandbox.document.querySelector = () => ({ getBoundingClientRect: () => ({ height: 720 }) });
+  app.ws.lower = null;
+  app.beginSplit('lower', { clientX: 0, clientY: 1440 });
+  handlers.mousemove({ clientX: 0, clientY: 1439 }); handlers.mouseup();
+  assert.equal(app.ws.lower, 721); assert.equal(prefs.wsLower, 721);
 });
 
 test('network graph uses sampled rates, keeps hosts separate and marks missing data', () => {

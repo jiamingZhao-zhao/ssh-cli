@@ -590,7 +590,7 @@ function sshui() {
       this.density = this.draft.density;
       this.navCollapsed = !!prefs.navCollapsed;
       if (prefs.wsSide >= 220 && prefs.wsSide <= 460) this.ws.side = prefs.wsSide;
-      if (prefs.wsLower >= 160 && prefs.wsLower <= 520) this.ws.lower = prefs.wsLower;
+      if (prefs.wsLower >= 160 && prefs.wsLower <= 4096) this.ws.lower = prefs.wsLower;
       this.downloadDir = typeof prefs.downloadDir === "string" ? prefs.downloadDir : "";
       this.exec.timeout = this.draft.commandTimeout;
       this.audit.pageSize = this.draft.pageSize;
@@ -1507,7 +1507,7 @@ function sshui() {
     workspaceGrid() {
       const side = Math.max(220, Math.min(460, Number(this.ws && this.ws.side) || 280));
       const saved = Number(this.ws && this.ws.lower);
-      const lower = saved ? Math.max(160, Math.min(520, saved)) + "px" : "33.333vh";
+      const lower = saved ? Math.max(160, Math.min(4096, saved)) + "px" : "33.333vh";
       return "--ws-side:" + side + "px;--ws-lower:min(" + lower + ", max(160px, calc(100vh - 180px)))";
     },
 
@@ -1587,7 +1587,8 @@ function sshui() {
         if (which === "side") {
           app.ws.side = Math.max(220, Math.min(460, baseSide + (e.clientX - startX)));
         } else {
-          app.ws.lower = Math.max(160, Math.min(520, baseLower - (e.clientY - startY)));
+          const limit = Math.max(160, window.innerHeight - 180);
+          app.ws.lower = Math.max(160, Math.min(limit, baseLower - (e.clientY - startY)));
         }
       };
       const prevCursor = document.body.style.cursor;
