@@ -4,6 +4,7 @@ const termMap = new Map();
 const TERM_CHUNK = 32 << 10;
 const TERM_INPUT_LIMIT = 4 << 20;
 const transferCtl = new Map();
+const auditHeader = "X-SSH-CLI-Audit-Warning";
 let chartDays = null;
 let chartOps = null;
 let netChart = null;
@@ -497,6 +498,12 @@ function sshui() {
     sessionsSeq: 0,
     workspaceClosedAlias: "",
     execBusy: false,
+    execUncertain: false,
+    execOperationID: "",
+    execSnapshot: null,
+    fileBusy: false,
+    fileAction: null,
+    auditWarning: "",
     readAbort: {},
     files: { alias: "", mode: "files", path: "", parent: "", home: "", crumbs: [], entries: [], truncated: false },
     procView: { pid: "", ppid: "", user: "", cpu: "", mem: "", memPct: "", stat: "", etime: "", cmd: "", cwd: "", cwdNote: "" },
@@ -594,7 +601,7 @@ function sshui() {
         else if (this.view === "terminal") this.startMetrics();
       });
       window.addEventListener("beforeunload", (ev) => {
-        if (this.termTabs.some((tab) => tab.state === "connected") || this.transfers.some((t) => t.active) || this.execBusy || this.batchBusy || this.batchUncertain) {
+        if (this.termTabs.some((tab) => tab.state === "connected") || this.transfers.some((t) => t.active) || this.execBusy || this.execUncertain || this.fileBusy || (this.fileAction && this.fileAction.uncertain) || this.batchBusy || this.batchUncertain) {
           ev.preventDefault(); ev.returnValue = "";
         }
       });
@@ -781,7 +788,13 @@ function sshui() {
       this.errors[key] = msg ? this.explain(msg) : "";
     },
 
-    async api(url, options) {
+    noteAudit(data) {
+      if (data && (data.auditWarning || (Array.isArray(data.results) && data.results.some((row) => row && row.auditWarning)))) {
+        this.auditWarning = "本地审计写入失败，请检查配置目录的权限和磁盘空间。远端操作结果见本次返回，不要因此重复执行。";
+      }
+    },
+
+    async api(url, options, beforeSend) {
       const opts = Object.assign({ credentials: "same-origin" }, options || {});
       const method = String(opts.method || "GET").toUpperCase();
       if (method !== "GET" && method !== "HEAD" && !this.csrf) await this.ensureSession();
@@ -790,6 +803,7 @@ function sshui() {
       if (token) headers.Authorization = "Bearer " + token;
       if (this.csrf) headers["X-CSRF-Token"] = this.csrf;
       opts.headers = headers;
+      if (beforeSend) beforeSend();
       let res = await fetch(url, opts);
       if (res.status === 401) {
         const typed = await this.ask("这个监听地址要求 Bearer token。请粘贴启动 ssh-cli ui 时打印的那一行。", "", "password");
@@ -797,8 +811,10 @@ function sshui() {
         sessionStorage.setItem("sshCliBearer", String(typed).trim());
         headers.Authorization = "Bearer " + String(typed).trim();
         opts.headers = headers;
+        if (beforeSend) beforeSend();
         res = await fetch(url, opts);
       }
+      if (res.headers && res.headers.get(auditHeader)) this.noteAudit({ auditWarning: true });
       return res;
     },
 
@@ -810,7 +826,9 @@ function sshui() {
         return {};
       }
       try {
-        return JSON.parse(trimmed);
+        const data = JSON.parse(trimmed);
+        this.noteAudit(data);
+        return data;
       } catch (err) {
         throw new Error(plainBodyMessage(trimmed, res.statusText));
       }
@@ -869,34 +887,41 @@ function sshui() {
       return data;
     },
 
-    async postJSON(url, body) {
-      await this.ensureSession();
-      const payload = Object.assign({}, body);
-      for (let attempt = 0; attempt < 4; attempt++) {
-        const res = await this.api(url, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(payload)
-        });
-        const data = await this.parseJSON(res);
-        if (res.status === 409 && data.needsConfirm) {
-          const typed = await this.ask((data.error || "需要确认") + "\n请输入：" + (data.confirm || ""));
-          if (typed == null) {
-            const err = new Error("已取消"); err.outcome = "not_started"; throw err;
+    async postJSON(url, body, beforeSend) {
+      let sent = false;
+      try {
+        await this.ensureSession();
+        const payload = Object.assign({}, body);
+        for (let attempt = 0; attempt < 4; attempt++) {
+          const res = await this.api(url, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify(payload)
+          }, () => { if (beforeSend) beforeSend(); sent = true; });
+          const data = await this.parseJSON(res);
+          if (res.status === 409 && data.needsConfirm) {
+            sent = false;
+            const typed = await this.ask((data.error || "需要确认") + "\n请输入：" + (data.confirm || ""));
+            if (typed == null) {
+              const err = new Error("已取消"); err.outcome = "not_started"; throw err;
+            }
+            if (data.confirmField) payload[data.confirmField] = typed;
+            else payload.confirm = typed;
+            payload.humanConfirm = payload.humanConfirm || typed;
+            continue;
           }
-          if (data.confirmField) payload[data.confirmField] = typed;
-          else payload.confirm = typed;
-          payload.humanConfirm = payload.humanConfirm || typed;
-          continue;
+          if (!res.ok || data.ok === false) {
+            const err = new Error(friendlyError(data.error, res.statusText));
+            err.outcome = data.outcome || (res.status >= 400 && res.status < 500 ? "not_started" : "unknown");
+            throw err;
+          }
+          return data;
         }
-        if (!res.ok || data.ok === false) {
-          const err = new Error(friendlyError(data.error, res.statusText));
-          err.outcome = data.outcome;
-          throw err;
-        }
-        return data;
+        const err = new Error("确认失败"); err.outcome = "not_started"; throw err;
+      } catch (err) {
+        if (!sent && !err.outcome) err.outcome = "not_started";
+        throw err;
       }
-      throw new Error("确认失败");
     },
 
     async loadCatalog() {
@@ -1394,6 +1419,8 @@ function sshui() {
               app.setTabState(id, "connected");
               app.setTerminalError(id, "");
               if (app.termActive === id) { app.syncWorkspace(); app.fitActive(true); }
+            } else if (state.state === "audit_warning") {
+              app.noteAudit({ auditWarning: true });
             } else if (state.state === "error") {
               const labels = { auth: "认证失败", connect: "连接失败", timeout: "连接超时", pty: "远端终端启动失败" };
               const message = (labels[state.category] || "终端连接失败") + "：" + String(state.message || "请检查连接").replace(/[\x00-\x1f\x7f-\x9f]/g, " ");
@@ -2400,64 +2427,89 @@ function sshui() {
       }
     },
 
-    async fileChange(op, path, name) {
+    fileScope() {
+      const terminal = termMap.get(this.termActive);
+      return { alias: this.liveAlias(), seq: this.workspaceSeq, dir: this.files.path,
+        readSeq: this.filesReadSeq, tab: this.termActive, generation: terminal ? terminal.generation : 0 };
+    },
+
+    fileScopeCurrent(scope) {
+      const current = this.fileScope();
+      return !!scope && !!scope.alias && this.view === "terminal" && !this.filesLoading && this.files.mode !== "history" &&
+        Object.keys(scope).every((key) => scope[key] === current[key]);
+    },
+
+    async editFileAction(action) {
       this.menu.open = false;
-      const alias = this.liveAlias();
-      if (!alias) {
-        this.toast("先打开终端或点「连接」。", "bad");
-        return;
-      }
-      const seq = this.workspaceSeq;
-      const cur = this.files.path || path;
+      if (this.fileBusy || action.done || (this.fileAction && this.fileAction.uncertain)) return;
+      if (!action.path || !this.fileScopeCurrent(action.scope)) { this.toast("主机、连接或目录已变化，请重新选择文件。", "bad"); return; }
+      this.fileBusy = true;
+      this.fileAction = action;
+      action = this.fileAction;
+      action.message = "等待确认：" + action.scope.alias + " · " + action.path;
+      let requested = false;
       try {
-        await this.postJSON("/api/files/change", { alias: alias, op: op, path: path, name: name || "" });
-        if (seq === this.workspaceSeq && this.liveAlias() === alias && this.files.path === cur && this.files.mode !== "history") await this.listFiles(op === "remove" && path === cur ? (this.files.parent || "/") : cur);
+        const guard = () => {
+          if (!this.fileScopeCurrent(action.scope)) {
+            const err = new Error("主机、连接或目录已变化，操作已取消，请重新选择文件。");
+            err.outcome = "not_started"; throw err;
+          }
+        };
+        if (action.op === "remove") {
+          if (!await this.askConfirm("主机：" + action.scope.alias + "\n删除：" + action.path + "\n此操作不能撤销，继续？")) { this.fileAction = null; return; }
+        } else {
+          const labels = { mkdir: "新建文件夹名称", touch: "新建文件名称", rename: "重命名为" };
+          const name = await this.ask(labels[action.op] + "\n" + action.scope.alias + " · " + action.path, action.name || "");
+          if (name == null) { this.fileAction = null; return; }
+          action.name = String(name).trim();
+          if (!action.name) { action.message = "请输入名称，输入已保留。"; return; }
+        }
+        guard();
+        action.message = "正在处理：" + action.scope.alias + " · " + action.path;
+        requested = true;
+        const data = await this.postJSON("/api/files/change", { alias: action.scope.alias, op: action.op, path: action.path, name: action.name || "" }, guard);
+        if (data.outcome !== "completed" || !data.path) throw new Error("未收到完整文件操作结果");
+        action.done = true;
+        action.message = "已完成：" + action.scope.alias + " · " + data.path;
+        // A successful write stays successful even if its directory refresh fails.
+        if (this.fileScopeCurrent(action.scope)) {
+          await this.listFiles(action.op === "remove" && action.path === action.scope.dir ? (this.files.parent || "/") : action.scope.dir);
+          if (this.liveAlias() === action.scope.alias && this.files.path === action.scope.dir && this.workspaceSeq === action.scope.seq && action.op !== "remove") {
+            this.selectedPath = (this.files.entries || []).some((entry) => entry.path === data.path) ? data.path : "";
+            setTimeout(() => {
+              if (this.selectedPath !== data.path || this.liveAlias() !== action.scope.alias || this.workspaceSeq !== action.scope.seq) return;
+              const row = document.querySelector(".ws-table-wrap tr.is-selected");
+              if (row) row.scrollIntoView({ block: "nearest" });
+            }, 0);
+          }
+        }
+        this.loadAudit();
       } catch (err) {
-        this.toast(err.message || "操作失败", "bad");
-      }
+        if (action.done) { this.setError("files", "操作已完成，目录刷新失败：" + err.message); return; }
+        action.uncertain = requested && err.outcome !== "not_started";
+        action.message = action.scope.alias + " · " + action.path + "：" + (err.message || "操作失败") +
+          (action.uncertain ? "；结果待确认，请核验远端文件，禁止直接重试。" : "；未执行，输入已保留。");
+      } finally { this.fileBusy = false; }
     },
 
-    async createEntry(kind) {
-      const parent = this.files.path;
-      this.menu.open = false;
-      if (!parent) {
-        this.toast("先打开一个目录。", "bad");
-        return;
-      }
-      const name = await this.ask(kind === "dir" ? "新建文件夹名称" : "新建文件名称");
-      if (name == null) return;
-      if (!String(name).trim()) {
-        this.toast("请输入名称。", "bad");
-        return;
-      }
-      await this.fileChange(kind === "dir" ? "mkdir" : "touch", parent, String(name).trim());
+    async clearFileAction() {
+      if (this.fileBusy) return;
+      if (this.fileAction && this.fileAction.uncertain && !await this.askConfirm("请先核验原主机上的文件。清除提示不会撤销操作，确认已核验？")) return;
+      this.fileAction = null;
     },
 
-    async renameEntry() {
+    createEntry(kind) {
+      return this.editFileAction({ op: kind === "dir" ? "mkdir" : "touch", path: this.files.path, name: "", scope: this.fileScope() });
+    },
+
+    renameEntry() {
       const entry = this.menu.entry;
-      this.menu.open = false;
-      if (!entry || !entry.path) {
-        this.toast("先选中一项。", "bad");
-        return;
-      }
-      const name = await this.ask("重命名为", entry.name || "");
-      if (name == null) return;
-      if (!String(name).trim()) {
-        this.toast("请输入名称。", "bad");
-        return;
-      }
-      await this.fileChange("rename", entry.path, String(name).trim());
+      return this.editFileAction({ op: "rename", path: entry ? entry.path : "", name: entry ? entry.name : "", scope: this.fileScope() });
     },
 
-    async deleteEntry() {
+    deleteEntry() {
       const entry = this.menu.entry;
-      this.menu.open = false;
-      if (!entry || !entry.path) {
-        this.toast("先选中一项。", "bad");
-        return;
-      }
-      if (!await this.askConfirm("删除 " + (entry.name || entry.path) + " ？此操作不能撤销。")) return;
-      await this.fileChange("remove", entry.path, "");
+      return this.editFileAction({ op: "remove", path: entry ? entry.path : "", name: "", scope: this.fileScope() });
     },
 
     openContext() {
@@ -2658,6 +2710,7 @@ function sshui() {
             const raw = String(xhr.responseText || "").trim();
             try {
               data = raw ? lastJSONObject(raw) : {};
+              app.noteAudit(data);
               if (typeof data.ok !== "boolean") throw new Error("missing final result");
             } catch (err) {
               commit({ active: false, label: "结果待确认", error: "未收到完整传输结果，请核验目标文件，不要直接重试。" });
@@ -2732,6 +2785,7 @@ function sshui() {
               this.patchTransfer(id, { loaded: Number(msg.loaded) || 0, total: Number(msg.total) || known, active: true, label: "下载中" });
             })
             : await this.parseJSON(res);
+          this.noteAudit(data);
           checkRead(ctrl.signal);
           if (res.status === 409 && data.needsConfirm && !confirmText) {
             this.patchTransfer(id, { label: "等待人工确认" });
@@ -3517,27 +3571,68 @@ function sshui() {
       return this.formatLeft(item.idleLeftSec);
     },
 
+    applyExecResult(data) {
+      if (data.outcome === "not_started") {
+        this.execUncertain = false;
+        this.setError("operate", data.error || "命令未执行，可修改后重新提交。");
+        return;
+      }
+      if (data.outcome !== "completed" || typeof data.exitCode !== "number") throw new Error(data.error || "未收到完整执行结果");
+      this.execUncertain = false;
+      const snapshot = this.execSnapshot;
+      this.operateOut = (snapshot ? snapshot.alias + " · " + snapshot.command + "\n" : "") + "exit " + data.exitCode + "\n" +
+        (data.stdoutSuppressed ? (data.notice || "noDataOutflow: command output discarded") : (data.stdout || "") + (data.stderr || "")) +
+        (data.truncated ? "\n[输出已截断，每路最多 64 KiB]" : "");
+      if (snapshot && this.exec.alias === snapshot.alias && this.exec.command === snapshot.command) {
+        this.exec.command = ""; this.exec.confirm = "";
+      }
+      this.setError("operate", "");
+      this.noteAudit(data);
+      this.loadAudit();
+    },
+
+    async operationResult(id) {
+      const data = await this.readJSON(await this.api("/api/operations/" + id));
+      if (data.state === "running") throw new Error("操作仍在执行，请稍后查询。请勿重复执行。");
+      if (data.state !== "complete" || !data.result) throw new Error("执行结果未知，请核验远端状态。请勿重复执行。");
+      this.noteAudit(data.result);
+      return data.result;
+    },
+
+    async checkExecResult() {
+      if (this.execBusy || !this.execOperationID) return;
+      this.execBusy = true;
+      try { this.applyExecResult(await this.operationResult(this.execOperationID)); }
+      catch (err) { this.setError("operate", err.message); }
+      finally { this.execBusy = false; }
+    },
+
+    async clearExecOperation() {
+      if (this.execBusy || !await this.askConfirm("请先核验原主机上的命令结果。清除记录后重新执行可能重复写入，确认已核验？")) return;
+      this.execUncertain = false; this.execOperationID = ""; this.execSnapshot = null;
+      this.setError("operate", "");
+    },
+
     async runExec() {
-      if (this.execBusy) return;
+      if (this.execBusy || this.execUncertain) return;
       this.execBusy = true;
       this.setError("operate", "");
       this.operateOut = "";
       try {
-        const data = await this.postJSON("/api/exec", {
+        const payload = {
           alias: this.exec.alias,
           command: this.exec.command,
           timeout: this.exec.timeout || this.draft.commandTimeout || "",
           confirm: this.exec.confirm || "",
-          allowOutflow: !!this.exec.allowOutflow
-        });
-        if (typeof data.exitCode !== "number" || data.outcome === "unknown") throw new Error("未收到完整执行结果");
-        if (data.stdoutSuppressed) this.operateOut = "exit " + data.exitCode + "\n" + (data.notice || "noDataOutflow: command output discarded");
-        else this.operateOut = "exit " + data.exitCode + "\n" + (data.stdout || "") + (data.stderr || "");
-        this.exec.command = "";
-        this.exec.confirm = "";
-        this.loadAudit();
+          allowOutflow: !!this.exec.allowOutflow,
+          operationId: operationID()
+        };
+        this.execSnapshot = payload;
+        this.execOperationID = payload.operationId;
+        this.applyExecResult(await this.postJSON("/api/exec", payload));
       } catch (err) {
-        this.setError("operate", err.message + (err.outcome === "not_started" || err.outcome === "completed" ? "" : "；若请求已发出，请核验远端状态，不要直接重复执行。"));
+        this.execUncertain = err.outcome !== "not_started" && err.outcome !== "completed";
+        this.setError("operate", err.message + (this.execUncertain ? "；请查询原操作结果并核验远端状态，不要直接重复执行。" : err.outcome === "completed" ? "；远端操作已结束，请核对返回结果。" : "；未执行，可修改后重新提交。"));
       } finally {
         this.execBusy = false;
       }
@@ -3657,12 +3752,10 @@ function sshui() {
       if (this.batchBusy || !this.batchOperationID) return;
       this.batchBusy = true;
       try {
-        const data = await this.readJSON(await this.api("/api/operations/" + this.batchOperationID));
-        if (data.state === "running") { this.batchOut = "操作仍在执行，请稍后查询。请勿重复执行。"; return; }
-        if (data.state !== "complete") throw new Error("执行结果未知，请核验远端状态。请勿重复执行。");
-        this.batchUncertain = false;
+        const result = await this.operationResult(this.batchOperationID);
+        this.batchUncertain = result.outcome === "unknown" || (result.results || []).some((row) => row.outcome === "unknown");
         this.batchPreview = null;
-        this.batchOut = data.result.results ? batchSummary(data.result.results).text : (data.result.error || "操作结束");
+        this.batchOut = result.results ? batchSummary(result.results).text : (result.error || "操作结束");
       } catch (err) { this.batchOut = this.explain(err.message); }
       finally { this.batchBusy = false; }
     },
@@ -3728,6 +3821,7 @@ function sshui() {
         }
         if (!data || !data.results) throw new Error("确认未完成，请重新预检。");
         this.batchOut = batchSummary(data.results).text;
+        this.batchUncertain = data.results.some((row) => row.outcome === "unknown");
         this.batchPreview = null;
         this.loadAudit();
         this.loadDashboard();

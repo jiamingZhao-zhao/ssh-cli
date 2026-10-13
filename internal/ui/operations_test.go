@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -70,6 +71,75 @@ func TestOperationDedupAndIsolation(t *testing.T) {
 	s.operationAPI(rr, query)
 	if rr.Code != 404 {
 		t.Fatal("expired operation still available")
+	}
+}
+
+func TestOperationResultBudgetRetainsReplayProtection(t *testing.T) {
+	s := &service{sessions: map[string]string{"first": "csrf"}}
+	r := httptest.NewRequest("POST", "/api/exec", nil)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: "first"})
+	var calls int
+	base := time.Now().Add(-time.Minute)
+	first := execIn{OperationID: "operation_00000000", Command: "echo once"}
+	for i := 0; i < maxOperationResults+2; i++ {
+		body := first
+		body.OperationID = fmt.Sprintf("operation_%08d", i)
+		rr := httptest.NewRecorder()
+		s.runOperation(rr, r, body, func(w http.ResponseWriter) {
+			calls++
+			writeJSON(w, 200, map[string]any{"ok": true, "outcome": "completed", "exitCode": 0})
+		})
+		if rr.Code != 200 {
+			t.Fatalf("operation %d blocked: %d", i, rr.Code)
+		}
+		s.operations["first:"+body.OperationID].created = base.Add(time.Duration(i) * time.Second)
+	}
+	results := 0
+	for _, op := range s.operations {
+		if len(op.result) > 0 {
+			results++
+		}
+	}
+	if results != maxOperationResults {
+		t.Fatalf("retained %d results", results)
+	}
+	before := calls
+	rr := httptest.NewRecorder()
+	s.runOperation(rr, r, first, func(http.ResponseWriter) { calls++ })
+	if calls != before || !strings.Contains(rr.Body.String(), `"outcome":"unknown"`) {
+		t.Fatal("evicted operation replayed")
+	}
+	r.SetPathValue("id", first.OperationID)
+	rr = httptest.NewRecorder()
+	s.operationAPI(rr, r)
+	if !strings.Contains(rr.Body.String(), `"state":"unknown"`) {
+		t.Fatal("eviction looks complete")
+	}
+	// Count alone is insufficient: encoded output is bounded by bytes as well.
+	s.operations = map[string]*operation{}
+	for i := 0; i < 3; i++ {
+		s.operations[fmt.Sprint(i)] = &operation{state: "complete", created: time.Now().Add(time.Duration(i) * time.Second), result: make(json.RawMessage, maxOperationBytes/2)}
+	}
+	s.trimOperationResults()
+	if s.operations["0"].result != nil || s.operations["0"].state != "unknown" {
+		t.Fatal("byte budget did not evict oldest output")
+	}
+}
+
+func TestCanceledOperationCannotReplayCompletedLookingPayload(t *testing.T) {
+	s := &service{sessions: map[string]string{"first": "csrf"}}
+	ctx, cancel := context.WithCancel(context.Background())
+	r := httptest.NewRequest("POST", "/api/exec", nil).WithContext(ctx)
+	r.AddCookie(&http.Cookie{Name: sessionCookie, Value: "first"})
+	body := execIn{OperationID: "0123456789abcdef", Command: "write"}
+	s.runOperation(httptest.NewRecorder(), r, body, func(w http.ResponseWriter) {
+		cancel()
+		writeJSON(w, 200, map[string]any{"ok": true, "outcome": "completed", "exitCode": 0})
+	})
+	rr := httptest.NewRecorder()
+	s.runOperation(rr, r, body, func(http.ResponseWriter) { t.Fatal("canceled write replayed") })
+	if rr.Code != 500 || strings.Contains(rr.Body.String(), `"outcome":"completed"`) {
+		t.Fatal("unknown operation looked safe to repeat")
 	}
 }
 

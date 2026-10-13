@@ -205,6 +205,150 @@ test('incomplete command result does not clear the command or look successful', 
   assert.match(app.errors.operate, /未收到完整执行结果.*不要直接重复执行/);
 });
 
+function jsonReply(data, status = 200) {
+  return { ok: status >= 200 && status < 300, status, headers: { get: () => '' }, text: async () => JSON.stringify(data) };
+}
+
+test('file prompt locks its host even when the user switches away and back', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work';
+  const prompt = deferred(); let writes = 0;
+  app.ask = () => prompt.promise; app.postJSON = async () => { writes++; };
+  app.refreshFiles = () => {};
+  const pending = app.createEntry('file');
+  app.termAlias = app.explicitAlias = 'b'; app.syncWorkspace();
+  app.termAlias = app.explicitAlias = 'a'; app.syncWorkspace();
+  prompt.resolve('中文.txt'); await pending;
+  assert.equal(writes, 0); assert.equal(app.fileAction.uncertain, false);
+  assert.match(app.fileAction.message, /操作已取消/);
+});
+
+test('delete confirmation cannot follow a directory change', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work';
+  app.menu.entry = { path: '/work/a', name: 'a' };
+  const prompt = deferred(); let writes = 0;
+  app.askConfirm = () => prompt.promise; app.postJSON = async () => { writes++; };
+  const pending = app.deleteEntry(); app.files.path = '/other';
+  prompt.resolve(true); await pending; assert.equal(writes, 0);
+});
+
+test('file prompt cannot survive reconnecting the same terminal tab', async () => {
+  const { app, entry } = terminalFixture(); app.view = 'terminal'; app.files.path = '/work'; app.termTabs[0].state = 'connected';
+  const prompt = deferred(); app.ask = () => prompt.promise;
+  app.postJSON = () => assert.fail('reconnected workspace must cancel the old write');
+  const pending = app.createEntry('file'); entry.generation++;
+  prompt.resolve('new'); await pending; assert.equal(app.fileAction.uncertain, false);
+});
+
+test('file policy confirmation rechecks scope before the second HTTP request', async () => {
+  const { app, sandbox } = fixture(); connected(app); app.files.path = '/work'; app.csrf = 'csrf';
+  sandbox.sessionStorage = { getItem: () => '' }; let calls = 0;
+  sandbox.fetch = async () => { calls++; return jsonReply({ needsConfirm: true, confirm: 'a' }, 409); };
+  app.ask = async (label) => { if (label.includes('请输入')) app.files.path = '/other'; return 'new'; };
+  await app.createEntry('file');
+  assert.equal(calls, 1); assert.equal(app.fileAction.uncertain, false);
+});
+
+test('file authentication confirmation also rechecks scope before retry', async () => {
+  const { app, sandbox } = fixture(); connected(app); app.files.path = '/work'; app.csrf = 'csrf';
+  sandbox.sessionStorage = { getItem: () => '', setItem() {} }; let calls = 0;
+  sandbox.fetch = async () => { calls++; return jsonReply({}, 401); };
+  app.ask = async (label) => { if (label.includes('Bearer')) app.files.path = '/other'; return 'new'; };
+  await app.createEntry('file'); assert.equal(calls, 1); assert.equal(app.fileAction.uncertain, false);
+});
+
+test('file action suppresses duplicate dialogs and preserves failed input for editing', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work';
+  const prompt = deferred(); let prompts = 0, writes = 0;
+  app.ask = () => { prompts++; return prompt.promise; };
+  app.postJSON = async () => { writes++; const err = new Error('invalid name'); err.outcome = 'not_started'; throw err; };
+  const pending = app.createEntry('file'); await app.createEntry('file');
+  assert.equal(prompts, 1); prompt.resolve('bad/name'); await pending;
+  assert.equal(writes, 1); assert.equal(app.fileAction.name, 'bad/name'); assert.equal(app.fileAction.uncertain, false);
+  app.ask = async (_label, initial) => { assert.equal(initial, 'bad/name'); return null; };
+  await app.editFileAction(app.fileAction); assert.equal(writes, 1);
+});
+
+test('lost file result blocks later writes until the user verifies it', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work'; let calls = 0;
+  app.ask = async () => 'new'; app.postJSON = async () => { calls++; throw new Error('lost reply'); };
+  await app.createEntry('file'); await app.createEntry('dir');
+  assert.equal(calls, 1); assert.equal(app.fileAction.uncertain, true);
+  app.askConfirm = async () => false; await app.clearFileAction(); assert.ok(app.fileAction);
+  app.askConfirm = async () => true; await app.clearFileAction(); assert.equal(app.fileAction, null);
+});
+
+test('completed file change selects the returned path and refresh failure never invites replay', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work';
+  app.ask = async () => '中文.txt'; app.postJSON = async () => ({ outcome: 'completed', path: '/work/中文.txt' });
+  app.listFiles = async () => { app.files.entries = [{ path: '/work/中文.txt' }]; };
+  await app.createEntry('file'); assert.equal(app.selectedPath, '/work/中文.txt'); assert.equal(app.fileAction.done, true);
+  app.listFiles = async () => { throw new Error('read failed'); };
+  await app.createEntry('file'); assert.equal(app.fileAction.done, true); assert.ok(!app.fileAction.uncertain);
+  assert.match(app.errors.files, /操作已完成.*刷新失败/);
+});
+
+test('late file result stays associated with its original host and leaves the new directory alone', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work'; const reply = deferred(), started = deferred();
+  app.ask = async () => 'new'; app.postJSON = () => { started.resolve(); return reply.promise; };
+  app.listFiles = () => assert.fail('must not refresh the new host');
+  const pending = app.createEntry('file'); await started.promise;
+  app.termAlias = app.explicitAlias = 'b'; app.files.path = '/new-host'; app.workspaceSeq++;
+  reply.resolve({ outcome: 'completed', path: '/work/new' }); await pending;
+  assert.match(app.fileAction.message, /已完成：a/); assert.equal(app.files.path, '/new-host');
+});
+
+test('single command queries the original ID without replay and retains edits made meanwhile', async () => {
+  const { app } = fixture(); let writes = 0, queried;
+  app.exec.alias = 'a'; app.exec.command = 'echo once';
+  app.postJSON = async () => { writes++; throw new Error('lost reply'); };
+  await app.runExec(); const id = app.execOperationID; await app.runExec();
+  assert.equal(writes, 1); assert.equal(app.execUncertain, true);
+  app.exec.command = 'echo next'; app.exec.alias = 'b';
+  app.api = async (url) => { queried = url; return jsonReply({ state: 'complete', result: { outcome: 'completed', exitCode: 7, stdout: 'once', auditWarning: 'failed' } }); };
+  await app.checkExecResult();
+  assert.equal(queried, '/api/operations/' + id); assert.equal(writes, 1); assert.equal(app.execUncertain, false);
+  assert.equal(app.exec.command, 'echo next'); assert.match(app.operateOut, /a · echo once.*\nexit 7\nonce/);
+  assert.match(app.auditWarning, /审计写入失败/);
+});
+
+test('unknown, running and expired single results never unlock execution', async () => {
+  const { app } = fixture(); app.execUncertain = true; app.execOperationID = '0123456789abcdef';
+  for (const [status, data] of [[200, { state: 'running' }], [404, { ok: false, error: 'expired' }],
+    [200, { state: 'unknown', result: { outcome: 'completed', exitCode: 0 } }],
+    [200, { state: 'complete', result: { outcome: 'unknown', error: 'transport failed' } }]]) {
+    app.api = async () => jsonReply(data, status); await app.checkExecResult(); assert.equal(app.execUncertain, true);
+  }
+});
+
+test('batch result with a transport-unknown row still requires verification', async () => {
+  const { app } = fixture(); app.batchUncertain = true; app.batchOperationID = '0123456789abcdef';
+  app.api = async () => jsonReply({ state: 'complete', result: { results: [{ alias: 'a', ok: false, outcome: 'unknown', error: 'lost connection' }] } });
+  await app.checkBatchResult(); assert.equal(app.batchUncertain, true);
+});
+
+test('session failure before single execution is safe to edit without verification', async () => {
+  const { app, sandbox } = fixture(); let writes = 0;
+  app.ensureSession = async () => { throw new Error('session failed'); };
+  sandbox.fetch = async () => { writes++; };
+  await app.runExec(); assert.equal(writes, 0); assert.equal(app.execUncertain, false);
+});
+
+test('audit warning persists across successful reads and streaming upload completion', async () => {
+  const { app } = fixture();
+  await app.parseJSON(jsonReply({ results: [{ auditWarning: 'failed' }] }));
+  await app.parseJSON(jsonReply({ ok: true })); assert.match(app.auditWarning, /审计写入失败/);
+  const upload = uploadFixture(); const pending = upload.app.uploadOne('a', { name: 'a', size: 1 }, '/work');
+  const xhr = upload.requests[0]; xhr.status = 200; xhr.responseText = '{"ok":true,"auditWarning":"failed"}\n';
+  await xhr.onload(); await pending; assert.match(upload.app.auditWarning, /审计写入失败/);
+  assert.equal(upload.app.transfers[0].label, '完成');
+});
+
+test('terminal audit warning does not disconnect a ready PTY', async () => {
+  const { app, entry, sockets, control } = terminalFixture();
+  await app.connectTerm(entry); control(sockets[0], 'ready'); control(sockets[0], 'audit_warning');
+  assert.equal(entry.ready, true); assert.equal(app.termTabs[0].state, 'connected'); assert.match(app.auditWarning, /审计写入失败/);
+});
+
 function terminalFixture() {
   const ctx = fixture(), sockets = [], output = [];
   const { app, sandbox } = ctx;

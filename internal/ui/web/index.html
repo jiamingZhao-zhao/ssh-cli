@@ -57,6 +57,10 @@
         </div>
       </div>
       <div class="page-body">
+        <div class="alert alert-warning audit-warning" role="alert" x-show="auditWarning">
+          <span x-text="auditWarning"></span>
+          <button class="btn btn-sm btn-outline-secondary ms-2" type="button" @click="auditWarning = ''">关闭提示</button>
+        </div>
         <div class="container-xl">
 
           <div x-show="is('home')" data-view="home">
@@ -339,6 +343,11 @@
                   </div>
                 </div>
                 <div class="alert alert-danger ws-banner mb-0" role="alert" x-show="errors.files" x-text="errors.files"></div>
+                <div class="alert alert-info ws-banner ws-action mb-0" role="status" x-show="fileAction">
+                  <span x-text="fileAction ? fileAction.message : ''"></span>
+                  <button class="btn btn-sm btn-outline-primary" type="button" x-show="fileAction && !fileAction.done && !fileAction.uncertain" :disabled="fileBusy || !fileScopeCurrent(fileAction ? fileAction.scope : null)" @click="editFileAction(fileAction)">修改后重试</button>
+                  <button class="btn btn-sm btn-outline-secondary" type="button" :disabled="fileBusy" @click="clearFileAction()" x-text="fileAction && fileAction.uncertain ? '已核验，清除提示' : '关闭提示'"></button>
+                </div>
                 <div x-show="workspaceLive() && files.mode !== 'history'" class="ws-file-body" @contextmenu.prevent="openMenu($event, null)">
                   <form class="ws-pathbar" @submit.prevent="jumpPath()">
                     <input class="form-control" x-model="pathDraft" @focus="pathFocused = true" @blur="pathFocused = false" @keydown.enter.prevent="jumpPath()" aria-label="远端路径" placeholder="/root" autocomplete="off" spellcheck="false">
@@ -1068,7 +1077,12 @@
                       <div class="col-md-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="exec.allowOutflow"><span class="form-check-label">允许带回命令输出（noDataOutflow 需再确认 outflow）</span></label></div>
                     </div>
                   </div>
-                  <div class="card-footer"><button class="btn btn-primary" type="submit" :disabled="execBusy" x-text="execBusy ? '执行中…' : '执行'">执行</button></div>
+                  <div class="card-footer d-flex gap-2 flex-wrap">
+                    <button class="btn btn-primary" type="submit" :disabled="execBusy || execUncertain" x-text="execBusy ? '处理中…' : '执行'">执行</button>
+                    <button class="btn btn-outline-primary" type="button" x-show="execUncertain" :disabled="execBusy" @click="checkExecResult()">查询原操作结果</button>
+                    <button class="btn btn-outline-secondary" type="button" x-show="execUncertain" :disabled="execBusy" @click="clearExecOperation()">已核验，清除记录</button>
+                    <span class="text-secondary" x-show="execUncertain" x-text="execSnapshot ? '待核验主机：' + execSnapshot.alias : ''"></span>
+                  </div>
                 </form>
               </div>
               <div class="col-lg-6">

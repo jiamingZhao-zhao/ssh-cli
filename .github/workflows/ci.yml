@@ -37,7 +37,8 @@ jobs:
         with:
           go-version: "1.27"
       - name: native folder and Unicode path tests
-        run: go test ./internal/ui -run 'Test(CleanPickedDir|RevealTarget|RevealDownloadAPI|PickDownloadDirAPI|WindowsPickerUTF8|WorkspaceChrome|ExecFailureStatus|OperationDedupAndIsolation|InterruptedOperationIsUnknownAndNotReplayed|TerminalDialFailureWritesReason|TerminalTabAliasIsNotNestedButton)$' -count=1
+        shell: bash
+        run: go test ./internal/ui -run 'Test(CleanPickedDir|RevealTarget|RevealDownloadAPI|PickDownloadDirAPI|WindowsPickerUTF8|WorkspaceChrome|ExecFailureStatus|OperationDedupAndIsolation|InterruptedOperationIsUnknownAndNotReplayed|TerminalDialFailureWritesReason|TerminalTabAliasIsNotNestedButton|OperationResultBudgetRetainsReplayProtection|CanceledOperationCannotReplayCompletedLookingPayload|AuditFailureDoesNotChangeRemoteResult|AuditFailureSurvivesStreamingAndPoolClose)$' -count=1
       - name: UI behavior and UTF-8 regressions
         run: node --test scripts/ui.test.cjs
 

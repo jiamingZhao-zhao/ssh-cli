@@ -14,7 +14,9 @@ import (
 // It is deliberately not a durable job queue: restart/expiry means unknown,
 // never permission to replay a write. Confirmation-only replies are not cached.
 const operationTTL = 30 * time.Minute
-const maxOperations = 32
+const maxOperations = 1024
+const maxOperationResults = 32
+const maxOperationBytes = 8 << 20
 
 var operationIDPattern = regexp.MustCompile(`^[A-Za-z0-9_-]{16,80}$`)
 
@@ -79,10 +81,15 @@ func (s *service) runOperation(w http.ResponseWriter, r *http.Request, body exec
 			writeErr(w, 409, "operationId is already bound to a different request")
 			return
 		}
-		state, status, result := op.state, op.status, append(json.RawMessage(nil), op.result...)
+		// Stored bytes are immutable; eviction replaces the slice, never its data.
+		state, status, result := op.state, op.status, op.result
 		s.opMu.Unlock()
 		if state == "running" {
 			writeJSON(w, 202, map[string]any{"ok": true, "pending": true, "state": state, "operationId": body.OperationID})
+			return
+		}
+		if state == "unknown" {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"ok": false, "outcome": "unknown", "retrySafe": false, "error": "操作中断，执行结果未知；请核验远端状态，不要重放。"})
 			return
 		}
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
@@ -95,6 +102,17 @@ func (s *service) runOperation(w http.ResponseWriter, r *http.Request, body exec
 		writeErr(w, 429, "操作记录暂满，请等待记录过期后再执行。不要更换 ID 重试已有操作。")
 		return
 	}
+	running := 0
+	for _, previous := range s.operations {
+		if previous.state == "running" {
+			running++
+		}
+	}
+	if running >= maxOperationResults {
+		s.opMu.Unlock()
+		writeErr(w, 429, "执行中的操作已满，请等待原操作结束。")
+		return
+	}
 	op := &operation{digest: digest, created: time.Now(), state: "running"}
 	s.operations[key] = op
 	s.opMu.Unlock()
@@ -103,6 +121,7 @@ func (s *service) runOperation(w http.ResponseWriter, r *http.Request, body exec
 			s.opMu.Lock()
 			op.state, op.status = "unknown", http.StatusInternalServerError
 			op.result = json.RawMessage(`{"ok":false,"outcome":"unknown","retrySafe":false,"error":"操作中断，执行结果未知；请核验远端状态，不要重放。"}`)
+			s.trimOperationResults()
 			s.opMu.Unlock()
 			panic(p)
 		}
@@ -122,6 +141,7 @@ func (s *service) runOperation(w http.ResponseWriter, r *http.Request, body exec
 		}
 		op.status = rec.status
 		op.result = append(json.RawMessage(nil), rec.Bytes()...)
+		s.trimOperationResults()
 	}
 	s.opMu.Unlock()
 	for k, v := range rec.header {
@@ -129,6 +149,30 @@ func (s *service) runOperation(w http.ResponseWriter, r *http.Request, body exec
 	}
 	w.WriteHeader(rec.status)
 	_, _ = w.Write(rec.Bytes())
+}
+
+// Keep only bounded output, but retain request digests until TTL expiry.
+// An evicted result must remain unknown instead of accepting the same write again.
+// Must be called with opMu held.
+func (s *service) trimOperationResults() {
+	for {
+		count, size := 0, 0
+		var oldest *operation
+		for _, op := range s.operations {
+			if len(op.result) == 0 {
+				continue
+			}
+			count++
+			size += len(op.result)
+			if oldest == nil || op.created.Before(oldest.created) {
+				oldest = op
+			}
+		}
+		if count <= maxOperationResults && size <= maxOperationBytes {
+			return
+		}
+		oldest.result, oldest.state, oldest.status = nil, "unknown", http.StatusGone
+	}
 }
 
 func (s *service) operationAPI(w http.ResponseWriter, r *http.Request) {
@@ -143,7 +187,7 @@ func (s *service) operationAPI(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, 404, "找不到操作记录，执行结果未知。请核验远端状态，不要自动重放。")
 		return
 	}
-	state, status, result := op.state, op.status, append(json.RawMessage(nil), op.result...)
+	state, status, result := op.state, op.status, op.result
 	s.opMu.Unlock()
 	writeJSON(w, 200, map[string]any{"ok": true, "operationId": r.PathValue("id"), "state": state, "httpStatus": status, "result": result})
 }

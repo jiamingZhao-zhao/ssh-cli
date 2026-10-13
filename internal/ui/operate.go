@@ -80,6 +80,8 @@ func (s *service) execAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) execHit {
+	// Keep audit failures on this result, including concurrent batch rows.
+	auditResult := &operationWriter{header: make(http.Header)}
 	cfg, h, eff, err := s.hostPlan(body.Alias)
 	if err != nil {
 		return execHit{status: http.StatusBadRequest, payload: map[string]any{"ok": false, "error": err.Error(), "alias": body.Alias, "outcome": "not_started", "retrySafe": false}}
@@ -107,10 +109,10 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 	dec := guard.Decide(eff, body.Command)
 	if !dec.Allowed {
 		text := decisionText(dec)
-		s.writeAudit(h, audit.OpPolicyCheck, body.Command, "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
+		s.writeAudit(auditResult, h, audit.OpPolicyCheck, body.Command, "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
 		return execHit{status: http.StatusForbidden, payload: map[string]any{
 			"ok": false, "alias": h.Alias, "error": text, "status": audit.StatusDenied,
-			"outcome": "not_started", "retrySafe": false,
+			"outcome": "not_started", "retrySafe": false, "auditWarning": auditResult.Header().Get(auditWarningHeader),
 		}}
 	}
 	if dec.NeedsConfirm && phrase != h.Alias {
@@ -158,21 +160,21 @@ func (s *service) execOne(ctx context.Context, body execIn, forceReadonly bool) 
 	}
 	if err != nil {
 		status := execFailureStatus(runCtx, err)
-		s.writeAudit(h, audit.OpExec, body.Command, "", "", status, code, err.Error(), err.Error(), false, started)
+		s.writeAudit(auditResult, h, audit.OpExec, body.Command, "", "", status, code, err.Error(), err.Error(), false, started)
 		return execHit{status: http.StatusBadRequest, payload: map[string]any{
 			"ok": false, "alias": h.Alias, "error": err.Error(), "exitCode": code, "status": status,
-			"outcome": "unknown", "retrySafe": false,
+			"outcome": "unknown", "retrySafe": false, "auditWarning": auditResult.Header().Get(auditWarningHeader),
 		}}
 	}
 	status := audit.StatusOK
 	if code != 0 {
 		status = audit.StatusError
 	}
-	s.writeAudit(h, audit.OpExec, body.Command, "", "", status, code, summary, "", false, started)
+	s.writeAudit(auditResult, h, audit.OpExec, body.Command, "", "", status, code, summary, "", false, started)
 	resp := map[string]any{
 		"ok": true, "alias": h.Alias, "exitCode": code, "stdout": stdout.String(), "stderr": stderr.String(),
 		"truncated": stdout.cut || stderr.cut, "status": status,
-		"outcome": "completed", "retrySafe": false,
+		"outcome": "completed", "retrySafe": false, "auditWarning": auditResult.Header().Get(auditWarningHeader),
 	}
 	if suppress {
 		resp["stdout"] = ""
@@ -254,7 +256,7 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 	s.reconcile()
 	client, err := s.dialResolved(r.Context(), h)
 	if err != nil {
-		s.writeAudit(h, audit.OpUpload, audit.OpUpload, "", remote, audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, h, audit.OpUpload, audit.OpUpload, "", remote, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -295,7 +297,7 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		}
 		var denied capabilityError
 		if errors.As(err, &denied) {
-			s.writeAudit(h, audit.OpPolicyCheck, audit.OpUpload, "", remote, audit.StatusDenied, exitcode.Denied, denied.Error(), denied.Error(), true, started)
+			s.writeAudit(w, h, audit.OpPolicyCheck, audit.OpUpload, "", remote, audit.StatusDenied, exitcode.Denied, denied.Error(), denied.Error(), true, started)
 			payload := map[string]any{"ok": false, "error": denied.Error(), "status": "denied"}
 			if sink.on {
 				sink.event(payload)
@@ -304,14 +306,14 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusForbidden, payload)
 			return
 		}
-		s.writeAudit(h, audit.OpUpload, audit.OpUpload, "", remote, audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, h, audit.OpUpload, audit.OpUpload, "", remote, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		if sink.fail(err) {
 			return
 		}
 		writeFail(w, err)
 		return
 	}
-	s.writeAudit(h, audit.OpUpload, audit.OpUpload, name, remote, audit.StatusOK, 0, "upload "+remote, "", false, started)
+	s.writeAudit(w, h, audit.OpUpload, audit.OpUpload, name, remote, audit.StatusOK, 0, "upload "+remote, "", false, started)
 	if sink.ok(map[string]any{"ok": true}) {
 		return
 	}
@@ -348,7 +350,7 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 	client, err := s.dialResolved(ctx, h)
 	if err != nil {
-		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -357,14 +359,14 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 	// The page only shows status. It does not buffer the file.
 	sink := newProgressSink(w, wantsProgress(r))
 	if err := transfer.DownloadWithOptions(client.Raw(), remote, dest, nil, transfer.DownloadOptions{Context: ctx, Progress: sink.report}); err != nil {
-		s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		if sink.fail(err) {
 			return
 		}
 		writeFail(w, err)
 		return
 	}
-	s.writeAudit(h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusOK, 0, "download "+remote+" -> "+dest, "", false, started)
+	s.writeAudit(w, h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusOK, 0, "download "+remote+" -> "+dest, "", false, started)
 	if sink.ok(map[string]any{"ok": true, "remote": remote, "local": dest}) {
 		return
 	}
@@ -433,6 +435,9 @@ func (p *progressSink) event(v any) {
 	if p == nil || !p.want {
 		return
 	}
+	if fields, ok := v.(map[string]any); ok && p.w.Header().Get(auditWarningHeader) != "" {
+		fields["auditWarning"] = "failed"
+	}
 	if !p.on {
 		p.on = true
 		p.w.Header().Set("Content-Type", "application/x-ndjson; charset=utf-8")
@@ -494,7 +499,7 @@ func (s *service) requireCapability(w http.ResponseWriter, h config.ResolvedHost
 	dec := guard.DecideCapability(eff, capability, remote)
 	if !dec.Allowed {
 		text := decisionText(dec)
-		s.writeAudit(h, audit.OpPolicyCheck, command, "", remote, audit.StatusDenied, exitcode.Denied, text, text, true, started)
+		s.writeAudit(w, h, audit.OpPolicyCheck, command, "", remote, audit.StatusDenied, exitcode.Denied, text, text, true, started)
 		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
 		return false
 	}
@@ -537,7 +542,7 @@ func (s *service) relayAPI(w http.ResponseWriter, r *http.Request) {
 	dec := guard.DecideRelay(srcEff, dstEff, src.EnvName, dst.EnvName, body.ToPath, body.CrossEnv)
 	started := time.Now()
 	if !dec.Allowed {
-		s.writeAudit(dst, audit.OpPolicyCheck, "", body.From+":"+body.FromPath, body.To+":"+body.ToPath, audit.StatusDenied, 0, decisionText(dec), decisionText(dec), true, started)
+		s.writeAudit(w, dst, audit.OpPolicyCheck, "", body.From+":"+body.FromPath, body.To+":"+body.ToPath, audit.StatusDenied, 0, decisionText(dec), decisionText(dec), true, started)
 		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": decisionText(dec)})
 		return
 	}
@@ -551,26 +556,26 @@ func (s *service) relayAPI(w http.ResponseWriter, r *http.Request) {
 	defer cancel()
 	srcClient, err := s.dialResolved(ctx, src)
 	if err != nil {
-		s.writeAudit(src, audit.OpRelay, "", body.FromPath, body.ToPath, audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, src, audit.OpRelay, "", body.FromPath, body.ToPath, audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
 	defer srcClient.Close()
 	dstClient, err := s.dialResolved(ctx, dst)
 	if err != nil {
-		s.writeAudit(dst, audit.OpRelay, "", body.FromPath, body.ToPath, audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, dst, audit.OpRelay, "", body.FromPath, body.ToPath, audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
 	defer dstClient.Close()
 	res, err := transfer.Relay(srcClient.Raw(), dstClient.Raw(), body.FromPath, body.ToPath)
 	if err != nil {
-		s.writeAudit(dst, audit.OpRelay, "", body.From+":"+body.FromPath, body.To+":"+body.ToPath, audit.StatusError, 0, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, dst, audit.OpRelay, "", body.From+":"+body.FromPath, body.To+":"+body.ToPath, audit.StatusError, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
 	summary := fmt.Sprintf("relay %s %d bytes", res.Algo, res.Bytes)
-	s.writeAudit(dst, audit.OpRelay, "", body.From+":"+body.FromPath, body.To+":"+body.ToPath, audit.StatusOK, 0, summary, "", false, started)
+	s.writeAudit(w, dst, audit.OpRelay, "", body.From+":"+body.FromPath, body.To+":"+body.ToPath, audit.StatusOK, 0, summary, "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": res.Bytes, "algo": res.Algo, "sum": res.Sum})
 }
 
@@ -595,11 +600,11 @@ func (s *service) sessionOpenAPI(w http.ResponseWriter, r *http.Request) {
 	started := time.Now()
 	s.reconcile()
 	if err := s.pool.Open(r.Context(), h.Alias, s.fingerprint(h), false); err != nil {
-		s.writeAudit(h, audit.OpSession, "", "", "", audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, h, audit.OpSession, "", "", "", audit.StatusConnect, 0, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
-	s.writeAudit(h, audit.OpSession, "", "", "", audit.StatusOK, 0, "open", "open", false, started)
+	s.writeAudit(w, h, audit.OpSession, "", "", "", audit.StatusOK, 0, "open", "open", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
@@ -703,7 +708,10 @@ func (s *service) auditCleanupAPI(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (s *service) writeAudit(h config.ResolvedHost, op, command, src, dst, status string, code int, summary, reason string, denied bool, started time.Time) {
+const auditWarningHeader = "X-SSH-CLI-Audit-Warning"
+const auditWarningText = "本地审计写入失败，请检查配置目录的权限和磁盘空间；远端操作结果见本次返回，不要因此重复执行。"
+
+func (s *service) writeAudit(w http.ResponseWriter, h config.ResolvedHost, op, command, src, dst, status string, code int, summary, reason string, denied bool, started time.Time) {
 	c := code
 	rec := audit.Record{
 		Op: op, Host: h.Alias, Group: h.Group, Env: h.EnvName, Command: command, Src: src, Dst: dst,
@@ -713,7 +721,10 @@ func (s *service) writeAudit(h config.ResolvedHost, op, command, src, dst, statu
 	if rec.DurationMS < 0 {
 		rec.DurationMS = 0
 	}
-	_, _ = audit.Append(s.dir, rec)
+	if _, err := audit.Append(s.dir, rec); err != nil {
+		// The header is ASCII-safe and also works for streaming/file responses.
+		w.Header().Set(auditWarningHeader, "failed")
+	}
 }
 
 func decisionText(dec guard.Decision) string {

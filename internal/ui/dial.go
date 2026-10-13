@@ -175,7 +175,11 @@ func (s *service) onSessionClose(alias, reason string) {
 			rec.Env = h.EnvName
 		}
 	}
-	_, _ = audit.Append(s.dir, rec)
+	if _, err := audit.Append(s.dir, rec); err != nil {
+		s.mu.Lock()
+		s.auditCloseFailed = true
+		s.mu.Unlock()
+	}
 }
 
 func (s *service) openPool() *session.Pool { return s.pool }

@@ -147,7 +147,7 @@ func (s *service) allowTerminal(w http.ResponseWriter, h config.ResolvedHost, ef
 		return true
 	}
 	text := decisionText(dec)
-	s.writeAudit(h, audit.OpPolicyCheck, "pty", "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
+	s.writeAudit(w, h, audit.OpPolicyCheck, "pty", "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
 	writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
 	return false
 }
@@ -338,7 +338,7 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 	defer s.forgetTerm(ws)
 	fp := s.fingerprint(h)
 	if err := s.pool.OpenConn(r.Context(), h.Alias, fp); err != nil {
-		s.auditTerminal(h, audit.StatusConnect, "open", err.Error(), time.Now(), 0, 0)
+		s.auditTerminal(ws, h, audit.StatusConnect, "open", err.Error(), time.Now(), 0, 0)
 		writeTermFail(ws, err, execFailureStatus(r.Context(), err))
 		return
 	}
@@ -359,7 +359,7 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 			return err
 		}
 		opened = true
-		s.auditTerminal(h, audit.StatusOK, "open", "interactive terminal; command policy not applied", time.Now(), 0, 0)
+		s.auditTerminal(ws, h, audit.StatusOK, "open", "interactive terminal; command policy not applied", time.Now(), 0, 0)
 		started = time.Now()
 		inN, outN, err = bridgePTY(ws, pty)
 		return err
@@ -369,7 +369,7 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 		if err == nil {
 			err = errString("terminal did not start")
 		}
-		s.auditTerminal(h, status, "open", err.Error(), time.Now(), 0, 0)
+		s.auditTerminal(ws, h, status, "open", err.Error(), time.Now(), 0, 0)
 		writeTermFail(ws, err, "pty")
 		return
 	}
@@ -379,10 +379,10 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 		status = audit.StatusError
 		reason = err.Error()
 	}
-	s.auditTerminal(h, status, reason, "", started, inN, outN)
+	s.auditTerminal(ws, h, status, reason, "", started, inN, outN)
 }
 
-func (s *service) auditTerminal(h config.ResolvedHost, status, reason, summary string, started time.Time, inBytes, outBytes int64) {
+func (s *service) auditTerminal(ws *wsConn, h config.ResolvedHost, status, reason, summary string, started time.Time, inBytes, outBytes int64) {
 	if summary == "" && (inBytes > 0 || outBytes > 0 || reason == "close") {
 		summary = "interactive terminal closed; bytes_in=" + itoa(inBytes) + " bytes_out=" + itoa(outBytes)
 	}
@@ -402,7 +402,9 @@ func (s *service) auditTerminal(h config.ResolvedHost, status, reason, summary s
 	if rec.DurationMS < 0 {
 		rec.DurationMS = 0
 	}
-	_, _ = audit.Append(s.dir, rec)
+	if _, err := audit.Append(s.dir, rec); err != nil {
+		_ = writeTermState(ws, "audit_warning", "audit", auditWarningText)
+	}
 }
 
 // writeTermFail tells the browser why the PTY never started. The socket is
