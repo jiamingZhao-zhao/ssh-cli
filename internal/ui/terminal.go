@@ -339,7 +339,7 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 	fp := s.fingerprint(h)
 	if err := s.pool.OpenConn(r.Context(), h.Alias, fp); err != nil {
 		s.auditTerminal(h, audit.StatusConnect, "open", err.Error(), time.Now(), 0, 0)
-		writeTermFail(ws, err)
+		writeTermFail(ws, err, execFailureStatus(r.Context(), err))
 		return
 	}
 	var opened bool
@@ -355,6 +355,9 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 			return err
 		}
 		defer pty.Close()
+		if err := writeTermState(ws, "ready", "", ""); err != nil {
+			return err
+		}
 		opened = true
 		s.auditTerminal(h, audit.StatusOK, "open", "interactive terminal; command policy not applied", time.Now(), 0, 0)
 		started = time.Now()
@@ -367,7 +370,7 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 			err = errString("terminal did not start")
 		}
 		s.auditTerminal(h, status, "open", err.Error(), time.Now(), 0, 0)
-		writeTermFail(ws, err)
+		writeTermFail(ws, err, "pty")
 		return
 	}
 	status := audit.StatusOK
@@ -404,7 +407,7 @@ func (s *service) auditTerminal(h config.ResolvedHost, status, reason, summary s
 
 // writeTermFail tells the browser why the PTY never started. The socket is
 // already accepted, so a silent close looks like a healthy disconnect.
-func writeTermFail(ws *wsConn, err error) {
+func writeTermFail(ws *wsConn, err error, category string) {
 	if ws == nil || err == nil {
 		return
 	}
@@ -412,7 +415,17 @@ func writeTermFail(ws *wsConn, err error) {
 	msg = strings.ReplaceAll(msg, "\r\n", " ")
 	msg = strings.ReplaceAll(msg, "\n", " ")
 	msg = strings.ReplaceAll(msg, "\r", " ")
-	_ = ws.Write(wsText, []byte("终端连接失败: "+msg+"\r\n"))
+	_ = writeTermState(ws, "error", category, msg)
+}
+
+// Control messages use text frames; remote terminal output uses binary frames.
+// A WebSocket upgrade alone does not mean SSH authentication or PTY startup succeeded.
+func writeTermState(ws *wsConn, state, category, message string) error {
+	payload, err := json.Marshal(map[string]string{"type": "terminal", "state": state, "category": category, "message": message})
+	if err != nil {
+		return err
+	}
+	return ws.Write(wsText, payload)
 }
 
 func itoa(n int64) string {

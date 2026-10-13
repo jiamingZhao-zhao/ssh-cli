@@ -24,7 +24,7 @@ function deferred() {
 }
 function fixture() {
   const timers = [];
-  const sandbox = { AbortController, TextDecoder, TextEncoder, crypto: require('node:crypto').webcrypto,
+  const sandbox = { AbortController, TextDecoder, TextEncoder, Blob, crypto: require('node:crypto').webcrypto,
     document: { hidden: false, addEventListener() {}, getElementById() { return null; } },
     setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout(id) { timers[id - 1] = null; } };
   sandbox.window = sandbox;
@@ -187,7 +187,7 @@ test('single command double click sends once and never retries a lost reply', as
 test('terminal resize debounces, focuses on explicit switch, and ignores hidden panes', () => {
   const { app, sandbox, timers } = fixture(); let fits = 0, focuses = 0;
   const pane = { classList: { contains: () => true }, clientWidth: 800, clientHeight: 400 };
-  const entry = { id: 't', pane, ws: { readyState: 1, send: () => assert.fail('fit must not duplicate onResize') },
+  const entry = { id: 't', ready: true, pane, ws: { readyState: 1, send: () => assert.fail('fit must not duplicate onResize') },
     fit: { fit() { fits++; } }, term: { focus() { focuses++; } } };
   sandbox.entry = entry; vm.runInContext("termMap.set('t', entry)", sandbox);
   app.view = 'terminal'; app.termActive = 't';
@@ -203,6 +203,156 @@ test('incomplete command result does not clear the command or look successful', 
   await app.runExec();
   assert.equal(app.exec.command, 'echo once'); assert.equal(app.operateOut, '');
   assert.match(app.errors.operate, /未收到完整执行结果.*不要直接重复执行/);
+});
+
+function terminalFixture() {
+  const ctx = fixture(), sockets = [], output = [];
+  const { app, sandbox } = ctx;
+  sandbox.location = { protocol: 'http:', host: 'localhost' };
+  sandbox.WebSocket = class {
+    constructor() { this.readyState = 1; this.bufferedAmount = 0; this.sent = []; sockets.push(this); }
+    send(data) { this.sent.push(typeof data === 'string' ? data : Buffer.from(data)); }
+    close() { this.readyState = 3; if (this.onclose) this.onclose({ code: 1000 }); }
+  };
+  const entry = { id: 't', alias: 'a', generation: 0, ready: false, input: [], inputBytes: 0, inputTimer: 0,
+    pane: { classList: { toggle() {} }, remove() {} },
+    term: { options: {}, cols: 80, rows: 24, write(data) { output.push(data); }, dispose() { this.disposed = true; } } };
+  sandbox.entry = entry; vm.runInContext("termMap.set('t', entry)", sandbox);
+  app.termTabs = [{ id: 't', alias: 'a', state: 'closed', ordinal: 1, error: '' }]; app.termActive = 't';
+  app.postJSON = async () => ({ ticket: 'fixture' });
+  app.syncWorkspace = app.fitActive = () => {};
+  const control = (ws, state, category, message) => ws.onmessage({ data: JSON.stringify({ type: 'terminal', state, category, message }) });
+  return { ...ctx, entry, sockets, output, control };
+}
+
+test('WebSocket upgrade and terminal output cannot mark an unready PTY online', async () => {
+  const { app, entry, sockets, control } = terminalFixture();
+  await app.connectTerm(entry); const ws = sockets[0]; ws.onopen();
+  assert.equal(app.termTabs[0].state, 'connecting'); assert.equal(entry.term.options.disableStdin, true);
+  ws.onmessage({ data: new TextEncoder().encode('pre-ready data').buffer });
+  assert.equal(app.termTabs[0].state, 'connecting');
+  control(ws, 'ready');
+  assert.equal(app.termTabs[0].state, 'connected'); assert.equal(entry.term.options.disableStdin, false);
+});
+
+test('connection error keeps its category and cannot be cleared by another tab output', async () => {
+  const { app, entry, sockets, control } = terminalFixture();
+  await app.connectTerm(entry); const ws = sockets[0];
+  control(ws, 'error', 'auth', 'authentication failed'); ws.close();
+  assert.match(app.terminalError(), /认证失败/);
+  const first = app.termTabs[0];
+  app.termTabs.push({ id: 'other', alias: 'b', state: 'connected', error: '' });
+  app.markTabIdle('other');
+  assert.equal(app.termTabs[0].error, first.error);
+  app.showPane('other'); assert.equal(app.terminalError(), '');
+  app.showPane('t'); assert.match(app.terminalError(), /认证失败/);
+});
+
+test('reconnect preserves the terminal and discards old connection events and queued input', async () => {
+  const { app, entry, sockets, output, control } = terminalFixture();
+  await app.connectTerm(entry); const old = sockets[0], late = old.onmessage;
+  control(old, 'ready'); output.push('old output');
+  old.bufferedAmount = 200000; app.queueTerminalInput(entry, 'must not replay'); old.close();
+  await app.reconnectTerminal();
+  assert.equal(entry.term.disposed, undefined); assert.ok(output.includes('old output'));
+  assert.ok(output.some(text => typeof text === 'string' && text.includes('新的 shell')));
+  assert.equal(app.termTabs.length, 1); assert.equal(app.termTabs[0].id, 't');
+  assert.equal(entry.inputBytes, 0); assert.equal(sockets[1].sent.length, 0);
+  late({ data: JSON.stringify({ type: 'terminal', state: 'ready' }) });
+  assert.equal(app.termTabs[0].state, 'connecting'); control(sockets[1], 'ready');
+  assert.equal(app.termTabs[0].state, 'connected');
+});
+
+test('closing during ticket acquisition cannot create a hidden socket', async () => {
+  const { app, entry, sockets } = terminalFixture(), ticket = deferred();
+  app.postJSON = () => ticket.promise;
+  const pending = app.connectTerm(entry); app.closeTab('t');
+  ticket.resolve({ ticket: 'late' }); await pending;
+  assert.equal(sockets.length, 0); assert.equal(app.termTabs.length, 0); assert.equal(entry.term.disposed, true);
+});
+
+test('large UTF-8 paste is chunked below the server limit and preserves following input', async () => {
+  const { app, entry, sockets, control, timers } = terminalFixture();
+  await app.connectTerm(entry); control(sockets[0], 'ready');
+  const text = '中文🙂'.repeat(140000); // 1.4 MB, above the server's per-message limit.
+  app.queueTerminalInput(entry, text); app.queueTerminalInput(entry, 'pwd\r');
+  for (let i = 0; i < timers.length; i++) { assert.ok(i < 1000); if (timers[i]) timers[i](); }
+  const chunks = sockets[0].sent;
+  assert.ok(chunks.length > 1); assert.ok(chunks.every(chunk => chunk.length <= 32768));
+  assert.equal(Buffer.concat(chunks).toString('utf8'), text + 'pwd\r'); assert.equal(entry.inputBytes, 0);
+});
+
+test('input queue is bounded and an oversized paste sends no partial command', async () => {
+  const { app, entry, sockets, control } = terminalFixture();
+  await app.connectTerm(entry); control(sockets[0], 'ready');
+  app.queueTerminalInput(entry, 'x'.repeat((4 << 20) + 1));
+  assert.equal(sockets[0].sent.length, 0); assert.equal(entry.inputBytes, 0);
+  assert.match(app.toasts.at(-1).text, /本次输入未发送/);
+  sockets[0].bufferedAmount = 200000; app.queueTerminalInput(entry, 'pending');
+  assert.equal(sockets[0].sent.length, 0); assert.equal(entry.inputBytes, 7);
+  app.closeTab('t'); assert.equal(entry.inputTimer, 0); assert.equal(entry.inputBytes, 0);
+});
+
+test('closing active tab selects its neighbor; same-host labels remain distinct', () => {
+  const { app } = terminalFixture();
+  app.termTabs = [{ id: 'left', alias: 'a', ordinal: 1 }, { id: 't', alias: 'a', ordinal: 2 }, { id: 'right', alias: 'b', ordinal: 1 }, { id: 'last', alias: 'c', ordinal: 1 }];
+  assert.notEqual(app.terminalTabLabel(app.termTabs[0]), app.terminalTabLabel(app.termTabs[1]));
+  app.closeTab('t'); assert.equal(app.termActive, 'right');
+});
+
+test('ready terminal fitting does not steal focus from a form', () => {
+  const { app, sandbox, timers } = fixture(); let focuses = 0;
+  const entry = { id: 't', ready: true, pane: { clientWidth: 800, clientHeight: 400, classList: { contains: () => true }, contains: () => false },
+    fit: { fit() {} }, term: { focus() { focuses++; } } };
+  sandbox.entry = entry; vm.runInContext("termMap.set('t', entry)", sandbox);
+  sandbox.document.activeElement = { matches: () => true };
+  app.view = 'terminal'; app.termActive = 't'; app.fitActive(true); timers.at(-1)();
+  assert.equal(focuses, 0);
+});
+
+test('terminal size and collapsed file preference survive reload with bounds', () => {
+  const { app, sandbox } = fixture(); let saved = '{"termFontSize":20,"filesCollapsed":true}';
+  sandbox.localStorage = { getItem: () => saved, setItem: (_key, value) => { saved = value; } };
+  sandbox.document.documentElement = { setAttribute() {} };
+  app.applyStored(); assert.equal(app.termFontSize, 20); assert.equal(app.filesCollapsed, true);
+  app.fitActive = () => {}; app.changeTermFont(20); app.toggleFiles();
+  assert.equal(app.termFontSize, 22); assert.equal(JSON.parse(saved).filesCollapsed, false);
+  saved = '{"termFontSize":500}'; const fresh = sandbox.sshui(); fresh.applyStored(); assert.equal(fresh.termFontSize, 14);
+});
+
+test('arrow navigation switches adjacent tabs without moving focus into the shell', () => {
+  const { app, sandbox } = terminalFixture(); let focused = '', requested;
+  app.termTabs.push({ id: 'other', alias: 'b', ordinal: 1 });
+  sandbox.document.getElementById = id => ({ focus() { focused = id; } });
+  app.fitActive = value => { requested = value; };
+  app.terminalTabKey({ key: 'ArrowRight', target: { closest: () => ({}) }, preventDefault() {} });
+  assert.equal(app.termActive, 'other'); assert.equal(focused, 'tab-other'); assert.equal(requested, false);
+  app.terminalTabKey({ key: 'Home', target: { closest: () => ({}) }, preventDefault() {} });
+  assert.equal(app.termActive, 't');
+});
+
+test('explicit copy uses selected text without sending shell input', async () => {
+  const { app, entry, sandbox, sockets, control } = terminalFixture(); let copied;
+  await app.connectTerm(entry); control(sockets[0], 'ready');
+  entry.term.hasSelection = () => true; entry.term.getSelection = () => '中文输出';
+  sandbox.navigator = { clipboard: { writeText: async text => { copied = text; } } };
+  await app.copyTerminal(); assert.equal(copied, '中文输出'); assert.equal(sockets[0].sent.length, 0);
+});
+
+test('disconnect reports discarded input and reconnect never replays it', async () => {
+  const { app, entry, sockets, control } = terminalFixture();
+  await app.connectTerm(entry); control(sockets[0], 'ready');
+  sockets[0].bufferedAmount = 200000; app.queueTerminalInput(entry, 'partial command'); sockets[0].close();
+  assert.match(app.terminalError(), /部分内容可能已到达远端.*不会自动重发/);
+  assert.equal(entry.inputBytes, 0); await app.reconnectTerminal(); assert.equal(sockets[1].sent.length, 0);
+});
+
+test('reconnect snapshots a full-screen application before returning to the normal buffer', async () => {
+  const { app, entry, output } = terminalFixture();
+  entry.term.rows = 2;
+  entry.term.buffer = { active: { type: 'alternate', getLine: i => ({ translateToString: () => 'vim line ' + i }) } };
+  await app.reconnectTerminal();
+  const text = output.join(''); assert.match(text, /全屏画面.*\r\nvim line 0\r\nvim line 1/);
 });
 test('slow metrics complete before next refresh is scheduled', async () => {
   const { app, timers } = fixture(), response = deferred();

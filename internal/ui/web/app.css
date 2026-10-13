@@ -1667,7 +1667,7 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
 }
 .ws-queue-foot .ws-seg-btn { flex-shrink: 0; }
 /* xterm measures glyphs in a wide offscreen element attached to body. */
-body:has(.page.is-terminal) { overflow-x: clip; }
+html:has(.page.is-terminal), body:has(.page.is-terminal) { overflow-x: clip; }
 .ws-toasts {
   position: fixed;
   right: 1rem;
@@ -1770,3 +1770,23 @@ body:has(.page.is-terminal) { overflow-x: clip; }
 .ws-loading { margin: 0; padding: 6px 10px; color: var(--tblr-secondary, #626976); font-size: 12px; }
 .ws-freshness { margin-bottom: 4px; }
 .ws-freshness.is-stale { color: var(--tblr-warning, #b56b00); }
+.ws-term-tools { display: flex; align-items: center; gap: 6px; min-height: 30px; padding: 2px 8px; background: var(--mh-header); border-bottom: 1px solid var(--mh-line); }
+.ws-term-tools .ws-files-toggle { margin-left: auto; }
+.ws-connect-actions { flex-shrink: 0; }
+.term-tab-state { white-space: nowrap; }
+.ws-file-bar > .ws-seg { flex-shrink: 0; }
+.ws-seg-btn { white-space: nowrap; }
+.ws-upper, .ws-lower { container-type: inline-size; }
+@container (max-width: 760px) {
+  .ws-term-bar { flex-wrap: wrap; gap: 4px; }
+  .ws-term-bar .ws-tabs { flex-basis: 100%; }
+  .ws-term-bar .btn-list { flex-wrap: wrap; max-width: 100%; }
+  .ws-file-bar .ws-session-line { display: none; }
+}
+@media (min-width: 992px) {
+  .ws.files-collapsed { grid-template-rows: minmax(0, 1fr) 0 0; }
+  .ws.files-collapsed .ws-lower, .ws.files-collapsed .ws-split { display: none; }
+}
+@media (max-width: 991px) {
+  .ws-term-tools .ws-files-toggle { display: none; }
+}
