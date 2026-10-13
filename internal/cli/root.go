@@ -2,16 +2,19 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"strings"
+	"sync"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
@@ -25,17 +28,20 @@ type App struct {
 	Out io.Writer
 	Err io.Writer
 
-	ConfigFlag    string
-	JSON          bool
-	Yes           bool
-	Insecure      bool
-	AllowCrossEnv bool
-	SkipDenied    bool
-	Hosts         []string
-	Groups        []string
-	Tags          []string
-	Env           string
-	Dir           string
+	ConfigFlag       string
+	JSON             bool
+	Yes              bool
+	Insecure         bool
+	AllowCrossEnv    bool
+	SkipDenied       bool
+	Hosts            []string
+	Groups           []string
+	Tags             []string
+	Env              string
+	Dir              string
+	OperationContext context.Context
+	UseDaemon        bool
+	daemonAdmission  sync.Mutex
 }
 
 // ttyCheck reports whether an interactive console is available.
@@ -142,6 +148,9 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
+			if a.UseDaemon && cmd.Name() != "exec" {
+				return exitcode.New(exitcode.Usage, "--daemon currently supports exec only; other commands use direct connections")
+			}
 			// update installs when there is no TTY, so --yes is redundant there
 			// and must not fail. Every other command still rejects --yes without a TTY.
 			if a.Yes && !ttyCheck() && !nonInteractiveYesOK(cmd) {
@@ -152,6 +161,17 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 				return exitcode.New(exitcode.Usage, "%s", err.Error())
 			}
 			a.Dir = dir
+			switch cmd.Name() {
+			case "exec", "upload", "download", "relay", "service", "keys", "run":
+				if err := audit.Preflight(dir, audit.SourceCLI, cmd.CommandPath()); err != nil {
+					return exitcode.New(exitcode.Denied, "audit unavailable; operation not started: %s", err.Error())
+				}
+			}
+			if cmd.Parent() == nil || cmd.Parent().Name() != "audit" {
+				if err := audit.Maintain(dir); err != nil {
+					return exitcode.New(exitcode.Denied, "audit: %s", err.Error())
+				}
+			}
 			a.Hosts = splitList(a.Hosts)
 			a.Groups = splitList(a.Groups)
 			a.Tags = splitList(a.Tags)
@@ -161,6 +181,7 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 	f := root.PersistentFlags()
 	f.StringVar(&a.ConfigFlag, "config", "", "config directory (default: SSH_CLI_HOME, else %APPDATA%\\ssh-cli or ~/.config/ssh-cli)")
 	f.BoolVar(&a.JSON, "json", false, "print JSON on stdout")
+	f.BoolVar(&a.UseDaemon, "daemon", false, "reuse a running local daemon for exec; never auto-start or fall back")
 	f.BoolVar(&a.Yes, "yes", false, "skip confirmation; only valid on an interactive TTY (update installs without a TTY)")
 	f.BoolVar(&a.Insecure, "insecure-ignore-host-key", false, "do not verify host keys (escape hatch)")
 	f.BoolVar(&a.AllowCrossEnv, "allow-cross-env", false, "allow one operation to target hosts in more than one env")
@@ -180,6 +201,8 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 		a.groupCmd(),
 		a.envCmd(),
 		a.execCmd(),
+		a.elevateCmd(),
+		a.daemonCmd(),
 		a.sessionCmd(),
 		a.uploadCmd(),
 		a.downloadCmd(),

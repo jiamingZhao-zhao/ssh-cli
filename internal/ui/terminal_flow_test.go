@@ -128,6 +128,15 @@ pauseLoop:
 			t.Fatal(err)
 		}
 	}
+	// Broken control frames must neither grant credit nor kill the terminal.
+	ack(-1)
+	ack(terminalOutputWindow + 1)
+	if err := f.ws.Write(wsText, []byte(`{"type":"output_ack","bytes":"bad"}`)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.ws.Write(wsText, []byte(`{"type":"resize","cols":"bad"}`)); err != nil {
+		t.Fatal(err)
+	}
 	ack(all.Len())
 	for !bytes.Contains(all.Bytes(), []byte("INPUT-OK")) {
 		select {

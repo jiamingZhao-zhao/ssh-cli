@@ -117,10 +117,43 @@ func applyChange(sf *sftp.Client, op, src, dest string) error {
 		}
 		return sf.Rename(src, dest)
 	case "remove":
+		// Refuse an unexpectedly large tree before deleting its first entry.
+		budget := 10000
+		if err := inspectRemoval(sf, src, 0, &budget); err != nil {
+			return err
+		}
 		return removeTree(sf, src, 0)
 	default:
 		return fmt.Errorf("未知操作")
 	}
+}
+
+func inspectRemoval(sf *sftp.Client, remote string, depth int, budget *int) error {
+	*budget--
+	if depth > 64 || *budget < 0 {
+		return fmt.Errorf("删除范围超过限制（10000 项或 64 层），请拆分操作")
+	}
+	info, err := sf.Lstat(remote)
+	if err != nil {
+		return err
+	}
+	if info.Mode()&os.ModeSymlink != 0 || !info.IsDir() {
+		return nil
+	}
+	entries, err := sf.ReadDir(remote)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		name := entry.Name()
+		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\") {
+			continue
+		}
+		if err := inspectRemoval(sf, path.Join(remote, name), depth+1, budget); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func affectedPaths(sf *sftp.Client, op, src, dest string) []string {

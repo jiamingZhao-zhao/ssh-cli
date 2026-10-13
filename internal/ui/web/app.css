@@ -1788,6 +1788,11 @@ html, body { overflow-x: clip; }
 .ws-term-tools .ws-seg-btn { padding: 2px 4px; font-size: 12px; }
 .ws-term-tools .ws-quiet { font-size: 11px; }
 .ws-term-tools .ws-files-toggle { margin-left: auto; }
+.ws-upper { position: relative; }
+.ws-search { position: absolute; right: 8px; top: 42px; z-index: 12; display: flex; align-items: center; gap: 4px; max-width: calc(100% - 16px); padding: 5px; border: 1px solid var(--mh-line); background: var(--mh-header); box-shadow: 0 3px 12px #0003; border-radius: 5px; }
+.ws-search input { width: 170px; min-width: 60px; max-width: 45vw; border: 1px solid var(--mh-line); border-radius: 3px; padding: 3px 5px; background: var(--mh-bg); color: inherit; }
+.ws-search button { border: 0; background: transparent; color: inherit; min-width: 24px; min-height: 26px; }
+.ws-search span { font-size: 12px; white-space: nowrap; }
 .ws-connect-actions { flex-shrink: 0; }
 .term-tab-state { white-space: nowrap; }
 .ws-file-bar > .ws-seg { flex-shrink: 0; }

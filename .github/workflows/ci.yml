@@ -23,6 +23,8 @@ jobs:
         run: go test ./...
       - name: terminal output flow control race tests
         run: go test -race ./internal/ui -run 'TestTerminalOutput(Window|Backpressure|ExitDrains)$' -count=1
+      - name: reuse and monitoring race tests
+        run: go test -race ./internal/cli ./internal/metrics -run 'Test(DaemonReusesConnectionAndRechecksPolicy|ParallelBoundAndPartialSnapshot)$' -count=1
       - name: UI behavior regressions
         run: node --test scripts/ui.test.cjs
       - name: govulncheck
@@ -43,6 +45,9 @@ jobs:
         run: go test ./internal/ui -run 'Test(CleanPickedDir|RevealTarget|RevealDownloadAPI|PickDownloadDirAPI|WindowsPickerUTF8|WorkspaceChrome|ExecFailureStatus|OperationDedupAndIsolation|InterruptedOperationIsUnknownAndNotReplayed|TerminalDialFailureWritesReason|TerminalTabAliasIsNotNestedButton|OperationResultBudgetRetainsReplayProtection|CanceledOperationCannotReplayCompletedLookingPayload|AuditFailureDoesNotChangeRemoteResult|AuditFailureSurvivesStreamingAndPoolClose|TerminalOutputWindow|TerminalOutputBackpressure|TerminalOutputExitDrains|TransferFailureRequiresVerification)$' -count=1
       - name: UI behavior and UTF-8 regressions
         run: node --test scripts/ui.test.cjs
+      - name: safety completion regressions
+        shell: bash
+        run: go test ./internal/cli ./internal/ui ./internal/audit ./internal/transfer ./internal/metrics ./internal/guard ./internal/sshclient -run 'Test(Integrity.*|ShortPasswordRedaction|UploadReaderPreservesOriginal|DownloadCancelPreservesOriginal|RelayFailureAndSymlinkPreserveOriginal|Elevation.*|DaemonReusesConnectionAndRechecksPolicy|ParallelBoundAndPartialSnapshot|AgentAuthenticationWithoutPrivateKeyFile|SessionExpiredRejectedBeforeDispatch|AuditPreflightStopsDispatch|TransferAdmissionAndMalformedControls)$' -count=1
 
   integration:
     name: openssh integration

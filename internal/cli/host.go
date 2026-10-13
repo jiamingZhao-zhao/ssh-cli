@@ -28,6 +28,7 @@ type hostFlags struct {
 	user     string
 	identity string
 	pwStdin  bool
+	agent    bool
 	policy   string
 	tags     []string
 	via      string
@@ -47,6 +48,7 @@ func bindHostFlags(cmd *cobra.Command, f *hostFlags, add bool) {
 	cmd.Flags().StringVar(&f.user, "user", "", "login user"+req)
 	cmd.Flags().StringVar(&f.identity, "identity", "", "private key path (unencrypted)")
 	cmd.Flags().BoolVar(&f.pwStdin, "password-stdin", false, "read the password from stdin")
+	cmd.Flags().BoolVar(&f.agent, "agent", false, "authenticate using local SSH_AUTH_SOCK (no forwarding)")
 	cmd.Flags().StringVar(&f.policy, "policy", "", "named policy")
 	cmd.Flags().StringArrayVar(&f.tags, "tag", nil, "tag (repeatable; replaces tags on edit)")
 	cmd.Flags().StringVar(&f.via, "via", "", "already registered jump host; the shell still runs on this host")
@@ -65,6 +67,9 @@ func (a *App) hostAdd() *cobra.Command {
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			alias := args[0]
+			if f.agent && (f.pwStdin || f.identity != "") {
+				return exitcode.New(exitcode.Usage, "--agent cannot be combined with --identity or --password-stdin")
+			}
 			if f.group == "" || f.address == "" || f.user == "" {
 				return exitcode.New(exitcode.Usage, "--group, --host, and --user are required")
 			}
@@ -80,6 +85,7 @@ func (a *App) hostAdd() *cobra.Command {
 				Address:    f.address,
 				User:       f.user,
 				Identity:   f.identity,
+				Agent:      f.agent,
 				Policy:     f.policy,
 				Tags:       splitList(f.tags),
 				Via:        strings.TrimSpace(f.via),
@@ -89,7 +95,7 @@ func (a *App) hostAdd() *cobra.Command {
 				p := f.port
 				draft.Port = &p
 			}
-			if f.identity == "" {
+			if f.identity == "" && !f.agent {
 				pw, err := readPassword(a.In, a.Err, f.pwStdin)
 				if err != nil {
 					return err
@@ -188,6 +194,12 @@ func (a *App) hostEdit() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			alias := args[0]
 			draft := catalog.HostDraft{Alias: alias}
+			if cmd.Flags().Changed("agent") {
+				if !f.agent || f.pwStdin || cmd.Flags().Changed("identity") {
+					return exitcode.New(exitcode.Usage, "use --agent alone, or --identity/--password-stdin to change auth")
+				}
+				draft.Agent, draft.HasAgent = true, true
+			}
 			if cmd.Flags().Changed("group") {
 				draft.HasGroup = true
 				draft.Group = f.group

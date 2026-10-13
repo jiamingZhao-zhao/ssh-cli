@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"time"
 )
 
 const (
@@ -31,7 +32,22 @@ func (s *service) apiSession(w http.ResponseWriter, r *http.Request) {
 	sid, csrf := newToken(), newToken()
 	s.mu.Lock()
 	s.ensureSessions()
+	if s.sessionSeen == nil {
+		s.sessionSeen = map[string]time.Time{}
+	}
+	for id, seen := range s.sessionSeen {
+		if time.Since(seen) > 24*time.Hour {
+			delete(s.sessions, id)
+			delete(s.sessionSeen, id)
+		}
+	}
+	if len(s.sessions) >= 1024 {
+		s.mu.Unlock()
+		writeErr(w, http.StatusTooManyRequests, "too many UI sessions")
+		return
+	}
 	s.sessions[sid] = csrf
+	s.sessionSeen[sid] = time.Now()
 	s.mu.Unlock()
 	http.SetCookie(w, &http.Cookie{
 		Name:     sessionCookie,
@@ -54,6 +70,9 @@ func (s *service) sessionCSRF(r *http.Request) (string, bool) {
 	csrf := s.sessions[c.Value]
 	if csrf == "" {
 		return "", false
+	}
+	if s.sessionSeen != nil {
+		s.sessionSeen[c.Value] = time.Now()
 	}
 	return csrf, true
 }
@@ -105,6 +124,9 @@ func (s *service) authorize(w http.ResponseWriter, r *http.Request) bool {
 		return false
 	}
 	if !s.csrfOK(r) {
+		// Machine-readable and only emitted before dispatch; safe to refresh
+		// credentials and retry this rejected request once.
+		w.Header().Set("X-SSH-CLI-Session-Expired", "1")
 		http.Error(w, "csrf token required", http.StatusForbidden)
 		return false
 	}

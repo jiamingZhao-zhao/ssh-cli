@@ -2,6 +2,7 @@ package transfer
 
 import (
 	"bytes"
+	"context"
 	"crypto/md5"
 	"crypto/sha256"
 	"encoding/hex"
@@ -24,6 +25,21 @@ type RelayResult struct {
 // It hashes the stream and checks sha256sum on the destination, falling back
 // to md5sum. Paths are quoted for the remote checksum command.
 func Relay(src, dst *ssh.Client, srcPath, dstPath string) (RelayResult, error) {
+	return RelayWithOptions(src, dst, srcPath, dstPath, UploadOptions{})
+}
+
+// RelayWithOptions stages and verifies a remote copy before replacing its target.
+// Cancellation owns both connections, as with UploadWithOptions.
+func RelayWithOptions(src, dst *ssh.Client, srcPath, dstPath string, opt UploadOptions) (RelayResult, error) {
+	ctx := opt.Context
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return RelayResult{}, err
+	}
+	stop := context.AfterFunc(ctx, func() { _ = src.Close(); _ = dst.Close() })
+	defer stop()
 	srcPath = RestoreRemotePath(srcPath)
 	dstPath = RestoreRemotePath(dstPath)
 	sfSrc, err := Client(src)
@@ -41,41 +57,36 @@ func Relay(src, dst *ssh.Client, srcPath, dstPath string) (RelayResult, error) {
 		return RelayResult{}, err
 	}
 	defer in.Close()
-	if dir := pathDir(dstPath); dir != "" && dir != "." && dir != "/" {
-		if err := sfDst.MkdirAll(dir); err != nil {
-			return RelayResult{}, err
-		}
-	}
-	out, err := sfDst.Create(dstPath)
+	// A relay destination is an explicit file path, never a directory shorthand.
+	dest, check, err := streamDestination(sfDst, dstPath, "", opt)
 	if err != nil {
 		return RelayResult{}, err
 	}
 	sha := sha256.New()
 	md := md5.New()
-	n, copyErr := io.Copy(out, io.TeeReader(in, io.MultiWriter(sha, md)))
-	closeErr := out.Close()
-	if copyErr != nil {
-		return RelayResult{}, copyErr
-	}
-	if closeErr != nil {
-		return RelayResult{}, closeErr
-	}
-	localSHA := hex.EncodeToString(sha.Sum(nil))
-	localMD5 := hex.EncodeToString(md.Sum(nil))
-	if remote, err := remoteSum(dst, "sha256sum", dstPath); err == nil {
-		if !strings.EqualFold(remote, localSHA) {
-			return RelayResult{}, fmt.Errorf("relay checksum mismatch")
+	result := RelayResult{}
+	prog := &byteProgress{fn: func(done, _ int64) { result.Bytes = done }}
+	verify := func(tmp string) error {
+		result.Algo, result.Sum = "sha256", hex.EncodeToString(sha.Sum(nil))
+		remote, err := remoteSum(dst, result.Algo+"sum", tmp)
+		if err != nil {
+			result.Algo, result.Sum = "md5", hex.EncodeToString(md.Sum(nil))
+			remote, err = remoteSum(dst, "md5sum", tmp)
 		}
-		return RelayResult{Bytes: n, Algo: "sha256", Sum: localSHA}, nil
+		if err != nil {
+			return fmt.Errorf("relay checksum: %w", err)
+		}
+		if !strings.EqualFold(remote, result.Sum) {
+			return fmt.Errorf("relay checksum mismatch")
+		}
+		return nil
 	}
-	remote, err := remoteSum(dst, "md5sum", dstPath)
+	err = uploadReader(sfDst, io.TeeReader(in, io.MultiWriter(sha, md)), dest, 0o600, nil, opt.RejectOverwrite, check, prog, verify)
+	prog.report(true)
 	if err != nil {
-		return RelayResult{}, fmt.Errorf("relay checksum: %w", err)
+		return RelayResult{}, err
 	}
-	if !strings.EqualFold(remote, localMD5) {
-		return RelayResult{}, fmt.Errorf("relay checksum mismatch")
-	}
-	return RelayResult{Bytes: n, Algo: "md5", Sum: localMD5}, nil
+	return result, nil
 }
 
 func pathDir(p string) string {

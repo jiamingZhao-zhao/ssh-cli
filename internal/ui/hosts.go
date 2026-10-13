@@ -22,6 +22,8 @@ type HostDraft struct {
 	User       string
 	Password   string
 	Identity   string
+	Agent      bool
+	HasAgent   bool
 	Policy     string
 	Tags       []string
 	Via        string
@@ -49,6 +51,9 @@ type HostDraft struct {
 
 // AddHost creates one host. A password is stored through secrets.Store.
 func AddHost(dir string, in HostDraft) error {
+	if in.Agent && (in.Password != "" || strings.TrimSpace(in.Identity) != "") {
+		return fmt.Errorf("agent auth cannot be combined with password or identity")
+	}
 	alias := strings.TrimSpace(in.Alias)
 	if !config.ValidName(alias) {
 		return fmt.Errorf("invalid host alias")
@@ -65,7 +70,7 @@ func AddHost(dir string, in HostDraft) error {
 	if err := checkPortPtr(in.Port); err != nil {
 		return err
 	}
-	if in.Password == "" && strings.TrimSpace(in.Identity) == "" {
+	if in.Password == "" && strings.TrimSpace(in.Identity) == "" && !in.Agent {
 		return fmt.Errorf("password or identity is required")
 	}
 	password := in.Password
@@ -96,7 +101,9 @@ func AddHost(dir string, in HostDraft) error {
 			Deny:    append([]string(nil), in.Deny...),
 			Confirm: append([]string(nil), in.Confirm...),
 		}
-		if strings.TrimSpace(in.Identity) != "" {
+		if in.Agent {
+			h.Auth = "agent"
+		} else if strings.TrimSpace(in.Identity) != "" {
 			h.Auth = "key"
 			h.Identity = strings.TrimSpace(in.Identity)
 		} else {
@@ -119,6 +126,9 @@ func AddHost(dir string, in HostDraft) error {
 
 // UpdateHost edits one host. An empty password field does not change the secret.
 func UpdateHost(dir string, in HostDraft) error {
+	if in.Agent && (in.Password != "" || strings.TrimSpace(in.Identity) != "") {
+		return fmt.Errorf("agent auth cannot be combined with password or identity")
+	}
 	alias := strings.TrimSpace(in.Alias)
 	if alias == "" {
 		return fmt.Errorf("alias is required")
@@ -129,7 +139,7 @@ func UpdateHost(dir string, in HostDraft) error {
 	if err := checkPortPtr(in.Port); err != nil {
 		return err
 	}
-	changed := in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
+	changed := in.HasAgent || in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
 		in.HasPassword || in.HasPolicy || in.HasTags || in.HasVia || in.HasAllow || in.HasDeny || in.HasConfirm ||
 		in.SetDefault || in.ClearTags
 	if !changed {
@@ -221,6 +231,9 @@ func UpdateHost(dir string, in HostDraft) error {
 			return err
 		}
 		dirty := false
+		if in.HasAgent && in.Agent {
+			h.Auth, h.Identity, h.PasswordRef = "agent", "", ""
+		}
 		if in.HasIdentity && strings.TrimSpace(in.Identity) != "" {
 			h.Auth = "key"
 			h.Identity = strings.TrimSpace(in.Identity)

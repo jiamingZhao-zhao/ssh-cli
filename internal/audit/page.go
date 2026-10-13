@@ -28,7 +28,7 @@ type Stats struct {
 }
 
 // QueryPage returns one page of matches, newest first.
-// It streams twice and keeps only the page in memory.
+// It reads each matching day once, newest first, keeping only one page.
 func QueryPage(dir string, f Filter, page, size int) (Page, error) {
 	if page < 1 {
 		page = 1
@@ -39,44 +39,52 @@ func QueryPage(dir string, f Filter, page, size int) (Page, error) {
 	if size > MaxPageSize {
 		size = MaxPageSize
 	}
-	total := 0
-	err := List(dir, f, func(Record) error {
-		total++
-		return nil
-	})
+	files, err := dataFiles(dir)
 	if err != nil {
 		return Page{}, err
 	}
-	out := Page{Page: page, PageSize: size, Total: total, Records: []Record{}}
-	start := total - page*size
-	take := size
-	if start < 0 {
-		take += start
-		start = 0
+	out := Page{Page: page, PageSize: size, Records: []Record{}}
+	// Avoid arithmetic overflow even for malformed API page parameters.
+	start := int64(page-1) * int64(size)
+	if start < 0 || start/int64(size) != int64(page-1) {
+		start = 1<<63 - 1
 	}
-	if take <= 0 {
-		return out, nil
-	}
-	seen := 0
-	var window []Record
-	err = List(dir, f, func(rec Record) error {
-		if seen < start {
-			seen++
-			return nil
+	for i := len(files) - 1; i >= 0; i-- {
+		day, ok := fileDay(files[i])
+		if !ok {
+			continue
 		}
-		if len(window) < take {
-			window = append(window, rec)
+		if f.HasSince && day.Before(dayStart(f.Since)) {
+			continue
 		}
-		return nil
-	})
-	if err != nil {
-		return Page{}, err
-	}
-	for i, j := 0, len(window)-1; i < j; i, j = i+1, j-1 {
-		window[i], window[j] = window[j], window[i]
-	}
-	if window != nil {
-		out.Records = window
+		if f.HasUntil && day.After(dayStart(f.Until)) {
+			continue
+		}
+		info, err := os.Stat(files[i])
+		if err != nil {
+			return Page{}, err
+		}
+		key := countKey(files[i], f)
+		if n, ok := cachedCount(key, info); ok && (int64(out.Total+n) <= start || len(out.Records) == size) {
+			out.Total += n
+			continue
+		}
+		before := out.Total
+		err = scanReverse(files[i], func(rec Record) {
+			if _, ok := matchTime(rec, f); !ok || !matchFields(rec, f) {
+				return
+			}
+			if int64(out.Total) >= start && len(out.Records) < size {
+				out.Records = append(out.Records, rec)
+			}
+			out.Total++
+		})
+		if err != nil {
+			return Page{}, err
+		}
+		if after, err := os.Stat(files[i]); err == nil && after.Size() == info.Size() && after.ModTime().Equal(info.ModTime()) {
+			rememberCount(key, info, out.Total-before)
+		}
 	}
 	return out, nil
 }
@@ -105,12 +113,21 @@ func Stat(dir string) (Stats, error) {
 			return Stats{}, err
 		}
 		st.Bytes += info.Size()
+		key := countKey(path, Filter{})
+		if n, ok := cachedCount(key, info); ok {
+			st.Entries += n
+			continue
+		}
+		before := st.Entries
 		_, err = scanFile(path, -1, func(Record) (bool, error) {
 			st.Entries++
 			return false, nil
 		})
 		if err != nil {
 			return Stats{}, err
+		}
+		if after, err := os.Stat(path); err == nil && after.Size() == info.Size() && after.ModTime().Equal(info.ModTime()) {
+			rememberCount(key, info, st.Entries-before)
 		}
 	}
 	return st, nil

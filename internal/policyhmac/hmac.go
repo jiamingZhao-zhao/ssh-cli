@@ -196,6 +196,7 @@ func checksum(domain string, master, msg []byte) []byte {
 }
 
 type canon struct {
+	Audit    *config.AuditSettings  `json:"audit,omitempty"`
 	Policies map[string]policyCanon `json:"policies,omitempty"`
 	Envs     map[string]envCanon    `json:"envs,omitempty"`
 	Groups   map[string]groupCanon  `json:"groups,omitempty"`
@@ -211,9 +212,10 @@ type policyCanon struct {
 }
 
 type envCanon struct {
-	MaxMode       string `json:"maxMode,omitempty"`
-	DefaultPolicy string `json:"defaultPolicy,omitempty"`
-	NoDataOutflow bool   `json:"noDataOutflow,omitempty"`
+	BreakGlass    *config.BreakGlass `json:"breakGlass,omitempty"`
+	MaxMode       string             `json:"maxMode,omitempty"`
+	DefaultPolicy string             `json:"defaultPolicy,omitempty"`
+	NoDataOutflow bool               `json:"noDataOutflow,omitempty"`
 }
 
 type groupCanon struct {
@@ -244,6 +246,7 @@ type hostCanon struct {
 func canonical(cfg *config.Config) []byte {
 	c := canon{}
 	if cfg != nil {
+		c.Audit = cfg.Audit
 		for name, p := range cfg.Policies {
 			if p == nil {
 				continue
@@ -263,7 +266,7 @@ func canonical(cfg *config.Config) []byte {
 			if c.Envs == nil {
 				c.Envs = map[string]envCanon{}
 			}
-			c.Envs[name] = envCanon{MaxMode: string(e.MaxMode), DefaultPolicy: e.DefaultPolicy, NoDataOutflow: e.NoDataOutflow}
+			c.Envs[name] = envCanon{BreakGlass: e.BreakGlass, MaxMode: string(e.MaxMode), DefaultPolicy: e.DefaultPolicy, NoDataOutflow: e.NoDataOutflow}
 		}
 		for name, g := range cfg.Groups {
 			if g == nil {

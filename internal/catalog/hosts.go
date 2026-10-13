@@ -31,6 +31,7 @@ type HostDraft struct {
 	User       string
 	Password   string
 	Identity   string
+	Agent      bool
 	Policy     string
 	Tags       []string
 	Via        string
@@ -44,6 +45,7 @@ type HostDraft struct {
 	HasUser     bool
 	HasPassword bool
 	HasIdentity bool
+	HasAgent    bool
 	HasPolicy   bool
 	HasTags     bool
 	HasVia      bool
@@ -68,13 +70,16 @@ func addHost(dir string, cfg *config.Config, in HostDraft, opt Options) error {
 		return fmt.Errorf("group, host, and user are required")
 	}
 	identity := strings.TrimSpace(in.Identity)
+	if in.Agent && (in.Password != "" || identity != "") {
+		return fmt.Errorf("agent auth cannot be combined with password or identity")
+	}
 	if in.Password != "" && identity != "" {
 		return fmt.Errorf("pass only one of password and identity")
 	}
 	if err := checkPortPtr(in.Port); err != nil {
 		return err
 	}
-	if in.Password == "" && identity == "" {
+	if in.Password == "" && identity == "" && !in.Agent {
 		return fmt.Errorf("password or identity is required")
 	}
 	via := strings.TrimSpace(in.Via)
@@ -99,7 +104,9 @@ func addHost(dir string, cfg *config.Config, in HostDraft, opt Options) error {
 		Policy: in.Policy,
 		Via:    via,
 	}
-	if identity != "" {
+	if in.Agent {
+		h.Auth = "agent"
+	} else if identity != "" {
 		h.Auth = "key"
 		h.Identity = identity
 	} else {
@@ -145,7 +152,10 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) ([]co
 	if err := checkPortPtr(in.Port); err != nil {
 		return nil, err
 	}
-	changed := in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
+	if in.Agent && (in.Password != "" || in.HasIdentity) {
+		return nil, fmt.Errorf("agent auth cannot be combined with password or identity")
+	}
+	changed := in.HasAgent || in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
 		in.HasPassword || in.HasPolicy || in.HasTags || in.HasVia || in.ClearVia ||
 		in.SetDefault || in.ClearTags
 	if !changed {
@@ -229,6 +239,9 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) ([]co
 		return nil, err
 	}
 	dirty := false
+	if in.HasAgent && in.Agent {
+		h.Auth, h.Identity, h.PasswordRef = "agent", "", ""
+	}
 	if in.HasIdentity && strings.TrimSpace(in.Identity) != "" {
 		h.Auth = "key"
 		h.Identity = strings.TrimSpace(in.Identity)

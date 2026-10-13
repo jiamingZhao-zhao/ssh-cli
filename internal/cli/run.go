@@ -145,7 +145,11 @@ func (a *App) dialDirect(h config.ResolvedHost, commandTimeout time.Duration) (*
 	addr := net.JoinHostPort(h.Host.Host, strconv.Itoa(h.Host.PortOrDefault()))
 	kh := sshclient.HostKeyCallback(filepath.Join(a.Dir, config.KnownHostsName), a.Insecure)
 	limit := dialBudget(commandTimeout)
-	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	parent := a.OperationContext
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, limit)
 	defer cancel()
 	c, err := sshclient.Dial(ctx, addr, h.Host.User, auth, kh, limit)
 	if err != nil {
@@ -182,7 +186,11 @@ func (a *App) dialVia(h config.ResolvedHost, commandTimeout time.Duration) (*ssh
 		})
 	}
 	limit := dialBudget(commandTimeout)
-	ctx, cancel := context.WithTimeout(context.Background(), limit)
+	parent := a.OperationContext
+	if parent == nil {
+		parent = context.Background()
+	}
+	ctx, cancel := context.WithTimeout(parent, limit)
 	defer cancel()
 	c, err := sshclient.DialHops(ctx, hops, limit)
 	if err != nil {
@@ -193,6 +201,12 @@ func (a *App) dialVia(h config.ResolvedHost, commandTimeout time.Duration) (*ssh
 
 func (a *App) auth(h config.ResolvedHost) ([]ssh.AuthMethod, error) {
 	switch h.Host.Auth {
+	case "agent":
+		method, err := sshclient.AgentAuth()
+		if err != nil {
+			return nil, exitcode.New(exitcode.Auth, "%s", err.Error())
+		}
+		return []ssh.AuthMethod{method}, nil
 	case "key":
 		if h.Host.Identity == "" {
 			return nil, exitcode.New(exitcode.Usage, "host %s: auth is key but identity is empty", h.Alias)

@@ -204,6 +204,10 @@ func execFailureStatus(ctx context.Context, err error) string {
 }
 
 func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
+	if !s.beginTransfer(w) {
+		return
+	}
+	defer s.endTransfer()
 	// No byte cap: the browser can only hand over the file bytes, then this
 	// process writes them with transfer.UploadWithOptions, the same SFTP path
 	// the CLI uses. Multipart spills past 32MiB onto disk instead of a blob.
@@ -235,24 +239,6 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	dir, err := os.MkdirTemp("", "ssh-cli-upload-*")
-	if err != nil {
-		writeFail(w, err)
-		return
-	}
-	defer os.RemoveAll(dir)
-	tmpName := filepath.Join(dir, name)
-	tmp, err := os.OpenFile(tmpName, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		writeFail(w, err)
-		return
-	}
-	if _, err := io.Copy(tmp, file); err != nil {
-		_ = tmp.Close()
-		writeFail(w, err)
-		return
-	}
-	_ = tmp.Close()
 	s.reconcile()
 	client, err := s.dialResolved(r.Context(), h)
 	if err != nil {
@@ -262,7 +248,7 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 	}
 	defer client.Close()
 	sink := newProgressSink(w, wantsProgress(r))
-	err = transfer.UploadWithOptions(client.Raw(), tmpName, remote, nil, transfer.UploadOptions{Context: r.Context(), Protected: eff.Protected, RejectOverwrite: r.FormValue("overwrite") != "true", Progress: sink.report, Check: func(dest string, protected []string) error {
+	err = transfer.UploadReaderWithOptions(client.Raw(), file, name, hdr.Size, remote, transfer.UploadOptions{Context: r.Context(), Protected: eff.Protected, RejectOverwrite: r.FormValue("overwrite") != "true", Progress: sink.report, Check: func(dest string, protected []string) error {
 		resolved := eff
 		resolved.Protected = protected
 		d := guard.DecideCapability(resolved, "upload", dest)
@@ -321,6 +307,10 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
+	if !s.beginTransfer(w) {
+		return
+	}
+	defer s.endTransfer()
 	var body struct {
 		Alias   string `json:"alias"`
 		Path    string `json:"path"`
@@ -517,6 +507,10 @@ type capabilityError string
 func (e capabilityError) Error() string { return string(e) }
 
 func (s *service) relayAPI(w http.ResponseWriter, r *http.Request) {
+	if !s.beginTransfer(w) {
+		return
+	}
+	defer s.endTransfer()
 	var body struct {
 		From     string `json:"from"`
 		FromPath string `json:"fromPath"`
@@ -568,16 +562,46 @@ func (s *service) relayAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	defer dstClient.Close()
-	res, err := transfer.Relay(srcClient.Raw(), dstClient.Raw(), body.FromPath, body.ToPath)
+	res, err := transfer.RelayWithOptions(srcClient.Raw(), dstClient.Raw(), body.FromPath, body.ToPath, transfer.UploadOptions{Context: ctx, Protected: dstEff.Protected, Check: func(dest string, protected []string) error {
+		resolved := dstEff
+		resolved.Protected = protected
+		d := guard.DecideRelay(srcEff, resolved, src.EnvName, dst.EnvName, dest, body.CrossEnv)
+		if !d.Allowed {
+			return capabilityError(decisionText(d))
+		}
+		if d.NeedsConfirm && body.Confirm != dst.Alias {
+			return errNeedConfirm{}
+		}
+		return nil
+	}})
 	if err != nil {
+		var need errNeedConfirm
+		if errors.As(err, &need) {
+			writeJSON(w, http.StatusConflict, map[string]any{"ok": false, "needsConfirm": true, "confirm": dst.Alias, "error": need.Error()})
+			return
+		}
 		s.writeAudit(w, dst, audit.OpRelay, "", body.From+":"+body.FromPath, body.To+":"+body.ToPath, audit.StatusError, 0, err.Error(), err.Error(), false, started)
-		writeFail(w, err)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error(), "outcome": "unknown", "retrySafe": false})
 		return
 	}
 	summary := fmt.Sprintf("relay %s %d bytes", res.Algo, res.Bytes)
 	s.writeAudit(w, dst, audit.OpRelay, "", body.From+":"+body.FromPath, body.To+":"+body.ToPath, audit.StatusOK, 0, summary, "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "bytes": res.Bytes, "algo": res.Algo, "sum": res.Sum})
 }
+
+// Bound resource use across browser tabs and direct API clients, before parsing.
+func (s *service) beginTransfer(w http.ResponseWriter) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.activeTransfers >= 2 {
+		writeJSON(w, http.StatusTooManyRequests, map[string]any{"ok": false, "error": "本机传输忙，请等待已有任务结束。", "outcome": "not_started", "retrySafe": true})
+		return false
+	}
+	s.activeTransfers++
+	return true
+}
+
+func (s *service) endTransfer() { s.mu.Lock(); s.activeTransfers--; s.mu.Unlock() }
 
 func (s *service) sessionsAPI(w http.ResponseWriter, r *http.Request) {
 	s.reconcile()

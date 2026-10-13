@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/fsutil"
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 )
@@ -326,16 +327,21 @@ func download(client *ssh.Client, remote, local string, log LogFunc, progress fu
 }
 
 func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error, prog *byteProgress) error {
-	if dir := path.Dir(remote); dir != "" && dir != "." {
-		if err := sf.MkdirAll(dir); err != nil {
-			return fmt.Errorf("mkdir %s: %w", dir, err)
-		}
-	}
 	src, err := os.Open(local)
 	if err != nil {
 		return err
 	}
 	defer src.Close()
+	return uploadReader(sf, src, remote, mode, log, rejectOverwrite, check, prog, nil)
+}
+
+// uploadReader commits only after the entire stream and optional verification succeed.
+func uploadReader(sf *sftp.Client, src io.Reader, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error, prog *byteProgress, verify func(string) error) error {
+	if dir := path.Dir(remote); dir != "" && dir != "." {
+		if err := sf.MkdirAll(dir); err != nil {
+			return fmt.Errorf("mkdir %s: %w", dir, err)
+		}
+	}
 	var nonce [16]byte
 	if _, err := rand.Read(nonce[:]); err != nil {
 		return err
@@ -358,6 +364,11 @@ func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log Log
 	}
 	if closeErr != nil {
 		return closeErr
+	}
+	if verify != nil {
+		if err := verify(tmp); err != nil {
+			return err
+		}
 	}
 	if err := sf.Chmod(tmp, mode.Perm()); err != nil {
 		note(log, fmt.Sprintf("chmod %s: %v", remote, err))
@@ -422,11 +433,23 @@ func downloadFile(sf *sftp.Client, remote, local string, mode os.FileMode, log L
 		return err
 	}
 	defer src.Close()
-	dst, err := os.OpenFile(local, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode.Perm())
+	// Never expose a partial download under its final name or truncate an original.
+	// Lstat rejects symlinks; the parent directory must remain locally trusted.
+	if st, err := os.Lstat(local); err == nil && !st.Mode().IsRegular() {
+		return fmt.Errorf("refusing to replace non-regular local file %s", local)
+	} else if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	dst, err := os.CreateTemp(filepath.Dir(local), ".ssh-cli-download-*")
 	if err != nil {
 		return err
 	}
+	tmp := dst.Name()
+	defer os.Remove(tmp)
 	copyErr := copyWithProgress(dst, src, prog)
+	if copyErr == nil {
+		copyErr = dst.Sync()
+	}
 	closeErr := dst.Close()
 	if copyErr != nil {
 		return copyErr
@@ -434,10 +457,10 @@ func downloadFile(sf *sftp.Client, remote, local string, mode os.FileMode, log L
 	if closeErr != nil {
 		return closeErr
 	}
-	if err := os.Chmod(local, mode.Perm()); err != nil {
-		note(log, fmt.Sprintf("chmod %s: %v", local, err))
+	if err := os.Chmod(tmp, mode.Perm()); err != nil {
+		return err
 	}
-	return nil
+	return fsutil.Replace(tmp, local)
 }
 
 // byteProgress throttles progress callbacks. A nil receiver or nil fn is a no-op.

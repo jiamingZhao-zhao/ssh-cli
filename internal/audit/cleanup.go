@@ -44,6 +44,15 @@ func Cleanup(dir string, minAge time.Duration, now time.Time) (CleanupResult, er
 		if err != nil {
 			return err
 		}
+		state, key, err := loadIntegrity(dir)
+		if err != nil {
+			return err
+		}
+		if state != nil {
+			if err := verifyIntegrity(dir, state, key); err != nil {
+				return err
+			}
+		}
 		for _, path := range files {
 			day, ok := fileDay(path)
 			if !ok {
@@ -62,12 +71,18 @@ func Cleanup(dir string, minAge time.Duration, now time.Time) (CleanupResult, er
 				if err := os.Remove(path); err != nil {
 					return err
 				}
+				if state != nil {
+					delete(state.Files, filepath.Base(path))
+					if err := saveIntegrity(dir, state, key); err != nil {
+						return err
+					}
+				}
 				result.Removed += removed
 				result.FilesDeleted++
 				result.BytesFreed += info.Size()
 				continue
 			}
-			if !day.Before(cutoff) {
+			if !day.Before(cutoff) || state != nil {
 				n, err := countLines(path)
 				if err != nil {
 					return err

@@ -15,6 +15,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 )
 
@@ -29,6 +30,55 @@ exec, upload, and download write a record even when policy denies the attempt, t
 --host, --group, --env, and --json are the global flags.`,
 	}
 	cmd.AddCommand(a.auditList(), a.auditShow(), a.auditTail(), a.auditStats(), a.auditCleanup())
+	var retention int
+	var requireWritable bool
+	configure := &cobra.Command{Use: "configure", Short: "Configure explicit audit retention and write admission", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if !cmd.Flags().Changed("retention-days") && !cmd.Flags().Changed("require-writable") {
+			return exitcode.New(exitcode.Usage, "set --retention-days or --require-writable")
+		}
+		if retention != 0 && (retention < 30 || retention > 3650) {
+			return exitcode.New(exitcode.Usage, "retention must be 0 (disabled) or 30..3650 days")
+		}
+		if !ttyCheck() || a.Yes {
+			return exitcode.New(exitcode.Denied, "audit configure requires typed TTY confirmation")
+		}
+		fmt.Fprintln(a.Err, "Retention deletes whole expired day files on later process starts. Zero disables automatic deletion.")
+		if err := confirmAlias("audit-configure", false); err != nil {
+			return err
+		}
+		return config.Update(a.Dir, func(cfg *config.Config) error {
+			if cfg.Audit == nil {
+				cfg.Audit = &config.AuditSettings{}
+			}
+			if cmd.Flags().Changed("retention-days") {
+				cfg.Audit.RetentionDays = retention
+			}
+			if cmd.Flags().Changed("require-writable") {
+				cfg.Audit.RequireWritable = requireWritable
+			}
+			return nil
+		})
+	}}
+	configure.Flags().IntVar(&retention, "retention-days", 0, "0 disables automatic deletion; otherwise retain at least 30 days")
+	configure.Flags().BoolVar(&requireWritable, "require-writable", false, "refuse new remote operations if audit admission cannot be persisted")
+	cmd.AddCommand(configure)
+	cmd.AddCommand(&cobra.Command{Use: "protect", Short: "Enable HMAC integrity using the current log as a baseline", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if !ttyCheck() {
+			return exitcode.New(exitcode.Denied, "audit protect requires an interactive TTY")
+		}
+		if err := confirmAlias("audit-protect", false); err != nil {
+			return err
+		}
+		if err := audit.Protect(a.Dir); err != nil {
+			return err
+		}
+		return a.emit(map[string]any{"ok": true, "integrity": true, "notice": "Keep a trusted external copy of audit/integrity.json; local HMAC does not prevent key theft or whole-state rollback."})
+	}}, &cobra.Command{Use: "verify", Short: "Verify audit chains against the signed checkpoint", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		if err := audit.VerifyIntegrity(a.Dir); err != nil {
+			return exitcode.New(exitcode.Denied, "%s", err.Error())
+		}
+		return a.emit(map[string]any{"ok": true, "integrity": "verified"})
+	}})
 	return cmd
 }
 
