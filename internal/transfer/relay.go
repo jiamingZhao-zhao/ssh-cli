@@ -57,10 +57,21 @@ func RelayWithOptions(src, dst *ssh.Client, srcPath, dstPath string, opt UploadO
 		return RelayResult{}, err
 	}
 	defer in.Close()
+	info, err := in.Stat()
+	if err != nil {
+		return RelayResult{}, err
+	}
+	if !info.Mode().IsRegular() {
+		return RelayResult{}, fmt.Errorf("relay source must be a regular file")
+	}
 	// A relay destination is an explicit file path, never a directory shorthand.
 	dest, check, err := streamDestination(sfDst, dstPath, "", opt)
 	if err != nil {
 		return RelayResult{}, err
+	}
+	mode := info.Mode().Perm()
+	if existing, err := sfDst.Lstat(dest); err == nil {
+		mode = existing.Mode().Perm()
 	}
 	sha := sha256.New()
 	md := md5.New()
@@ -81,7 +92,7 @@ func RelayWithOptions(src, dst *ssh.Client, srcPath, dstPath string, opt UploadO
 		}
 		return nil
 	}
-	err = uploadReader(sfDst, io.TeeReader(in, io.MultiWriter(sha, md)), dest, 0o600, nil, opt.RejectOverwrite, check, prog, verify)
+	err = uploadReader(sfDst, io.TeeReader(in, io.MultiWriter(sha, md)), dest, mode, nil, opt.RejectOverwrite, check, prog, verify)
 	prog.report(true)
 	if err != nil {
 		return RelayResult{}, err

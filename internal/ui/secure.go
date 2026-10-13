@@ -207,10 +207,15 @@ func (s *service) csrfOK(r *http.Request) bool {
 	if s.sessions != nil {
 		want = s.sessions[c.Value]
 	}
-	s.mu.Unlock()
 	got := r.Header.Get(csrfHeader)
 	if want == "" || len(got) != len(want) {
+		s.mu.Unlock()
 		return false
 	}
-	return subtle.ConstantTimeCompare([]byte(want), []byte(got)) == 1
+	ok := subtle.ConstantTimeCompare([]byte(want), []byte(got)) == 1
+	if ok && s.sessionSeen != nil {
+		s.sessionSeen[c.Value] = time.Now()
+	}
+	s.mu.Unlock()
+	return ok
 }

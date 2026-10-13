@@ -289,10 +289,11 @@ func Maintain(dir string) error {
 	if settings.RetentionDays == 0 {
 		return nil
 	}
-	cutoff := time.Now().AddDate(0, 0, -settings.RetentionDays)
+	now := time.Now()
+	cutoff := now.AddDate(0, 0, -settings.RetentionDays)
 	// Align to midnight so Cleanup never rewrites a retained chain's boundary day.
 	cutoff = time.Date(cutoff.Year(), cutoff.Month(), cutoff.Day(), 0, 0, 0, 0, cutoff.Location())
-	result, err := Cleanup(dir, time.Since(cutoff), time.Now())
+	result, err := Cleanup(dir, now.Sub(cutoff), now)
 	if err != nil {
 		return err
 	}

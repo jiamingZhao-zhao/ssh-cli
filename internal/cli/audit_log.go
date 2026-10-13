@@ -87,6 +87,12 @@ func (a *App) logDenial(meta auditMeta, h config.ResolvedHost, dec *guard.Decisi
 }
 
 func (a *App) logRemote(meta auditMeta, h config.ResolvedHost, dec guard.Decision, status string, code int, summary, reason string) error {
+	if a.UseDaemon && meta.op == audit.OpExec {
+		// The daemon owns the actual exec audit. Record receipt/loss separately
+		// so a single command is not counted as two remote executions.
+		meta.op = audit.OpSession
+		reason = "reuse_client_result; " + reason
+	}
 	c := code
 	denied := status == audit.StatusDenied
 	op := meta.op

@@ -127,7 +127,9 @@ func (a *App) serveDaemon(ctx context.Context) error {
 		if !ok || cfg.SessionFingerprint(h) != fingerprint {
 			return nil, fmt.Errorf("host identity changed")
 		}
-		return a.dial(h, 0)
+		// Each pool dial owns the request context without mutating shared App state.
+		dialer := &App{Dir: a.Dir, Err: a.Err, Insecure: a.Insecure, OperationContext: ctx}
+		return dialer.dial(h, 0)
 	}, nil)
 	if err != nil {
 		return err
@@ -195,7 +197,10 @@ func (a *App) daemonExec(parent context.Context, pool *session.Pool, in daemonRe
 	}
 	dec := guard.Decide(eff, in.Command)
 	if !dec.Allowed || dec.NeedsConfirm {
-		return fail(fmt.Errorf("reuse service refuses denied or confirmation-required commands; use direct CLI with a TTY"))
+		result := fail(fmt.Errorf("reuse service refuses denied or confirmation-required commands; use direct CLI with a TTY"))
+		_, auditErr := audit.Append(a.Dir, audit.Record{Op: audit.OpPolicyCheck, Host: h.Alias, Group: h.Group, Env: h.EnvName, Command: in.Command, Status: audit.StatusDenied, DeniedByPolicy: true, Source: audit.SourceCLI, Reason: "reuse_policy_check"})
+		result.AuditWarning = auditErr != nil
+		return result
 	}
 	if err := audit.Preflight(a.Dir, audit.SourceCLI, "daemon exec"); err != nil {
 		return fail(err)

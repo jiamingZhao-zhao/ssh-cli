@@ -4,6 +4,9 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"net"
+	"net/http"
+	"os"
 	"strings"
 	"testing"
 	"time"
@@ -27,6 +30,56 @@ func TestElevationTTLBoundaries(t *testing.T) {
 	}
 	if _, err := elevationTTL(env, "10m"); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestDaemonIPC(t *testing.T) {
+	dir := t.TempDir()
+	if err := config.Save(dir, &config.Config{Version: 1}); err != nil {
+		t.Fatal(err)
+	}
+	a := &App{Dir: dir, Err: io.Discard, Out: io.Discard}
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() { done <- a.serveDaemon(ctx) }()
+	defer func() {
+		cancel()
+		select {
+		case err := <-done:
+			if err != nil {
+				t.Error(err)
+			}
+		case <-time.After(3 * time.Second):
+			t.Error("reuse service did not stop")
+		}
+	}()
+	sock, tokenPath := daemonPaths(dir)
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		if _, err := os.Stat(tokenPath); err == nil {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("reuse service did not start")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, "unix", sock)
+	}}
+	defer transport.CloseIdleConnections()
+	client := &http.Client{Transport: transport, Timeout: 3 * time.Second}
+	response, err := client.Post("http://localhost/exec", "application/json", strings.NewReader(`{"alias":"missing","command":"echo x"}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	response.Body.Close()
+	if response.StatusCode != 401 {
+		t.Fatal("local reuse API accepted missing token")
+	}
+	_, err = a.runViaDaemon(planned{host: config.ResolvedHost{Alias: "missing"}}, "echo x", io.Discard, io.Discard, time.Second)
+	if err == nil || !strings.Contains(err.Error(), "outcome=not_started") {
+		t.Fatalf("unexpected authenticated result: %v", err)
 	}
 }
 
