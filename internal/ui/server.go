@@ -178,6 +178,8 @@ type service struct {
 	pool        *session.Pool
 	opMu        sync.Mutex
 	operations  map[string]*operation
+	// A pool close has no HTTP response; retain its audit failure for the UI.
+	auditCloseFailed bool
 }
 
 func (s *service) guard(next http.Handler) http.Handler {
@@ -194,6 +196,12 @@ func (s *service) guard(next http.Handler) http.Handler {
 		}
 		if !s.authorize(w, r) {
 			return
+		}
+		s.mu.Lock()
+		auditCloseFailed := s.auditCloseFailed
+		s.mu.Unlock()
+		if auditCloseFailed && strings.HasPrefix(r.URL.Path, "/api/") {
+			w.Header().Set(auditWarningHeader, "failed")
 		}
 		next.ServeHTTP(w, r)
 	})
@@ -818,6 +826,11 @@ func writeFail(w http.ResponseWriter, err error) {
 }
 
 func writeJSON(w http.ResponseWriter, code int, v any) {
+	if w.Header().Get(auditWarningHeader) != "" {
+		if fields, ok := v.(map[string]any); ok {
+			fields["auditWarning"] = "failed"
+		}
+	}
 	w.Header().Set("Content-Type", "application/json; charset=utf-8")
 	w.WriteHeader(code)
 	enc := json.NewEncoder(w)

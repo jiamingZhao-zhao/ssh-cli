@@ -58,7 +58,7 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if eff.NoDataOut {
-		s.writeAudit(h, audit.OpMetrics, "metrics", "", "", audit.StatusDenied, exitcode.Denied, "noDataOutflow forbids metrics", "noDataOutflow forbids metrics", true, started)
+		s.writeAudit(w, h, audit.OpMetrics, "metrics", "", "", audit.StatusDenied, exitcode.Denied, "noDataOutflow forbids metrics", "noDataOutflow forbids metrics", true, started)
 		writeErr(w, http.StatusForbidden, "此环境禁止带回数据，概况不可用。")
 		return
 	}
@@ -80,7 +80,7 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}, metrics.Options{Pause: 200 * time.Millisecond})
 	if runErr != nil {
-		s.writeAudit(h, audit.OpMetrics, "metrics", "", "", audit.StatusError, 1, runErr.Error(), runErr.Error(), false, started)
+		s.writeAudit(w, h, audit.OpMetrics, "metrics", "", "", audit.StatusError, 1, runErr.Error(), runErr.Error(), false, started)
 		writeJSON(w, http.StatusBadRequest, map[string]any{
 			"ok": false, "alias": h.Alias, "error": runErr.Error(), "connected": false,
 			"address": h.Host.Host, "port": h.Host.PortOrDefault(), "user": h.Host.User,
@@ -88,7 +88,7 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		})
 		return
 	}
-	s.writeAudit(h, audit.OpMetrics, "metrics", "", "", audit.StatusOK, 0, "metrics", "", false, started)
+	s.writeAudit(w, h, audit.OpMetrics, "metrics", "", "", audit.StatusOK, 0, "metrics", "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "connected": true,
 		"address": h.Host.Host, "port": h.Host.PortOrDefault(), "user": h.Host.User,
@@ -125,7 +125,7 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 	probe := s.workspaceProbeExempt(r)
 	started := time.Now()
 	if eff.NoDataOut {
-		s.writeAudit(h, audit.OpMetrics, "proc", "", body.PID, audit.StatusDenied, exitcode.Denied, "noDataOutflow forbids process details", "noDataOutflow forbids process details", true, started)
+		s.writeAudit(w, h, audit.OpMetrics, "proc", "", body.PID, audit.StatusDenied, exitcode.Denied, "noDataOutflow forbids process details", "noDataOutflow forbids process details", true, started)
 		writeErr(w, http.StatusForbidden, "此环境禁止带回数据，这一行的详情不可用。")
 		return
 	}
@@ -134,7 +134,7 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 			d := guard.Decide(eff, command)
 			if !d.Allowed {
 				text := decisionText(d)
-				s.writeAudit(h, audit.OpPolicyCheck, "proc", "", strings.TrimSpace(body.PID), audit.StatusDenied, exitcode.Denied, text, text, true, started)
+				s.writeAudit(w, h, audit.OpPolicyCheck, "proc", "", strings.TrimSpace(body.PID), audit.StatusDenied, exitcode.Denied, text, text, true, started)
 				writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
 				return
 			}
@@ -163,13 +163,13 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 	pid := strings.TrimSpace(body.PID)
 	argsOut, argsNote, err := run(argsCmd)
 	if err != nil {
-		s.writeAudit(h, audit.OpMetrics, "proc", "", pid, audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, h, audit.OpMetrics, "proc", "", pid, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
 	cwdOut, cwdNote, err := run(cwdCmd)
 	if err != nil {
-		s.writeAudit(h, audit.OpMetrics, "proc", "", pid, audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, h, audit.OpMetrics, "proc", "", pid, audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -182,7 +182,7 @@ func (s *service) procDetailAPI(w http.ResponseWriter, r *http.Request) {
 			note = "读不到工作目录"
 		}
 	}
-	s.writeAudit(h, audit.OpMetrics, "proc", "", pid, audit.StatusOK, 0, "proc pid="+pid, "", false, started)
+	s.writeAudit(w, h, audit.OpMetrics, "proc", "", pid, audit.StatusOK, 0, "proc pid="+pid, "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "pid": strings.TrimSpace(body.PID),
 		"args": args, "cwd": cwd, "note": note, "argsNote": argsNote,

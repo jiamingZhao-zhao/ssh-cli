@@ -45,7 +45,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 		dec := listDecision(eff)
 		if !dec.Allowed {
 			text := decisionText(dec)
-			s.writeAudit(h, audit.OpPolicyCheck, "ls", remotePath, "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
+			s.writeAudit(w, h, audit.OpPolicyCheck, "ls", remotePath, "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
 			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
 			return
 		}
@@ -60,7 +60,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 	fp := s.fingerprint(h)
 	ctx := r.Context()
 	if err := s.pool.OpenConn(ctx, h.Alias, fp); err != nil {
-		s.writeAudit(h, audit.OpList, "ls", remotePath, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, h, audit.OpList, "ls", remotePath, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -75,7 +75,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 		return lerr
 	})
 	if err != nil {
-		s.writeAudit(h, audit.OpList, "ls", remotePath, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		s.writeAudit(w, h, audit.OpList, "ls", remotePath, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
 		writeFail(w, err)
 		return
 	}
@@ -85,7 +85,7 @@ func (s *service) listAPI(w http.ResponseWriter, r *http.Request) {
 	if listing.Crumbs == nil {
 		listing.Crumbs = []transfer.Crumb{}
 	}
-	s.writeAudit(h, audit.OpList, "ls", listing.Path, "", audit.StatusOK, 0, fmt.Sprintf("path=%s entries=%d", listing.Path, len(listing.Entries)), "", false, started)
+	s.writeAudit(w, h, audit.OpList, "ls", listing.Path, "", audit.StatusOK, 0, fmt.Sprintf("path=%s entries=%d", listing.Path, len(listing.Entries)), "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "path": listing.Path, "parent": listing.Parent,
 		"home":   listing.Home,
@@ -103,24 +103,24 @@ func (s *service) fileChangeAPI(w http.ResponseWriter, r *http.Request) {
 		Confirm string `json:"confirm"`
 	}
 	if err := json.NewDecoder(io.LimitReader(r.Body, 1<<16)).Decode(&body); err != nil {
-		writeFail(w, err)
+		writeFileChangeError(w, err, "not_started")
 		return
 	}
 	op := strings.TrimSpace(body.Op)
 	switch op {
 	case "mkdir", "touch", "rename", "remove":
 	default:
-		writeErr(w, http.StatusBadRequest, "未知操作")
+		writeFileChangeError(w, fmt.Errorf("未知操作"), "not_started")
 		return
 	}
 	_, h, eff, err := s.hostPlan(body.Alias)
 	if err != nil {
-		writeFail(w, err)
+		writeFileChangeError(w, err, "not_started")
 		return
 	}
 	lexical, err := lexicalFileTargets(op, body.Path, body.Name)
 	if err != nil {
-		writeFail(w, err)
+		writeFileChangeError(w, err, "not_started")
 		return
 	}
 	// Absolute paths are checked before dialing. Relative paths and ~/ are
@@ -131,8 +131,8 @@ func (s *service) fileChangeAPI(w http.ResponseWriter, r *http.Request) {
 	s.reconcile()
 	fp := s.fingerprint(h)
 	if err := s.pool.OpenConn(r.Context(), h.Alias, fp); err != nil {
-		s.writeAudit(h, audit.OpFileChange, op, body.Path, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
-		writeFail(w, err)
+		s.writeAudit(w, h, audit.OpFileChange, op, body.Path, "", audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		writeFileChangeError(w, err, "not_started")
 		return
 	}
 	var changed string
@@ -157,26 +157,30 @@ func (s *service) fileChangeAPI(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		var denied capabilityError
 		if errors.As(err, &denied) {
-			s.writeAudit(h, audit.OpPolicyCheck, op, body.Path, changed, audit.StatusDenied, exitcode.Denied, denied.Error(), denied.Error(), true, started)
-			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": denied.Error(), "status": "denied"})
+			s.writeAudit(w, h, audit.OpPolicyCheck, op, body.Path, changed, audit.StatusDenied, exitcode.Denied, denied.Error(), denied.Error(), true, started)
+			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": denied.Error(), "status": "denied", "outcome": "not_started"})
 			return
 		}
 		var confirm errNeedConfirm
 		if errors.As(err, &confirm) {
 			writeJSON(w, http.StatusConflict, map[string]any{
-				"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": confirm.Error(),
+				"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": confirm.Error(), "outcome": "not_started",
 			})
 			return
 		}
-		s.writeAudit(h, audit.OpFileChange, op, body.Path, changed, audit.StatusError, 1, err.Error(), err.Error(), false, started)
-		writeFail(w, err)
+		s.writeAudit(w, h, audit.OpFileChange, op, body.Path, changed, audit.StatusError, 1, err.Error(), err.Error(), false, started)
+		writeFileChangeError(w, err, "unknown")
 		return
 	}
 	if changed == "" {
 		changed = body.Path
 	}
-	s.writeAudit(h, audit.OpFileChange, op, body.Path, changed, audit.StatusOK, 0, op+" "+changed, "", false, started)
-	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+	s.writeAudit(w, h, audit.OpFileChange, op, body.Path, changed, audit.StatusOK, 0, op+" "+changed, "", false, started)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "path": changed, "outcome": "completed"})
+}
+
+func writeFileChangeError(w http.ResponseWriter, err error, outcome string) {
+	writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error(), "outcome": outcome, "retrySafe": false})
 }
 
 type errNeedConfirm struct{}
@@ -187,13 +191,13 @@ func (s *service) finishFileChange(w http.ResponseWriter, h config.ResolvedHost,
 	dec := guard.DecideFileChange(eff, op, targets, protected)
 	if !dec.Allowed {
 		text := decisionText(dec)
-		s.writeAudit(h, audit.OpPolicyCheck, op, remote, "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
-		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
+		s.writeAudit(w, h, audit.OpPolicyCheck, op, remote, "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
+		writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied", "outcome": "not_started"})
 		return false
 	}
 	if dec.NeedsConfirm && strings.TrimSpace(confirm) != h.Alias {
 		writeJSON(w, http.StatusConflict, map[string]any{
-			"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": "type the host alias to confirm",
+			"ok": false, "needsConfirm": true, "confirm": h.Alias, "error": "type the host alias to confirm", "outcome": "not_started",
 		})
 		return false
 	}

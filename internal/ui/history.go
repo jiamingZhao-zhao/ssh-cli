@@ -49,7 +49,7 @@ func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
 		dec := history.PolicyDecision(eff, n)
 		if !dec.Allowed {
 			text := decisionText(dec)
-			s.writeAudit(h, audit.OpPolicyCheck, "history", "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
+			s.writeAudit(w, h, audit.OpPolicyCheck, "history", "", "", audit.StatusDenied, exitcode.Denied, text, text, true, started)
 			writeJSON(w, http.StatusForbidden, map[string]any{"ok": false, "error": text, "status": "denied"})
 			return
 		}
@@ -85,7 +85,7 @@ func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}, history.Options{Lines: n})
 	if runErr != nil {
-		s.writeAudit(h, audit.OpHistory, "history", "", "", audit.StatusError, 1, runErr.Error(), runErr.Error(), false, started)
+		s.writeAudit(w, h, audit.OpHistory, "history", "", "", audit.StatusError, 1, runErr.Error(), runErr.Error(), false, started)
 		writeFail(w, runErr)
 		return
 	}
@@ -107,7 +107,7 @@ func (s *service) historyAPI(w http.ResponseWriter, r *http.Request) {
 	if suppress {
 		summary = guard.OutflowDiscarded
 	}
-	s.writeAudit(h, audit.OpHistory, "history", res.Path, "", audit.StatusOK, 0, summary, "", false, started)
+	s.writeAudit(w, h, audit.OpHistory, "history", res.Path, "", audit.StatusOK, 0, summary, "", false, started)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok": true, "alias": h.Alias, "found": res.Found && !suppress, "status": res.Status,
 		"path": res.Path, "shell": res.Shell, "lines": lines, "entries": entries,

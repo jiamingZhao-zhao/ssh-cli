@@ -1370,6 +1370,11 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
 .ws-session { margin: 0 1rem 0.35rem; }
 .ws-tabs { margin: 0; padding: 0; background: var(--mh-header); }
 .ws-banner { margin: 0.5rem 0.85rem 0; }
+.ws-action { flex: none; max-height: 6rem; overflow: auto; overflow-wrap: anywhere; }
+.audit-warning {
+  position: fixed; top: 0.75rem; left: 50%; transform: translateX(-50%);
+  width: min(760px, calc(100vw - 1.5rem)); z-index: 1100; overflow-wrap: anywhere;
+}
 .ws .empty { padding: 1.15rem 1rem 0.35rem; }
 .ws-drop {
   position: absolute;
@@ -1667,7 +1672,7 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
 }
 .ws-queue-foot .ws-seg-btn { flex-shrink: 0; }
 /* xterm measures glyphs in a wide offscreen element attached to body. */
-html:has(.page.is-terminal), body:has(.page.is-terminal) { overflow-x: clip; }
+html, body { overflow-x: clip; }
 .ws-toasts {
   position: fixed;
   right: 1rem;
