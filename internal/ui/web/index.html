@@ -153,15 +153,11 @@
             </div>
             <div class="ws-side">
             <aside class="ws-overview" data-pane="overview">
-              <div class="ws-offline" x-show="!workspaceLive()">
-                <p class="empty-title">未连接</p>
-                <p class="empty-subtitle text-secondary">打开终端或点「连接」后这里才显示概况和文件。</p>
-              </div>
-              <div x-show="workspaceLive()">
               <div class="ws-overview-head">
-                <div class="ws-host" x-text="overviewTitle()"></div>
+                <div class="ws-host-row"><span>主机名称：</span><strong class="ws-host" :title="overviewTitle()" x-text="overviewTitle()"></strong></div>
+                <div class="ws-host-row"><span>主机别名：</span><span class="ws-alias" :title="panelAlias()" x-text="panelAlias() || '—'"></span></div>
                 <div class="ws-addr">
-                  <span class="ws-conn" x-text="overviewStatus()"></span>
+                  <span class="ws-conn" :class="overviewStatusClass()" role="status" x-text="overviewStatus()"></span>
                   <button type="button" class="ws-ip" x-show="overviewIP()" @click="copyOverviewIP()" :aria-label="'复制 ' + overviewIP()" :title="'复制 ' + overviewIP()">
                     <span x-text="overviewIP()"></span>
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>
@@ -169,6 +165,10 @@
                 </div>
                 <div class="ws-via" x-show="viaOf(panelAlias())" x-text="viaOf(panelAlias())"></div>
               </div>
+              <div class="ws-offline" x-show="!workspaceLive()">
+                <p class="empty-subtitle text-secondary">打开终端或点「连接」后这里才显示概况和文件。</p>
+              </div>
+              <div x-show="workspaceLive()">
               <p class="ws-quiet" x-show="workspaceLive() && metricsPending()">正在读取概况…</p>
               <div class="alert alert-warning py-2" role="alert" x-show="workspaceLive() && errors.metrics" x-text="errors.metrics"></div>
               <dl class="ws-metrics" x-show="workspaceLive()">
@@ -223,12 +223,28 @@
                   </tbody>
                 </table>
               </div>
+              <section class="ws-net" aria-label="网络速率">
+                <div class="ws-net-rates">
+                  <span class="ws-net-tx" :title="'上传 ' + netRateText('tx')">↑ <span x-text="netRateText('tx')"></span></span>
+                  <span class="ws-net-rx" :title="'下载 ' + netRateText('rx')">↓ <span x-text="netRateText('rx')"></span></span>
+                </div>
+                <div class="ws-net-chart"><canvas id="ws-net-chart" role="img" :aria-label="'网络速率：上传 ' + netRateText('tx') + '，下载 ' + netRateText('rx')"></canvas></div>
+                <div class="ws-net-caption" title="不含回环网卡 lo">网卡合计 · 最近 24 次采样</div>
+              </section>
             </aside>
             <div class="ws-side-gap" aria-hidden="true"></div>
             <aside class="ws-dl-rail" aria-label="传输队列">
+              <div class="ws-dl-head">
+                <div class="ws-kicker">传输队列</div>
+                <button type="button" class="ws-dl-clear" x-show="hasFinishedTransfers()" @click="clearFinishedTransfers()">清除已完成</button>
+              </div>
+              <div class="ws-dl-dir">
+                <button type="button" class="ws-dl-path" @click="pickDownloadDir()" aria-label="选择下载目录" :title="downloadDirLabel()" x-text="downloadDirLabel()"></button>
+                <button type="button" class="ws-dl-default" x-show="downloadDir" @click="useDefaultDownloadDir()">默认</button>
+              </div>
               <div class="ws-dl-body">
                 <div class="ws-dl-empty" x-show="!(transfers || []).length">
-                  <div class="ws-dl-empty-box" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')" @click="pickDownloadDir()" role="button" tabindex="0" aria-label="选择下载目录"></div>
+                  <div class="ws-dl-empty-box" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')" @click="pickDownloadDir()" @keydown.enter.prevent="pickDownloadDir()" @keydown.space.prevent="pickDownloadDir()" role="button" tabindex="0" aria-label="选择下载目录">拖到这里下载<br>点击选择下载目录</div>
                 </div>
                 <div class="ws-download-lane" x-show="(transfers || []).length" data-drop="download" @dragover.prevent.stop="dragOver($event, '')" @drop.prevent.stop="dropFiles($event, 'download')">拖到这里下载。本机 ssh-cli 用和命令行相同的 SFTP 写到所选目录。</div>
                 <div class="ws-dl-list" x-show="(transfers || []).length">
@@ -244,14 +260,6 @@
                     </div>
                   </template>
                 </div>
-              </div>
-              <div class="ws-dl-foot">
-                <div class="ws-dl-title">
-                  <div class="ws-kicker">传输队列</div>
-                  <button type="button" class="ws-dl-path" @click="pickDownloadDir()" aria-label="选择下载目录" :title="downloadDirLabel()" x-text="downloadDirLabel()"></button>
-                  <button type="button" class="ws-dl-default" x-show="downloadDir" @click="useDefaultDownloadDir()">默认</button>
-                </div>
-                <button type="button" class="btn btn-outline-secondary btn-sm" x-show="hasFinishedTransfers()" @click="clearFinishedTransfers()">清除已完成</button>
               </div>
             </aside>
             </div>
