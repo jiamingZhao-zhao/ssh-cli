@@ -21,6 +21,8 @@ jobs:
         run: go vet ./...
       - name: unit tests
         run: go test ./...
+      - name: terminal output flow control race tests
+        run: go test -race ./internal/ui -run 'TestTerminalOutput(Window|Backpressure|ExitDrains)$' -count=1
       - name: UI behavior regressions
         run: node --test scripts/ui.test.cjs
       - name: govulncheck
@@ -38,7 +40,7 @@ jobs:
           go-version: "1.27"
       - name: native folder and Unicode path tests
         shell: bash
-        run: go test ./internal/ui -run 'Test(CleanPickedDir|RevealTarget|RevealDownloadAPI|PickDownloadDirAPI|WindowsPickerUTF8|WorkspaceChrome|ExecFailureStatus|OperationDedupAndIsolation|InterruptedOperationIsUnknownAndNotReplayed|TerminalDialFailureWritesReason|TerminalTabAliasIsNotNestedButton|OperationResultBudgetRetainsReplayProtection|CanceledOperationCannotReplayCompletedLookingPayload|AuditFailureDoesNotChangeRemoteResult|AuditFailureSurvivesStreamingAndPoolClose)$' -count=1
+        run: go test ./internal/ui -run 'Test(CleanPickedDir|RevealTarget|RevealDownloadAPI|PickDownloadDirAPI|WindowsPickerUTF8|WorkspaceChrome|ExecFailureStatus|OperationDedupAndIsolation|InterruptedOperationIsUnknownAndNotReplayed|TerminalDialFailureWritesReason|TerminalTabAliasIsNotNestedButton|OperationResultBudgetRetainsReplayProtection|CanceledOperationCannotReplayCompletedLookingPayload|AuditFailureDoesNotChangeRemoteResult|AuditFailureSurvivesStreamingAndPoolClose|TerminalOutputWindow|TerminalOutputBackpressure|TerminalOutputExitDrains|TransferFailureRequiresVerification)$' -count=1
       - name: UI behavior and UTF-8 regressions
         run: node --test scripts/ui.test.cjs
 

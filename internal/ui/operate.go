@@ -310,7 +310,7 @@ func (s *service) uploadAPI(w http.ResponseWriter, r *http.Request) {
 		if sink.fail(err) {
 			return
 		}
-		writeFail(w, err)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error(), "outcome": "unknown", "retrySafe": false})
 		return
 	}
 	s.writeAudit(w, h, audit.OpUpload, audit.OpUpload, name, remote, audit.StatusOK, 0, "upload "+remote, "", false, started)
@@ -363,7 +363,7 @@ func (s *service) downloadAPI(w http.ResponseWriter, r *http.Request) {
 		if sink.fail(err) {
 			return
 		}
-		writeFail(w, err)
+		writeJSON(w, http.StatusBadRequest, map[string]any{"ok": false, "error": err.Error(), "outcome": "unknown", "retrySafe": false})
 		return
 	}
 	s.writeAudit(w, h, audit.OpDownload, audit.OpDownload, remote, dest, audit.StatusOK, 0, "download "+remote+" -> "+dest, "", false, started)
@@ -461,7 +461,7 @@ func (p *progressSink) fail(err error) bool {
 	if err != nil && strings.TrimSpace(err.Error()) != "" {
 		msg = err.Error()
 	}
-	p.event(map[string]any{"ok": false, "error": msg})
+	p.event(map[string]any{"ok": false, "error": msg, "outcome": "unknown", "retrySafe": false})
 	return true
 }
 

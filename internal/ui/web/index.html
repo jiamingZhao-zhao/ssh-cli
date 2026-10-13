@@ -247,7 +247,7 @@
             <aside class="ws-dl-rail" aria-label="传输队列">
               <div class="ws-dl-head">
                 <div class="ws-kicker">传输队列</div>
-                <button type="button" class="ws-dl-clear" x-show="hasFinishedTransfers()" @click="clearFinishedTransfers()" aria-label="清除已完成的传输记录" title="清除已完成">
+                <button type="button" class="ws-dl-clear" x-show="hasFinishedTransfers()" @click="clearFinishedTransfers()" aria-label="清除已结束且无待核验的记录" title="清除已完成，保留待核验记录">
                   <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>
                 </button>
                 <div class="ws-dl-dir">
@@ -263,12 +263,14 @@
                 <div class="ws-dl-list" x-show="(transfers || []).length">
                   <template x-for="item in transfers" :key="'q-' + item.id">
                     <div class="ws-queue-row">
-                      <button type="button" class="ws-queue-name is-open" x-show="canOpenDownload(item)" @click="openDownloadFolder(item)" title="打开所在目录" :aria-label="'打开所在目录 ' + item.name" x-text="item.name"></button>
-                      <div class="ws-queue-name" x-show="!canOpenDownload(item)" :title="item.name" x-text="item.name"></div>
+                      <button type="button" class="ws-queue-name is-open" x-show="canOpenDownload(item)" @click="openDownloadFolder(item)" :title="item.name + ' · ' + item.alias + ' · ' + (item.local || item.remote || '')" :aria-label="'打开所在目录 ' + item.name" x-text="item.name"></button>
+                      <div class="ws-queue-name" x-show="!canOpenDownload(item)" :title="item.name + ' · ' + item.alias + ' · ' + (item.local || item.remote || '')" x-text="item.name"></div>
                       <div class="ws-meter-track"><div class="ws-meter-bar" :class="{ 'is-busy': item.active && !item.total }" :style="barStyle(itemPct(item))"></div></div>
                       <div class="ws-queue-foot">
-                        <span class="ws-queue-meta" x-text="transferDetail(item)"></span>
-                        <button type="button" class="ws-seg-btn" x-show="item.active" @click="cancelTransfer(item.id)">取消</button>
+                        <span class="ws-queue-meta" :title="transferDetail(item)" x-text="transferDetail(item)"></span>
+                        <button type="button" class="ws-seg-btn" x-show="item.active" @click="cancelTransfer(item.id)" title="仅取消此项">取消</button>
+                        <button type="button" class="ws-seg-btn" x-show="item.active && item.batch" @click="cancelBatch(item.batch)" title="取消本批当前及等待传输的项目">整批</button>
+                        <button type="button" class="ws-seg-btn" x-show="!item.active && transferNeedsVerification(item)" @click="verifyTransfer(item.id)">核验</button>
                       </div>
                       <p class="ws-transfer-error" x-show="item.error" x-text="item.error" role="status"></p>
                     </div>
@@ -1098,7 +1100,7 @@
                     <div class="mb-3"><label class="form-label">文件</label><input class="form-control" name="file" type="file" required></div>
                     <div class="mb-3"><label class="form-label">确认短语</label><input class="form-control" name="confirm" autocomplete="off"></div>
                   </div>
-                  <div class="card-footer"><button class="btn btn-primary" type="submit">上传</button></div>
+                  <div class="card-footer"><button class="btn btn-primary" type="submit" :disabled="uploadBusy" x-text="uploadBusy ? '排队 / 上传中…' : '上传'">上传</button></div>
                 </form>
               </div>
               <div class="col-lg-6">

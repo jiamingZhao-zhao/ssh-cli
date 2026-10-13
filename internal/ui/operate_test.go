@@ -373,3 +373,20 @@ func TestUIPageStillMentionsDanger(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestTransferFailureRequiresVerification(t *testing.T) {
+	rr := httptest.NewRecorder()
+	sink := newProgressSink(rr, true)
+	sink.report(7, 10)
+	if !sink.fail(errString("write interrupted")) {
+		t.Fatal("missing final failure")
+	}
+	lines := strings.Split(strings.TrimSpace(rr.Body.String()), "\n")
+	var result map[string]any
+	if err := json.Unmarshal([]byte(lines[len(lines)-1]), &result); err != nil {
+		t.Fatal(err)
+	}
+	if result["ok"] != false || result["outcome"] != "unknown" || result["retrySafe"] != false {
+		t.Fatalf("partial transfer looks safe to replay: %#v", result)
+	}
+}
