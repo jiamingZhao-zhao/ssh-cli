@@ -266,8 +266,8 @@ function paintNetChart(series) {
   for (let i = 0; i < rows.length; i++) {
     const d = new Date(rows[i].t || Date.now());
     labels.push(pad2(d.getHours()) + ":" + pad2(d.getMinutes()) + ":" + pad2(d.getSeconds()));
-    rx.push(Math.round(rows[i].rxRate || 0));
-    tx.push(Math.round(rows[i].txRate || 0));
+    rx.push(rows[i].rxRate == null ? null : Math.round(rows[i].rxRate));
+    tx.push(rows[i].txRate == null ? null : Math.round(rows[i].txRate));
   }
   if (netChart) {
     netChart.data.labels = labels;
@@ -281,18 +281,22 @@ function paintNetChart(series) {
     data: {
       labels: labels,
       datasets: [
-        { type: "bar", label: "收", data: rx, backgroundColor: "rgba(0,82,204,0.55)", borderRadius: 3, order: 2 },
-        { type: "line", label: "发", data: tx, borderColor: "#36b37e", backgroundColor: "transparent", tension: 0.25, pointRadius: 2, borderWidth: 2, order: 1 }
+        { label: "下载", data: rx, backgroundColor: "rgba(54,179,126,0.65)", maxBarThickness: 5 },
+        { label: "上传", data: tx, backgroundColor: "rgba(255,139,78,0.65)", maxBarThickness: 5 }
       ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
       animation: false,
-      plugins: { legend: { position: "bottom", labels: { color: theme.ink, boxWidth: 10 } } },
+      plugins: { legend: { display: false }, tooltip: { callbacks: {
+        label: (ctx) => ctx.dataset.label + " " + (ctx.parsed.y / 1024).toFixed(1) + " KB/s"
+      } } },
       scales: {
-        x: { ticks: { color: theme.ink, maxTicksLimit: 6 }, grid: { color: theme.grid } },
-        y: { beginAtZero: true, ticks: { color: theme.ink }, grid: { color: theme.grid } }
+        x: { display: false },
+        y: { beginAtZero: true, ticks: { color: theme.ink, maxTicksLimit: 3, font: { size: 10 },
+          callback: (value) => value >= 1024 ? (value / 1024).toFixed(0) + "K" : value + "B"
+        }, grid: { color: theme.grid } }
       }
     }
   });
@@ -308,6 +312,11 @@ function chartTheme() {
 
 function restyleCharts() {
   const theme = chartTheme();
+  if (netChart) {
+    netChart.options.scales.y.ticks.color = theme.ink;
+    netChart.options.scales.y.grid.color = theme.grid;
+    netChart.update();
+  }
   if (chartDays) {
     const legend = chartDays.options.plugins && chartDays.options.plugins.legend;
     if (legend && legend.labels) legend.labels.color = theme.ink;
@@ -455,7 +464,7 @@ function sshui() {
     pathFocused: false,
     tree: {},
     treeRoot: "",
-    ws: { side: 280, lower: 280 },
+    ws: { side: 280, lower: null },
     metrics: { alias: "", connected: false, address: "", port: "", user: "", hostname: "", uptime: "", load: "", cpuPercent: null, mem: null, swap: null, procs: [], disks: [], notes: [], netRx: 0, netTx: 0, netRxRate: 0, netTxRate: 0 },
     netSeries: {},
     metricsTimer: 0,
@@ -1497,8 +1506,9 @@ function sshui() {
 
     workspaceGrid() {
       const side = Math.max(220, Math.min(460, Number(this.ws && this.ws.side) || 280));
-      const lower = Math.max(160, Math.min(520, Number(this.ws && this.ws.lower) || 280));
-      return "--ws-side:" + side + "px;--ws-lower:" + lower + "px";
+      const saved = Number(this.ws && this.ws.lower);
+      const lower = saved ? Math.max(160, Math.min(520, saved)) + "px" : "33.333vh";
+      return "--ws-side:" + side + "px;--ws-lower:min(" + lower + ", max(160px, calc(100vh - 180px)))";
     },
 
     overviewAddr() {
@@ -1512,24 +1522,25 @@ function sshui() {
 
     overviewTitle() {
       const alias = this.panelAlias();
-      const host = this.hostByAlias(alias);
       const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
-      const name = (live && live.hostname) || alias || "未选择";
-      const user = (live && live.user) || (host && host.user) || "";
-      return user ? name + "/" + user : name;
+      return (live && live.hostname) || "—";
     },
 
     overviewStatus() {
       const alias = this.panelAlias();
-      const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
-      if (live && live.connected) return "在线";
       const tab = this.termTabs.find((item) => item.id === this.termActive);
       if (tab) {
-        const label = { connecting: "连接中", closed: "已断开", expired: "已到期" }[tab.state];
+        const label = { connected: "在线", connecting: "连接中", closed: "已断开", expired: "已到期" }[tab.state];
         if (label) return label;
       }
+      const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
+      if (live && live.connected) return "在线";
       if (this.metricsPending()) return "连接中";
       return "未连接";
+    },
+
+    overviewStatusClass() {
+      return { "在线": "is-online", "连接中": "is-connecting", "已断开": "is-closed", "已到期": "is-closed" }[this.overviewStatus()] || "";
     },
 
     overviewIP() {
@@ -1565,13 +1576,12 @@ function sshui() {
     },
 
     sideStyle() { return "width:" + this.ws.side + "px"; },
-    lowerStyle() { return "height:" + this.ws.lower + "px"; },
-
     beginSplit(which, ev) {
       const startX = ev.clientX;
       const startY = ev.clientY;
       const baseSide = this.ws.side;
-      const baseLower = this.ws.lower;
+      const pane = document.querySelector(".ws-lower");
+      const baseLower = pane ? pane.getBoundingClientRect().height : (this.ws.lower || window.innerHeight / 3);
       const app = this;
       const move = (e) => {
         if (which === "side") {
@@ -1609,6 +1619,7 @@ function sshui() {
       if (this.files.alias !== alias) {
         this.rememberWorkspace();
         this.stopMetrics();
+        destroyNetChart();
         this.metrics = blankMetrics();
         this.metricsFailures = 0;
         this.abortRead("files");
@@ -1665,7 +1676,7 @@ function sshui() {
         this.metrics = data;
         this.metricsUpdated = Date.now();
         this.metricsFailures = 0;
-        this.pushNet(alias, data.netRx, data.netTx);
+        this.pushNet(alias, data);
         this.setError("metrics", "");
       } catch (err) {
         if (err && err.name === "AbortError") return;
@@ -1686,42 +1697,25 @@ function sshui() {
       }
     },
 
-    pushNet(alias, rx, tx) {
+    pushNet(alias, data) {
       const now = Date.now();
       if (!this.netSeries[alias]) this.netSeries[alias] = [];
       const series = this.netSeries[alias];
-      const prev = series.length ? series[series.length - 1] : null;
-      const point = { t: now, rx: Number(rx) || 0, tx: Number(tx) || 0, rxRate: 0, txRate: 0 };
-      if (prev && now > prev.t) {
-        const dt = (now - prev.t) / 1000;
-        if (dt > 0) {
-          point.rxRate = Math.max(0, (point.rx - prev.rx) / dt);
-          point.txRate = Math.max(0, (point.tx - prev.tx) / dt);
-        }
-      }
+      const unavailable = !data.connected || (data.notes || []).some((note) => /^net:/.test(note));
+      const rate = (value) => !unavailable && Number.isFinite(value) && value >= 0 ? value : null;
+      const point = { t: now, rxRate: rate(data.netRxRate), txRate: rate(data.netTxRate) };
       series.push(point);
       if (series.length > 24) series.shift();
       paintNetChart(series);
     },
 
-    sparkPoints() {
-      const alias = this.activeTermAlias();
-      const series = (this.netSeries && this.netSeries[alias]) || [];
-      if (series.length < 2) return "0,34 160,34";
-      const rates = [];
-      for (let i = 1; i < series.length; i++) {
-        const d = (series[i].rx - series[i - 1].rx) + (series[i].tx - series[i - 1].tx);
-        rates.push(d > 0 ? d : 0);
-      }
-      let max = 1;
-      for (let i = 0; i < rates.length; i++) if (rates[i] > max) max = rates[i];
-      const pts = [];
-      for (let i = 0; i < rates.length; i++) {
-        const x = rates.length === 1 ? 0 : (160 * i) / (rates.length - 1);
-        const y = 34 - (28 * rates[i]) / max;
-        pts.push(x.toFixed(1) + "," + y.toFixed(1));
-      }
-      return pts.join(" ");
+    netRateText(direction) {
+      const alias = this.liveAlias();
+      if (!alias || this.metrics.alias !== alias || this.errors.metrics) return "—";
+      const series = this.netSeries[alias] || [];
+      const last = series[series.length - 1];
+      const rate = last && last[direction === "tx" ? "txRate" : "rxRate"];
+      return rate == null ? "—" : this.formatBytes(rate) + "/s";
     },
 
     pct(n) {

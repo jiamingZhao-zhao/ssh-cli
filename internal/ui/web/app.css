@@ -879,7 +879,8 @@ pre {
 /* Terminal workspace: overview | terminal | files. Memory Hub colors, no new chrome library. */
 .ws {
   --ws-side: 280px;
-  --ws-lower: 280px;
+  --ws-lower: 33.333vh;
+  --ws-section-head: 40px;
   position: relative;
   display: grid;
   grid-template-columns: var(--ws-side) 7px minmax(0, 1fr);
@@ -901,16 +902,16 @@ pre {
 .ws-side {
   grid-column: 1;
   grid-row: 1 / span 3;
-  display: flex;
-  flex-direction: column;
+  display: grid;
+  grid-template-rows: minmax(0, 1fr) 7px minmax(160px, var(--ws-lower));
   min-width: 0;
   min-height: 0;
   overflow: hidden;
   background: var(--mh-header);
 }
-.ws-side-gap { display: none; }
+.ws-side-gap { grid-row: 2; background: var(--mh-page); }
 .ws-overview {
-  flex: 0 1 auto;
+  grid-row: 1;
   min-width: 0;
   min-height: 0;
   overflow: auto;
@@ -994,13 +995,23 @@ pre {
   letter-spacing: 0.02em;
   color: var(--mh-muted);
 }
-.ws-host { font-size: 1.15rem; font-weight: 650; color: var(--mh-ink); line-height: 1.3; overflow-wrap: anywhere; }
-.ws-addr { display: flex; align-items: center; flex-wrap: wrap; gap: 0.45rem; margin-top: 0.15rem; color: var(--mh-muted); font-size: 12px; line-height: 1.35; }
-.ws-conn { color: var(--mh-ink); }
+.ws-host-row { display: flex; align-items: baseline; justify-content: space-between; gap: 0.45rem; min-width: 0; margin-bottom: 0.3rem; color: var(--mh-muted); font-size: 12px; }
+.ws-host-row > :first-child { flex: 0 0 auto; }
+.ws-host, .ws-alias { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--mh-ink); }
+.ws-host { font-size: 14px; font-weight: 650; }
+.ws-addr { display: flex; align-items: center; justify-content: space-between; gap: 0.45rem; color: var(--mh-muted); font-size: 12px; line-height: 1.5; }
+.ws-conn { flex: 0 0 auto; color: var(--mh-muted); }
+.ws-conn::before { content: ""; display: inline-block; width: 6px; height: 6px; margin-right: 0.3rem; border-radius: 50%; background: currentColor; vertical-align: middle; }
+.ws-conn.is-online { color: #16845b; }
+.ws-conn.is-connecting { color: #996000; }
+.ws-conn.is-closed { color: var(--mh-danger); }
+[data-bs-theme="dark"] .ws-conn.is-online { color: #57d9a3; }
+[data-bs-theme="dark"] .ws-conn.is-connecting { color: #ffc570; }
 .ws-ip {
   display: inline-flex;
   align-items: center;
   gap: 0.25rem;
+  min-width: 0;
   max-width: 100%;
   padding: 0;
   border: 0;
@@ -1011,6 +1022,7 @@ pre {
   cursor: pointer;
 }
 .ws-ip svg { width: 12px; height: 12px; flex: 0 0 auto; }
+.ws-ip span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .ws-ip:hover,
 .ws-ip:focus-visible { color: var(--mh-link); }
 .ws-overview-head { margin-bottom: 0.65rem; }
@@ -1124,9 +1136,14 @@ pre {
 .ws-proc-detail-list dt { margin: 0; color: var(--mh-muted); }
 .ws-proc-detail-list dd { margin: 0; word-break: break-word; }
 .ws-proc-cmd { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; white-space: pre-wrap; }
-.ws-net-chart { position: relative; height: 148px; }
-.ws-spark { width: 100%; height: 42px; display: block; color: var(--mh-link); }
-.ws-spark-base { stroke: var(--mh-line); stroke-width: 1; }
+.ws-net { margin: 0.5rem 0 0.4rem; padding-top: 0.4rem; border-top: 1px solid var(--mh-line); }
+.ws-net-rates { display: flex; flex-wrap: wrap; gap: 0.6rem; font-size: 12px; font-variant-numeric: tabular-nums; }
+.ws-net-tx { color: #b34c13; }
+.ws-net-rx { color: #16845b; }
+[data-bs-theme="dark"] .ws-net-tx { color: #ffab78; }
+[data-bs-theme="dark"] .ws-net-rx { color: #57d9a3; }
+.ws-net-chart { position: relative; height: 72px; }
+.ws-net-caption { font-size: 11px; color: var(--mh-muted); text-align: right; }
 .ws-upper {
   grid-column: 3;
   grid-row: 1;
@@ -1192,6 +1209,8 @@ pre {
   background: var(--mh-card);
 }
 .ws-file-bar {
+  flex: 0 0 auto;
+  height: var(--ws-section-head);
   display: flex;
   justify-content: flex-start;
   align-items: center;
@@ -1397,14 +1416,14 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
   border-inline-end: 0;
 }
 .ws-dl-rail {
+  grid-row: 3;
   flex: 1 1 auto;
   width: auto;
   display: flex;
   flex-direction: column;
   min-width: 0;
-  min-height: 8.5rem;
+  min-height: 0;
   overflow: hidden;
-  border-top: 1px solid var(--mh-line);
   background: transparent;
 }
 .ws-dl-body {
@@ -1412,7 +1431,6 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
   min-height: 0;
   display: flex;
   flex-direction: column;
-  justify-content: flex-end;
 }
 .ws-dl-empty {
   flex: 1 1 auto;
@@ -1421,16 +1439,14 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
   min-height: 0;
   padding: 0.35rem 0.55rem 0.15rem;
 }
-.ws-dl-foot {
+.ws-dl-dir {
   flex: 0 0 auto;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.45rem;
-  padding: 0.35rem 0.55rem 0.45rem;
-  border-top: 1px solid var(--mh-line);
+  padding: 0.35rem 0.55rem;
 }
-.ws-dl-foot .ws-dl-title { align-items: center; }
 .ws-dl-empty-box {
   flex: 1 1 auto;
   min-height: 4.5rem;
@@ -1438,6 +1454,12 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
   border-radius: 8px;
   background: transparent;
   cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: var(--mh-muted);
+  font-size: 12px;
 }
 .ws-dl-local {
   display: flex;
@@ -1447,19 +1469,17 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
 }
 .ws-dl-local .form-control { width: 100%; min-width: 0; }
 .ws-dl-head {
+  flex: 0 0 auto;
+  height: var(--ws-section-head);
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 0.45rem;
-  padding: 0.4rem 0.55rem 0.15rem;
+  padding: 0.28rem 0.55rem;
+  border-bottom: 1px solid var(--mh-line);
 }
-.ws-dl-title {
-  display: flex;
-  align-items: baseline;
-  gap: 0.45rem;
-  min-width: 0;
-  flex: 1 1 auto;
-}
+.ws-dl-head .ws-kicker { font-size: 14px; color: var(--mh-ink); }
+.ws-dl-clear { padding: 0; border: 0; background: transparent; color: var(--mh-link); font: inherit; font-size: 12px; cursor: pointer; }
 .ws-dl-path,
 .ws-dl-default {
   border: 0;
@@ -1720,6 +1740,7 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
     padding: 0.35rem 0.75rem;
   }
   .ws-term-bar, .ws-file-bar { flex-wrap: wrap; gap: .5rem; }
+  .ws-file-bar { height: auto; min-height: var(--ws-section-head); }
   .ws-term-bar .btn-list { flex-wrap: wrap; }
   .ws-term-bar select { max-width: 145px; }
   .ws-upper { display: flex; width: 100%; min-height: 0; flex: 1; }

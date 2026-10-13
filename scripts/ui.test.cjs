@@ -142,24 +142,98 @@ test('process table stays five rows when overview data is missing', () => {
   assert.equal(app.memText(null), '—');
   assert.equal(app.pct(null), '—');
 });
-test('overview header is hostname/user plus plain status and address', async () => {
-  const { app } = fixture();
+test('overview separates hostname and alias and copies the displayed address', async () => {
+  const { app, sandbox } = fixture();
   app.catalog.hosts = [{ alias: 'hn-test-105', user: 'root', host: '10.4.85.105', port: 22 }];
   app.termAlias = 'hn-test-105';
   app.metrics = { alias: 'hn-test-105', connected: true, hostname: 'ecs-8025-0001', user: 'root', address: '10.4.85.105', port: 22 };
-  assert.equal(app.overviewTitle(), 'ecs-8025-0001/root');
+  assert.equal(app.overviewTitle(), 'ecs-8025-0001');
+  assert.equal(app.panelAlias(), 'hn-test-105');
   assert.equal(app.overviewStatus(), '在线');
+  assert.equal(app.overviewStatusClass(), 'is-online');
   assert.equal(app.overviewIP(), '10.4.85.105');
   assert.equal(app.overviewAddr(), 'root@10.4.85.105:22');
   app.metrics.connected = false;
   assert.equal(app.overviewStatus(), '未连接');
   app.metrics.hostname = '';
-  assert.equal(app.overviewTitle(), 'hn-test-105/root');
+  assert.equal(app.overviewTitle(), '—');
+  app.metrics.alias = 'other'; app.metrics.hostname = 'other-host'; app.metrics.address = '192.0.2.2';
+  assert.equal(app.overviewTitle(), '—');
+  assert.equal(app.overviewIP(), '10.4.85.105');
   app.termTabs = [{ id: 't1', alias: 'hn-test-105', state: 'closed' }];
   app.termActive = 't1';
   assert.equal(app.overviewStatus(), '已断开');
+  assert.equal(app.overviewStatusClass(), 'is-closed');
+  let copied;
+  sandbox.navigator = { clipboard: { async writeText(value) { copied = value; } } };
   await app.copyOverviewIP();
-  assert.equal(app.toasts[0].text, '10.4.85.105');
+  assert.equal(copied, '10.4.85.105');
+});
+
+test('terminal state overrides stale connected metrics', () => {
+  const { app } = fixture();
+  app.metrics = { alias: 'a', connected: true };
+  app.termTabs = [{ id: 't', alias: 'a', state: 'connected' }]; app.termActive = 't';
+  for (const [state, label, color] of [
+    ['connecting', '连接中', 'is-connecting'], ['connected', '在线', 'is-online'],
+    ['closed', '已断开', 'is-closed'], ['expired', '已到期', 'is-closed']
+  ]) {
+    app.setTabState('t', state);
+    assert.equal(app.overviewStatus(), label); assert.equal(app.overviewStatusClass(), color);
+  }
+});
+
+test('workspace uses a responsive third by default and retains a manual split', () => {
+  const { app, sandbox } = fixture();
+  assert.match(app.workspaceGrid(), /33\.333vh/);
+  sandbox.innerHeight = 900;
+  sandbox.document.querySelector = () => ({ getBoundingClientRect: () => ({ height: 300 }) });
+  sandbox.document.body = { style: {} };
+  const handlers = {};
+  sandbox.addEventListener = (name, fn) => { handlers[name] = fn; };
+  sandbox.removeEventListener = () => {};
+  let prefs;
+  app.savePrefs = (patch) => { prefs = patch; }; app.fitActive = () => {};
+  app.beginSplit('lower', { clientX: 0, clientY: 600 });
+  handlers.mousemove({ clientX: 0, clientY: 550 }); handlers.mouseup();
+  assert.equal(app.ws.lower, 350); assert.equal(prefs.wsLower, 350);
+  assert.match(app.workspaceGrid(), /350px/);
+  app.ws.lower = 9999; assert.match(app.workspaceGrid(), /520px/);
+});
+
+test('network graph uses sampled rates, keeps hosts separate and marks missing data', () => {
+  const { app } = fixture();
+  app.explicitAlias = app.termAlias = 'a'; app.metrics.alias = 'a';
+  app.pushNet('a', { connected: true, netRx: 9999999, netTx: 9999999, netRxRate: 2048, netTxRate: 0 });
+  assert.equal(app.netRateText('rx'), '2.0 KB/s');
+  assert.equal(app.netRateText('tx'), '0 B/s');
+  app.pushNet('b', { connected: true, netRxRate: 9000, netTxRate: 9000 });
+  assert.equal(app.netRateText('rx'), '2.0 KB/s');
+  app.errors.metrics = 'timeout'; assert.equal(app.netRateText('rx'), '—');
+  app.errors.metrics = '';
+  app.pushNet('a', { connected: true, netRxRate: 0, netTxRate: 0, notes: ['net: denied by policy'] });
+  assert.equal(app.netRateText('rx'), '—');
+  app.pushNet('a', { connected: false, netRxRate: 20, netTxRate: 20 });
+  assert.equal(app.netRateText('tx'), '—');
+  for (let i = 0; i < 30; i++) app.pushNet('a', { connected: true, netRxRate: i, netTxRate: i });
+  assert.equal(app.netSeries.a.length, 24);
+});
+
+test('network canvas preserves gaps and genuine zero rates', () => {
+  const { app, sandbox } = fixture();
+  let chart;
+  sandbox.document.getElementById = () => ({});
+  sandbox.document.documentElement = { getAttribute: () => 'light' };
+  sandbox.Chart = class {
+    constructor(_canvas, config) { chart = this; this.data = config.data; }
+    update() {}
+  };
+  app.pushNet('a', { connected: true, netRxRate: 0, netTxRate: 2048 });
+  assert.equal(chart.data.datasets[0].data[0], 0);
+  assert.equal(chart.data.datasets[1].data[0], 2048);
+  app.pushNet('a', { connected: true, notes: ['net: unavailable'] });
+  assert.equal(chart.data.datasets[0].data[1], null);
+  assert.equal(chart.data.datasets[1].data[1], null);
 });
 test('clear button only applies when a transfer is finished', () => {
   const { app } = fixture();

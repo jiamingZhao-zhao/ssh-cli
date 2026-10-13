@@ -74,7 +74,10 @@ func TestWorkspaceChrome(t *testing.T) {
 		"ws-proc-row",
 		"procRows",
 		"ws-proc-empty",
-		"ws-dl-foot",
+		"ws-dl-head",
+		"主机名称：",
+		"主机别名：",
+		`id="ws-net-chart"`,
 		"openDownloadFolder",
 		"打开所在目录",
 		"fileSize",
@@ -92,7 +95,6 @@ func TestWorkspaceChrome(t *testing.T) {
 		`class="ws-kicker">进程`,
 		`class="ws-kicker">网络`,
 		`class="ws-kicker">终端`,
-		`id="ws-net-chart"`,
 		"网页下载暂限",
 		"63 MiB",
 		"进程详情",
@@ -191,11 +193,11 @@ func TestWorkspaceChrome(t *testing.T) {
 	if end := strings.Index(side, "}"); end >= 0 {
 		side = side[:end]
 	}
-	if !strings.Contains(side, "grid-row: 1 / span 3") || !strings.Contains(side, "display: flex") {
-		t.Fatal("side column should stay full height so the transfer queue can sit at the bottom")
+	if !strings.Contains(side, "grid-row: 1 / span 3") || !strings.Contains(side, "display: grid") {
+		t.Fatal("side column should share the workspace rows")
 	}
-	if !strings.Contains(style, ".ws-dl-foot") {
-		t.Fatal("transfer queue header should be a fixed footer")
+	if strings.Contains(chunk, "ws-dl-foot") || strings.Index(chunk, "ws-dl-head") > strings.Index(chunk, "ws-dl-body") {
+		t.Fatal("transfer queue heading should appear above the queue body")
 	}
 	railAt := strings.Index(style, ".ws-dl-rail {")
 	if railAt < 0 {
@@ -205,8 +207,8 @@ func TestWorkspaceChrome(t *testing.T) {
 	if end := strings.Index(rail, "}"); end >= 0 {
 		rail = rail[:end]
 	}
-	if strings.Contains(rail, "grid-row") {
-		t.Fatal("transfer queue should follow the process table")
+	if !strings.Contains(rail, "grid-row: 3") {
+		t.Fatal("transfer queue should align with the files row")
 	}
 }
 
