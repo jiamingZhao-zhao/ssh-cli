@@ -107,7 +107,7 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 	s.trackSocket(ws)
 	defer s.forgetSocket(ws)
 	defer ws.Close()
-	s.bridgeTerminal(r, ws, h, ticket.cols, ticket.rows)
+	s.bridgeTerminal(r, ws, h, ticket.cols, ticket.rows, r.URL.Query().Get("outputAck") == "1")
 }
 
 // terminalBrowser is the proof that this request came from the localhost page,
@@ -333,7 +333,8 @@ func (s *service) noteMaxLife(alias, reason string) {
 	}
 }
 
-func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedHost, cols, rows int) {
+func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedHost, cols, rows int, outputAck ...bool) {
+	flow := len(outputAck) > 0 && outputAck[0]
 	s.trackTerm(h.Alias, ws)
 	defer s.forgetTerm(ws)
 	fp := s.fingerprint(h)
@@ -355,13 +356,21 @@ func (s *service) bridgeTerminal(r *http.Request, ws *wsConn, h config.ResolvedH
 			return err
 		}
 		defer pty.Close()
-		if err := writeTermState(ws, "ready", "", ""); err != nil {
+		category := ""
+		if flow {
+			category = "output_ack"
+		}
+		if err := writeTermState(ws, "ready", category, ""); err != nil {
 			return err
 		}
 		opened = true
 		s.auditTerminal(ws, h, audit.StatusOK, "open", "interactive terminal; command policy not applied", time.Now(), 0, 0)
 		started = time.Now()
-		inN, outN, err = bridgePTY(ws, pty)
+		var clientClosed <-chan struct{}
+		if flow {
+			clientClosed = s.terminalClientClosed(raw)
+		}
+		inN, outN, err = bridgePTY(ws, pty, flow, clientClosed)
 		return err
 	})
 	if !opened {
@@ -451,16 +460,26 @@ type resizeMsg struct {
 	Rows int    `json:"rows"`
 }
 
-func bridgePTY(ws *wsConn, pty *sshclient.PTY) (int64, int64, error) {
+func bridgePTY(ws *wsConn, pty *sshclient.PTY, outputAck bool, clientClosed <-chan struct{}) (int64, int64, error) {
 	stop := ws.armIdle(wsPingEvery, wsReadIdle, wsWriteWait)
 	defer stop()
 	var inN, outN atomic.Int64
 	errCh := make(chan error, 2)
+	var flow *outputWindow
+	if outputAck {
+		flow = newOutputWindow()
+	}
 	go func() {
 		buf := make([]byte, 32<<10)
 		for {
 			n, err := pty.Read(buf)
 			if n > 0 {
+				if flow != nil {
+					if err := flow.acquire(n); err != nil {
+						errCh <- err
+						return
+					}
+				}
 				outN.Add(int64(n))
 				if werr := ws.Write(wsBinary, buf[:n]); werr != nil {
 					errCh <- werr
@@ -481,6 +500,15 @@ func bridgePTY(ws *wsConn, pty *sshclient.PTY) (int64, int64, error) {
 				return
 			}
 			if op == wsText {
+				if n, ok := parseOutputAck(payload); ok {
+					if flow != nil {
+						if err := flow.acknowledge(n); err != nil {
+							errCh <- err
+							return
+						}
+					}
+					continue
+				}
 				if cols, rows, ok := parseResize(payload); ok {
 					if err := pty.Resize(cols, rows); err != nil {
 						errCh <- err
@@ -499,12 +527,28 @@ func bridgePTY(ws *wsConn, pty *sshclient.PTY) (int64, int64, error) {
 			}
 		}
 	}()
-	err := <-errCh
+	var err error
+	remaining := 1
+	select {
+	case err = <-errCh:
+	case <-clientClosed:
+		err = io.EOF
+		remaining = 2
+	}
+	if flow != nil {
+		close(flow.stop)
+	}
 	_ = pty.Close()
 	_ = ws.Close()
-	select {
-	case <-errCh:
-	case <-time.After(2 * time.Second):
+	deadline := time.NewTimer(2 * time.Second)
+	defer deadline.Stop()
+	for remaining > 0 {
+		select {
+		case <-errCh:
+			remaining--
+		case <-deadline.C:
+			return inN.Load(), outN.Load(), err
+		}
 	}
 	return inN.Load(), outN.Load(), err
 }

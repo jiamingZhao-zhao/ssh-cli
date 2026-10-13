@@ -4,6 +4,12 @@ const termMap = new Map();
 const TERM_CHUNK = 32 << 10;
 const TERM_INPUT_LIMIT = 4 << 20;
 const transferCtl = new Map();
+const transferJobs = new Map();
+const transferQueue = [];
+const transferProgress = new Map();
+const TRANSFER_HISTORY = 100;
+const TRANSFER_LIMIT = 256;
+let transferPaintTimer = 0;
 const auditHeader = "X-SSH-CLI-Audit-Warning";
 let chartDays = null;
 let chartOps = null;
@@ -509,6 +515,9 @@ function sshui() {
     procView: { pid: "", ppid: "", user: "", cpu: "", mem: "", memPct: "", stat: "", etime: "", cmd: "", cwd: "", cwdNote: "" },
     drop: { over: false, target: "", label: "" },
     transfers: [],
+    transferRunning: false,
+    uploadBusy: false,
+    treeClock: 0,
     downloadDir: "",
     toasts: [],
     menu: { open: false, x: 0, y: 0, entry: null, newOpen: false },
@@ -794,6 +803,12 @@ function sshui() {
       }
     },
 
+    async requestBearer() {
+      const typed = await this.ask("这个监听地址要求 Bearer token。请粘贴启动 ssh-cli ui 时打印的那一行。", "", "password");
+      if (typed == null || !String(typed).trim()) { const err = new Error("需要 Bearer token"); err.outcome = "not_started"; throw err; }
+      const token = String(typed).trim(); sessionStorage.setItem("sshCliBearer", token); return token;
+    },
+
     async api(url, options, beforeSend) {
       const opts = Object.assign({ credentials: "same-origin" }, options || {});
       const method = String(opts.method || "GET").toUpperCase();
@@ -806,10 +821,7 @@ function sshui() {
       if (beforeSend) beforeSend();
       let res = await fetch(url, opts);
       if (res.status === 401) {
-        const typed = await this.ask("这个监听地址要求 Bearer token。请粘贴启动 ssh-cli ui 时打印的那一行。", "", "password");
-        if (typed == null || !String(typed).trim()) throw new Error("需要 Bearer token");
-        sessionStorage.setItem("sshCliBearer", String(typed).trim());
-        headers.Authorization = "Bearer " + String(typed).trim();
+        headers.Authorization = "Bearer " + await this.requestBearer();
         opts.headers = headers;
         if (beforeSend) beforeSend();
         res = await fetch(url, opts);
@@ -1386,6 +1398,7 @@ function sshui() {
       let ws;
       const current = () => termMap.get(id) === entry && entry.generation === generation;
       entry.ready = false;
+      entry.outputAck = false;
       entry.maxLife = false;
       entry.hadError = false;
       term.options.disableStdin = true;
@@ -1396,7 +1409,7 @@ function sshui() {
         if (!current()) return;
         if (!opened.ticket) throw new Error("未收到终端连接凭据，请刷新页面后重试。");
         const proto = location.protocol === "https:" ? "wss:" : "ws:";
-        ws = new WebSocket(proto + "//" + location.host + "/api/terminal/ws?ticket=" + encodeURIComponent(opened.ticket));
+        ws = new WebSocket(proto + "//" + location.host + "/api/terminal/ws?ticket=" + encodeURIComponent(opened.ticket) + "&outputAck=1");
       } catch (err) {
         if (!current()) return;
         this.setTabState(id, "closed");
@@ -1414,6 +1427,7 @@ function sshui() {
           try { state = JSON.parse(text); } catch (err) { /* Legacy close notices are plain text. */ }
           if (state && state.type === "terminal") {
             if (state.state === "ready") {
+              entry.outputAck = state.category === "output_ack";
               entry.ready = true;
               term.options.disableStdin = false;
               app.setTabState(id, "connected");
@@ -1442,7 +1456,12 @@ function sshui() {
           return;
         }
         app.markTabIdle(id);
-        term.write(text || new Uint8Array(ev.data));
+        const output = text || new Uint8Array(ev.data);
+        if (entry.outputAck && !text) {
+          term.write(output, () => {
+            if (current() && ws.readyState === 1) ws.send(JSON.stringify({ type: "output_ack", bytes: output.byteLength }));
+          });
+        } else term.write(output);
       };
       ws.onopen = () => {
         if (current() && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
@@ -1695,7 +1714,11 @@ function sshui() {
       delete this.workspaceCache[this.files.alias];
       this.workspaceCache[this.files.alias] = { files: Object.assign({}, this.files), tree: this.tree, root: this.treeRoot, draft: this.pathDraft, selected: this.selectedPath, scroll: Object.assign({}, this.fileScroll) };
       const keys = Object.keys(this.workspaceCache);
-      if (keys.length > 16) delete this.workspaceCache[keys[0]];
+      const cost = (saved) => (saved.files.entries || []).length + Object.values(saved.tree).reduce((n, node) => n + (node.dirs || []).length, 0);
+      let total = keys.reduce((n, key) => n + cost(this.workspaceCache[key]), 0);
+      while (keys.length > 1 && (keys.length > 8 || total > 16000)) {
+        const key = keys.shift(); total -= cost(this.workspaceCache[key]); delete this.workspaceCache[key];
+      }
     },
 
     workspaceLive() {
@@ -2351,6 +2374,7 @@ function sshui() {
       node.open = true;
       node.loaded = true;
       node.name = this.treeLabel(path);
+      node.used = ++this.treeClock;
       node.dirs = [];
       const list = entries || [];
       for (let i = 0; i < list.length; i++) {
@@ -2358,11 +2382,27 @@ function sshui() {
         const child = String(list[i].path || "");
         const base = this.treeLabel(child || list[i].name);
         node.dirs.push({ name: base, path: child });
-        if (!this.tree[child]) this.tree[child] = { name: base, open: false, loaded: false, dirs: [] };
-        else this.tree[child].name = base;
+        if (this.tree[child]) this.tree[child].name = base;
       }
       this.tree[path] = node;
+      this.pruneTree();
       this.tree = Object.assign({}, this.tree);
+    },
+
+    pruneTree() {
+      const current = this.files.path || "/";
+      let count = Object.keys(this.tree).length;
+      let entries = Object.values(this.tree).reduce((n, node) => n + (node.dirs || []).length, 0);
+      const candidates = Object.keys(this.tree).sort((a, b) => (this.tree[a].used || 0) - (this.tree[b].used || 0));
+      for (const path of candidates) {
+        if (count <= 32 && entries <= 8000) break;
+        if (path === "/" || path === current || current.startsWith(path + "/") || !this.tree[path]) continue;
+        for (const key of Object.keys(this.tree)) {
+          if (key === path || key.startsWith(path + "/")) {
+            entries -= (this.tree[key].dirs || []).length; count--; delete this.tree[key];
+          }
+        }
+      }
     },
 
     async ensureFsRoot() {
@@ -2390,20 +2430,23 @@ function sshui() {
     treeRows() {
       const rows = [];
       const root = this.treeRoot || "";
-      const walk = (path, depth) => {
+      const visited = new Set();
+      const walk = (path, depth, name) => {
+        if (visited.has(path)) return;
+        visited.add(path);
         const node = this.tree[path];
-        if (!node) return;
+        if (!node) { rows.push({ path: path, name: name || this.treeLabel(path), depth: depth, open: false }); return; }
         rows.push({ path: path, name: node.name || path, depth: depth, open: !!node.open });
         if (!node.open) return;
         const dirs = node.dirs || [];
-        for (let i = 0; i < dirs.length; i++) walk(dirs[i].path, depth + 1);
+        for (let i = 0; i < dirs.length; i++) walk(dirs[i].path, depth + 1, dirs[i].name);
       };
       if (root && this.tree[root]) walk(root, 0);
       return rows;
     },
 
     async toggleTree(row) {
-      const node = this.tree[row.path];
+      let node = this.tree[row.path];
       if (node && node.open) {
         node.open = false;
         this.tree = Object.assign({}, this.tree);
@@ -2411,19 +2454,26 @@ function sshui() {
       }
       if (node && node.loaded) {
         node.open = true;
+        node.used = ++this.treeClock;
         this.tree = Object.assign({}, this.tree);
         return;
       }
       const alias = this.liveAlias();
       if (!alias) return;
+      if (node && node.pending) { node.open = true; return; }
+      this.tree[row.path] = { name: row.name || this.treeLabel(row.path), open: true, loaded: false, dirs: [], pending: true, used: ++this.treeClock };
+      node = this.tree[row.path];
       const seq = this.workspaceSeq;
       try {
         const data = await this.postRead("/api/files/list", { alias: alias, path: row.path });
-        if (seq !== this.workspaceSeq || this.liveAlias() !== alias) return;
+        if (seq !== this.workspaceSeq || this.liveAlias() !== alias || this.tree[row.path] !== node || !node.open) return;
         this.noteTree(data.path || row.path, data.entries || []);
       } catch (err) {
-        if (seq !== this.workspaceSeq || this.liveAlias() !== alias) return;
+        if (seq !== this.workspaceSeq || this.liveAlias() !== alias || this.tree[row.path] !== node || !node.open) return;
+        node.open = false;
         this.toast(err.message || "无法展开目录", "bad");
+      } finally {
+        node.pending = false;
       }
     },
 
@@ -2547,12 +2597,13 @@ function sshui() {
     },
 
     async wsUpload(ev) {
-      const files = ev.target.files;
+      const files = Array.from(ev.target.files || []);
       ev.target.value = "";
       await this.enqueueUploads(files, this.files.path);
     },
 
     patchTransfer(id, patch) {
+      transferProgress.delete(id);
       const next = [];
       const items = this.transfers || [];
       let found = false;
@@ -2564,20 +2615,97 @@ function sshui() {
       }
       if (!found) next.push(Object.assign({ id: id }, patch));
       this.transfers = next;
+      if (patch.active === false) this.pruneTransfers();
+    },
+
+    progressTransfer(id, patch) {
+      transferProgress.set(id, Object.assign({}, transferProgress.get(id), patch));
+      if (!transferPaintTimer) transferPaintTimer = setTimeout(() => this.flushTransferProgress(), 100);
+    },
+
+    flushTransferProgress() {
+      clearTimeout(transferPaintTimer); transferPaintTimer = 0;
+      const pending = Array.from(transferProgress.entries()); transferProgress.clear();
+      for (const [id, patch] of pending) {
+        if (this.transfers.some((item) => item.id === id && item.active)) this.patchTransfer(id, patch);
+      }
+    },
+
+    transferNeedsVerification(item) {
+      return !!item && (!!item.needsVerification || item.label === "结果待确认" || item.label === "已请求取消");
+    },
+
+    pruneTransfers(reserve) {
+      const protectedCount = this.transfers.filter((item) => item.active || this.transferNeedsVerification(item)).length;
+      const keep = Math.max(0, Math.min(TRANSFER_HISTORY, TRANSFER_LIMIT - protectedCount - (reserve || 0)));
+      let settled = this.transfers.filter((item) => !item.active && !this.transferNeedsVerification(item)).length;
+      this.transfers = this.transfers.filter((item) => item.active || this.transferNeedsVerification(item) || --settled < keep);
+    },
+
+    canQueueTransfers(count) {
+      const protectedCount = this.transfers.filter((item) => item.active || this.transferNeedsVerification(item)).length;
+      if (protectedCount + count > TRANSFER_LIMIT) {
+        this.toast("本次选择超过队列余量（最多 256 项），请分批传输，或先核验旧记录。", "bad"); return false;
+      }
+      this.pruneTransfers(count); return true;
+    },
+
+    queueTransfer(item, run) {
+      item.active = true; item.queued = true; item.label = "等待传输";
+      this.patchTransfer(item.id, item);
+      const promise = new Promise((resolve) => transferJobs.set(item.id, { run: run, resolve: resolve }));
+      transferQueue.push(item.id); this.drainTransfers(); return promise;
+    },
+
+    transferAlive(id) {
+      return this.transfers.some((item) => item.id === id && item.active);
+    },
+
+    async drainTransfers() {
+      if (this.transferRunning) return;
+      this.transferRunning = true;
+      try {
+        while (transferQueue.length) {
+          const id = transferQueue.shift(), job = transferJobs.get(id);
+          if (!job) continue;
+          this.patchTransfer(id, { queued: false, label: "正在准备" });
+          try { await job.run(); }
+          catch (err) {
+            const item = this.transfers.find((t) => t.id === id);
+            if (item && item.active) this.finishTransfer(id, { label: item.started ? "结果待确认" : "失败", needsVerification: !!item.started, error: err.message || "传输失败" });
+          } finally {
+            transferJobs.delete(id);
+            job.resolve(this.transfers.find((item) => item.id === id));
+          }
+        }
+      } finally { this.transferRunning = false; }
+    },
+
+    cancelBatch(batch) {
+      if (!batch) return;
+      for (const item of this.transfers.filter((t) => t.active && t.batch === batch)) this.cancelTransfer(item.id);
+    },
+
+    async verifyTransfer(id) {
+      const item = this.transfers.find((t) => t.id === id);
+      if (!item || item.active || !this.transferNeedsVerification(item)) return;
+      if (!await this.askConfirm("主机：" + item.alias + "\n文件：" + item.name + "\n目标：" + (item.local || item.remote || item.name) + "\n确认已核验目标文件？这不会重新传输或撤销操作。")) return;
+      if (!this.transfers.some((t) => t.id === id && this.transferNeedsVerification(t))) return;
+      this.finishTransfer(id, { needsVerification: false, label: "已核验", error: "" });
     },
 
     finishTransfer(id, patch) {
-      this.patchTransfer(id, Object.assign({ active: false }, patch));
+      this.patchTransfer(id, Object.assign({}, transferProgress.get(id), patch, { active: false }));
     },
 
     hasFinishedTransfers() {
       const items = this.transfers || [];
-      for (let i = 0; i < items.length; i++) if (!items[i].active) return true;
+      for (let i = 0; i < items.length; i++) if (!items[i].active && !this.transferNeedsVerification(items[i])) return true;
       return false;
     },
 
     clearFinishedTransfers() {
-      this.transfers = (this.transfers || []).filter((t) => t.active);
+      this.transfers = (this.transfers || []).filter((t) => t.active || this.transferNeedsVerification(t));
     },
 
     canOpenDownload(item) {
@@ -2611,13 +2739,13 @@ function sshui() {
       return this.formatBytes(entry.size);
     },
 
-    async enqueueUploads(fileList, remoteDir) {
-      const alias = this.liveAlias();
+    async enqueueUploads(fileList, remoteDir, explicitAlias, confirmText) {
+      const alias = explicitAlias || this.liveAlias();
       if (!alias) {
         this.toast("先打开终端或点「连接」。", "bad");
         return;
       }
-      const dest = remoteDir || this.files.path;
+      const dest = remoteDir || (explicitAlias ? "" : this.files.path);
       if (!dest) {
         this.toast("先刷新目录，再上传。", "bad");
         return;
@@ -2626,29 +2754,39 @@ function sshui() {
       const list = fileList || [];
       for (let i = 0; i < list.length; i++) files.push(list[i]);
       if (!files.length) return;
+      if (!this.canQueueTransfers(files.length)) return;
       this.setError("files", "");
-      await this.ensureSession();
-      for (let i = 0; i < files.length; i++) {
-        await this.uploadOne(alias, files[i], dest);
-      }
+      const batch = operationID();
+      const jobs = files.map((file) => {
+        const id = "up" + operationID();
+        return this.queueTransfer({ id: id, batch: batch, alias: alias, remote: dest, kind: "upload", name: file.name, total: file.size || 0, loaded: 0 }, async () => {
+          await this.ensureSession();
+          if (this.transferAlive(id)) await this.uploadOne(alias, file, dest, id, confirmText);
+        });
+      });
+      files.length = 0;
+      const results = await Promise.all(jobs);
       if (this.liveAlias() === alias && this.files.path === dest && this.files.mode !== "history") await this.listFiles(dest);
+      return results;
     },
 
-    uploadOne(alias, file, remoteDir) {
+    uploadOne(alias, file, remoteDir, queuedID, initialConfirm) {
       const app = this;
-      const id = "up" + operationID();
+      const id = queuedID || "up" + operationID();
       const item = { id: id, alias: alias, kind: "upload", name: file.name, loaded: 0, total: file.size || 0, active: true, label: "发送到本机" };
       this.patchTransfer(id, item);
       const alive = () => (app.transfers || []).some((t) => t.id === id && t.active);
-      const commit = (patch) => {
+      const commit = (patch, progress) => {
         if (!alive()) return;
         Object.assign(item, patch);
-        app.patchTransfer(id, patch);
+        if (progress) app.progressTransfer(id, patch);
+        else app.patchTransfer(id, patch);
       };
       return new Promise((resolve) => {
+        let authAsked = false;
         const send = (confirmText, overwrite) => {
           const xhr = new XMLHttpRequest();
-          transferCtl.set(id, xhr);
+          transferCtl.set(id, { abort() { xhr.abort(); transferCtl.delete(id); resolve(); } });
           const fd = new FormData();
           fd.set("alias", alias);
           fd.set("remote", remoteDir);
@@ -2677,7 +2815,7 @@ function sshui() {
               try { msg = JSON.parse(line); } catch (err) { continue; }
               if (msg && msg.ok == null && msg.loaded != null) {
                 remoteStarted = true;
-                commit({ loaded: msg.loaded, total: msg.total || item.total || 0, active: true, label: "写入远端" });
+                commit({ loaded: msg.loaded, total: msg.total || item.total || 0, active: true, label: "写入远端" }, true);
               }
             }
           };
@@ -2690,22 +2828,32 @@ function sshui() {
                 total: file.size || 0,
                 active: true,
                 label: ev.loaded === ev.total ? "本机接收完成，等待远端确认" : "发送到本机"
-              });
+              }, true);
             }
           };
           xhr.onerror = () => {
-            commit({ active: false, label: "结果待确认", error: "连接中断，远端可能已经写入。请核验目标文件，不要直接重试。" });
+            if (!alive()) { transferCtl.delete(id); resolve(); return; }
+            commit({ active: false, needsVerification: true, label: "结果待确认", error: "连接中断，远端可能已经写入。请核验目标文件，不要直接重试。" });
             transferCtl.delete(id);
             app.toast(file.name + " 上传失败", "bad");
             resolve();
           };
           xhr.onabort = () => {
-            commit({ active: false, label: "已请求取消", error: "请求已停止，远端可能已经写入。请核验目标文件。" });
+            commit({ active: false, needsVerification: true, label: "已请求取消", error: "请求已停止，远端可能已经写入。请核验目标文件。" });
             transferCtl.delete(id);
             resolve();
           };
           xhr.onload = async () => {
             if (!alive()) { transferCtl.delete(id); resolve(); return; }
+            if (xhr.status === 401) {
+              commit({ started: false, label: "等待身份验证" });
+              try {
+                if (authAsked) throw new Error("身份验证失败，请检查 Bearer token。");
+                authAsked = true; await app.requestBearer();
+                if (alive()) { send(confirmText, overwrite); return; }
+              } catch (err) { commit({ active: false, label: "失败", error: err.message }); }
+              transferCtl.delete(id); resolve(); return;
+            }
             let data = {};
             const raw = String(xhr.responseText || "").trim();
             try {
@@ -2713,7 +2861,7 @@ function sshui() {
               app.noteAudit(data);
               if (typeof data.ok !== "boolean") throw new Error("missing final result");
             } catch (err) {
-              commit({ active: false, label: "结果待确认", error: "未收到完整传输结果，请核验目标文件，不要直接重试。" });
+              commit({ active: false, needsVerification: true, label: "结果待确认", error: "未收到完整传输结果，请核验目标文件，不要直接重试。" });
               transferCtl.delete(id);
               app.toast(file.name + "：" + plainBodyMessage(raw, xhr.statusText), "bad");
               resolve();
@@ -2743,17 +2891,17 @@ function sshui() {
             }
             transferCtl.delete(id);
             if (xhr.status < 200 || xhr.status >= 300 || data.ok === false) {
-              commit({ active: false, label: "失败", error: friendlyError(data.error, xhr.statusText || "上传失败") });
+              const unknown = data.outcome === "unknown" || xhr.status >= 500;
+              commit({ active: false, needsVerification: unknown, label: unknown ? "结果待确认" : "失败", error: friendlyError(data.error, xhr.statusText || "上传失败") + (unknown ? "；目标文件可能部分写入，请核验后再重试。" : "") });
               app.toast(file.name + "：" + (data.error || xhr.statusText || "上传失败"), "bad");
             } else {
               commit({ active: false, loaded: item.total || item.loaded, label: "完成" });
-              app.finishTransfer(id, { loaded: item.total || item.loaded, label: "完成" });
             }
             resolve();
           };
-          try { xhr.send(fd); } catch (err) { xhr.onerror(); }
+          try { commit({ started: true, label: "发送到本机" }); xhr.send(fd); } catch (err) { xhr.onerror(); }
         };
-        send("");
+        send(initialConfirm || "");
       });
     },
 
@@ -2762,8 +2910,16 @@ function sshui() {
       const alias = explicitAlias || this.liveAlias();
       if (!alias || !entry || !entry.path) return;
       this.setError("files", "");
-      await this.ensureSession();
+      if (!this.canQueueTransfers(1)) return;
       const id = "dn" + operationID();
+      const local = this.downloadDir || "", target = Object.assign({}, entry);
+      return this.queueTransfer({ id: id, alias: alias, kind: "download", name: target.name || "download", remote: target.path, local: local }, async () => {
+        await this.ensureSession();
+        if (this.transferAlive(id)) await this.downloadOne(target, alias, id, local);
+      });
+    },
+
+    async downloadOne(entry, alias, id, local) {
       const name = entry.name || "download";
       const known = !entry.dir && Number(entry.size) > 0 ? Number(entry.size) : 0;
       this.patchTransfer(id, { id: id, alias: alias, kind: "download", name: name, loaded: 0, total: known, active: true, label: "下载中" });
@@ -2776,13 +2932,16 @@ function sshui() {
             method: "POST",
             signal: ctrl.signal,
             headers: { "Content-Type": "application/json", "Accept": "application/x-ndjson" },
-            body: JSON.stringify({ alias: alias, path: entry.path, local: this.downloadDir || "", confirm: confirmText })
+            body: JSON.stringify({ alias: alias, path: entry.path, local: local, confirm: confirmText })
+          }, () => {
+            if (!this.transferAlive(id)) { const err = new Error("已取消"); err.name = "AbortError"; throw err; }
+            this.patchTransfer(id, { started: true, label: "下载中" });
           });
           const ctype = String(res.headers.get("content-type") || "");
           const data = ctype.indexOf("ndjson") >= 0
             ? await readNDJSON(res, (msg) => {
               if (ctrl.signal.aborted) return;
-              this.patchTransfer(id, { loaded: Number(msg.loaded) || 0, total: Number(msg.total) || known, active: true, label: "下载中" });
+              this.progressTransfer(id, { loaded: Number(msg.loaded) || 0, total: Number(msg.total) || known, active: true, label: "下载中" });
             })
             : await this.parseJSON(res);
           this.noteAudit(data);
@@ -2801,16 +2960,15 @@ function sshui() {
           }
           if (!res.ok || data.ok !== true) {
             const err = new Error(friendlyError(data.error, res.statusText || "传输结果未确认，请核验目标文件。"));
-            err.knownFailure = data.ok === false;
+            err.knownFailure = data.ok === false && data.outcome !== "unknown";
             throw err;
           }
           const saved = data.local || "";
           const label = saved ? ("已保存到 " + saved) : "完成";
-          const current = (this.transfers || []).find((t) => t.id === id) || {};
+          const current = Object.assign({}, (this.transfers || []).find((t) => t.id === id), transferProgress.get(id));
           let totalBytes = Number(current.total) || known || 0;
           let loadedBytes = Number(current.loaded) || 0;
           if (totalBytes > 0) loadedBytes = totalBytes;
-          this.patchTransfer(id, { loaded: loadedBytes, total: totalBytes, active: false, label: label, local: saved, kind: "download" });
           this.finishTransfer(id, { loaded: loadedBytes, total: totalBytes, label: label, local: saved, kind: "download" });
           if (saved) this.toast(label);
           return;
@@ -2821,7 +2979,8 @@ function sshui() {
           const item = this.transfers.find((t) => t.id === id);
           if (item && item.active) this.finishTransfer(id, { label: "已取消" });
         } else {
-          this.finishTransfer(id, { label: err.knownFailure ? "失败" : "结果待确认", error: (err.message || "下载失败") + (err.knownFailure ? "" : "；请核验本机保存目录，不要直接重试。") });
+          const known = err.knownFailure || err.outcome === "not_started";
+          this.finishTransfer(id, { needsVerification: !known, label: known ? "失败" : "结果待确认", error: (err.message || "下载失败") + (known ? "" : "；请核验本机保存目录，不要直接重试。") });
           this.toast((entry.name || "文件") + "：" + (err.message || "下载失败"), "bad");
         }
       } finally {
@@ -2845,8 +3004,12 @@ function sshui() {
       if (!active) return;
       const ctl = transferCtl.get(id);
       const item = items.find((t) => t.id === id);
-      const waiting = item && String(item.label || "").indexOf("等待") === 0;
-      this.finishTransfer(id, { label: waiting ? "已取消" : "已请求取消", error: waiting ? "" : "请求已停止，目标文件可能已经写入。请核验后再重试。" });
+      const waiting = item && (!item.started || item.queued || String(item.label || "").indexOf("等待") === 0);
+      this.finishTransfer(id, { needsVerification: !waiting, queued: false, label: waiting ? "已取消" : "已请求取消", error: waiting ? "" : "请求已停止，目标文件可能已经写入。请核验后再重试。" });
+      if (!ctl) {
+        const job = transferJobs.get(id), index = transferQueue.indexOf(id);
+        if (index >= 0) { transferQueue.splice(index, 1); transferJobs.delete(id); if (job) job.resolve(this.transfers.find((t) => t.id === id)); }
+      }
       if (ctl && ctl.abort) ctl.abort();
     },
 
@@ -3639,26 +3802,22 @@ function sshui() {
     },
 
     async upload(ev) {
+      if (this.uploadBusy) return;
+      this.uploadBusy = true;
       this.setError("operate", "");
       const fd = new FormData(ev.target);
       try {
-        for (let attempt = 0; attempt < 4; attempt++) {
-          const res = await this.api("/api/upload", { method: "POST", body: fd });
-          const data = await this.parseJSON(res);
-          if (res.status === 409 && data.needsOverwrite) {
-            if (!await this.askConfirm("主机：" + fd.get("alias") + "\n覆盖文件：" + data.path + "\n覆盖后无法恢复原内容，继续？")) return;
-            fd.set("overwrite", "true"); continue;
-          }
-          if (res.status === 409 && data.needsConfirm) {
-            const typed = await this.ask(data.error + "\n请输入：" + data.confirm);
-            if (typed == null) return;
-            fd.set("confirm", typed); continue;
-          }
-          if (!res.ok || data.ok === false) throw new Error(friendlyError(data.error, res.statusText));
-          ev.target.reset(); this.operateOut = "上传完成"; this.loadAudit(); return;
+        const results = await this.enqueueUploads([fd.get("file")], String(fd.get("remote") || ""), String(fd.get("alias") || ""), String(fd.get("confirm") || ""));
+        if (!results) return;
+        const item = results[0];
+        if (item && item.label === "完成") {
+          const current = new FormData(ev.target);
+          if (["alias", "remote", "confirm", "file"].every((key) => current.get(key) === fd.get(key))) ev.target.reset();
+          this.operateOut = "上传完成"; this.loadAudit();
         }
-        throw new Error("确认未完成");
+        else this.setError("operate", item ? item.label + "：" + (item.error || item.name) : "请检查传输队列。");
       } catch (err) { this.setError("operate", err.message); }
+      finally { this.uploadBusy = false; }
     },
 
     async download(ev) {

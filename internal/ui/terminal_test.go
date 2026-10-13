@@ -670,7 +670,7 @@ func (f termFixture) post(t *testing.T, path, body string, browser bool) *http.R
 	return res
 }
 
-func startTermFixture(t *testing.T) termFixture {
+func startTermFixture(t *testing.T, outputAck ...bool) termFixture {
 	t.Helper()
 	sshSrv, err := sshtest.Start("tester", "ui-secret", nil)
 	if err != nil {
@@ -732,7 +732,11 @@ func startTermFixture(t *testing.T) termFixture {
 	if err := json.Unmarshal(openBody, &ticket); err != nil || ticket.Ticket == "" {
 		t.Fatalf("ticket %v %s", err, openBody)
 	}
-	ws, err := dialWebSocket(web.URL+"/api/terminal/ws?ticket="+ticket.Ticket, browserSocket(web.URL, cookie))
+	query := ""
+	if len(outputAck) > 0 && outputAck[0] {
+		query = "&outputAck=1"
+	}
+	ws, err := dialWebSocket(web.URL+"/api/terminal/ws?ticket="+ticket.Ticket+query, browserSocket(web.URL, cookie))
 	if err != nil {
 		t.Fatal(err)
 	}

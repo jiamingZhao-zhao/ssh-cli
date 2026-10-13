@@ -139,9 +139,11 @@ test('100 percent local upload waits for remote completion and ignores late loca
   const pending = app.uploadOne('a', { name: '中文.txt', size: 100 }, '/work');
   const xhr = requests[0];
   xhr.upload.onprogress({ lengthComputable: true, loaded: 120, total: 120 });
+  app.flushTransferProgress();
   assert.equal(app.transfers[0].active, true); assert.match(app.transferDetail(app.transfers[0]), /等待远端确认/);
   xhr.responseText = '{"loaded":40,"total":100}\n'; xhr.onprogress();
   xhr.upload.onprogress({ lengthComputable: true, loaded: 120, total: 120 });
+  app.flushTransferProgress();
   assert.equal(app.transfers[0].loaded, 40); assert.equal(app.transfers[0].label, '写入远端');
   xhr.status = 200; xhr.responseText += '{"ok":true}\n'; await xhr.onload(); await pending;
   assert.equal(app.transfers[0].label, '完成'); assert.equal(app.transfers[0].active, false);
@@ -738,5 +740,209 @@ test('transfers do not keep a browser byte cap', () => {
   assert.equal(source.includes('128 MiB'), false);
   assert.equal(source.includes('63 MiB'), false);
   assert.equal(source.includes('new Blob(chunks)'), false);
-  assert.equal(source.includes('local: this.downloadDir'), true);
+});
+
+test('multiple upload batches share one worker and pending files are visible immediately', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work'; app.ensureSession = async () => {};
+  app.listFiles = async () => {}; const releases = [], order = []; let active = 0, peak = 0;
+  app.uploadOne = async (_alias, file, _dest, id) => {
+    active++; peak = Math.max(peak, active); order.push(file.name);
+    await new Promise(resolve => releases.push(resolve)); active--;
+    app.finishTransfer(id, { label: '完成' });
+  };
+  const first = app.enqueueUploads([{ name: 'one' }, { name: 'two' }], '/work');
+  const second = app.enqueueUploads([{ name: 'three' }], '/work');
+  assert.equal(app.transfers.length, 3); assert.equal(app.transfers.filter(t => t.queued).length, 2);
+  for (let i = 0; i < 3; i++) {
+    while (releases.length <= i) await new Promise(resolve => setImmediate(resolve));
+    releases[i]();
+  }
+  await Promise.all([first, second]); assert.equal(peak, 1); assert.deepEqual(order, ['one', 'two', 'three']);
+});
+
+test('queued upload cancellation releases the file without opening a request', async () => {
+  const { app, requests } = uploadFixture(); connected(app); app.files.path = '/work';
+  app.ensureSession = async () => {}; app.listFiles = async () => {};
+  const pending = app.enqueueUploads([{ name: 'one', size: 1 }, { name: 'two', size: 1 }], '/work');
+  const queued = app.transfers.find(t => t.queued); app.cancelTransfer(queued.id);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 1); requests[0].status = 200; requests[0].responseText = '{"ok":true}';
+  await requests[0].onload(); const results = await pending;
+  assert.equal(requests.length, 1); assert.equal(results[1].active, false); assert.equal(results[1].label, '已取消');
+});
+
+test('cancel batch affects its running and pending items and lets the next batch continue', async () => {
+  const { app, requests } = uploadFixture(); connected(app); app.files.path = '/work';
+  app.ensureSession = async () => {}; app.listFiles = async () => {};
+  const first = app.enqueueUploads([{ name: 'one', size: 1 }, { name: 'two', size: 1 }], '/work');
+  const second = app.enqueueUploads([{ name: 'next', size: 1 }], '/work');
+  await new Promise(resolve => setImmediate(resolve));
+  app.cancelBatch(app.transfers[0].batch);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 2); assert.equal(app.transfers[1].label, '已取消');
+  requests[1].status = 200; requests[1].responseText = '{"ok":true}'; await requests[1].onload();
+  await Promise.all([first, second]); assert.equal(app.transfers[2].label, '完成');
+  assert.equal(app.transferNeedsVerification(app.transfers[0]), true);
+});
+
+test('cancel during session preparation cannot start a late transfer', async () => {
+  const { app, requests } = uploadFixture(); connected(app); app.files.path = '/work'; const session = deferred();
+  app.ensureSession = () => session.promise; app.listFiles = async () => {};
+  const pending = app.enqueueUploads([{ name: 'one', size: 1 }], '/work'); app.cancelTransfer(app.transfers[0].id);
+  session.resolve(); await pending; assert.equal(requests.length, 0); assert.equal(app.transfers[0].label, '已取消');
+});
+
+test('cancelling an already-finished XHR awaiting confirmation releases the global worker', async () => {
+  const { app, requests } = uploadFixture(); connected(app); app.files.path = '/work';
+  app.ensureSession = async () => {}; app.listFiles = async () => {}; const answer = deferred(); app.askConfirm = () => answer.promise;
+  const pending = app.enqueueUploads([{ name: 'one', size: 1 }, { name: 'two', size: 1 }], '/work');
+  await new Promise(resolve => setImmediate(resolve));
+  const xhr = requests[0]; xhr.status = 409; xhr.responseText = '{"ok":false,"needsOverwrite":true,"path":"/work/one"}';
+  const prompt = xhr.onload(); xhr.abort = () => {}; // Native DONE XHR.abort emits no abort event.
+  app.cancelTransfer(app.transfers[0].id); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(requests.length, 2); answer.resolve(true); await prompt;
+  assert.equal(requests.length, 2); requests[1].status = 200; requests[1].responseText = '{"ok":true}'; await requests[1].onload(); await pending;
+});
+
+test('upload form submits once and keeps user edits made while queued', async () => {
+  const { app, sandbox } = fixture(), result = deferred();
+  const file = { name: 'one', size: 1 }, fields = { alias: 'a', remote: '/old', confirm: '', file };
+  sandbox.FormData = class { constructor() { this.fields = { ...fields }; } get(key) { return this.fields[key]; } };
+  let requests = 0, reset = 0;
+  app.enqueueUploads = () => { requests++; return result.promise; };
+  const ev = { target: { reset() { reset++; } } }; const pending = app.upload(ev); await app.upload(ev);
+  fields.remote = '/new'; result.resolve([{ label: '完成' }]); await pending;
+  assert.equal(requests, 1); assert.equal(reset, 0); assert.equal(app.uploadBusy, false);
+});
+
+test('downloads wait behind uploads and preserve their selected destination', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work'; app.ensureSession = async () => {};
+  app.listFiles = async () => {}; const release = deferred(); let target;
+  app.uploadOne = async (_a, _f, _p, id) => { await release.promise; app.finishTransfer(id, { label: '完成' }); };
+  app.downloadOne = async (entry, alias, id, local) => { target = { entry, alias, local }; app.finishTransfer(id, { label: '完成' }); };
+  const upload = app.enqueueUploads([{ name: 'one' }], '/work'); app.downloadDir = '/original';
+  const entry = { path: '/source/one', name: 'one' }; const download = app.wsDownload(entry);
+  app.downloadDir = '/changed'; entry.path = '/changed'; app.explicitAlias = app.termAlias = 'b';
+  assert.equal(target, undefined); release.resolve(); await Promise.all([upload, download]);
+  assert.equal(target.local, '/original'); assert.equal(target.alias, 'a'); assert.equal(target.entry.path, '/source/one');
+});
+
+test('clearing history and automatic pruning never discard unresolved transfers', async () => {
+  const { app } = fixture();
+  app.patchTransfer('unknown', { active: false, label: '结果待确认', needsVerification: true });
+  for (let i = 0; i < 160; i++) app.finishTransfer('done' + i, { label: '完成' });
+  assert.equal(app.transfers.length, 101); assert.equal(app.transfers[0].id, 'unknown');
+  app.clearFinishedTransfers(); assert.equal(app.transfers.length, 1); assert.equal(app.hasFinishedTransfers(), false);
+  app.askConfirm = async () => false; await app.verifyTransfer('unknown'); assert.equal(app.transfers.length, 1);
+  app.askConfirm = async () => true; await app.verifyTransfer('unknown'); app.clearFinishedTransfers(); assert.equal(app.transfers.length, 0);
+});
+
+test('queue admission is bounded and never evicts unknown results to make room', () => {
+  const { app } = fixture(); app.toast = () => {};
+  app.transfers = Array.from({ length: 256 }, (_, i) => ({ id: String(i), needsVerification: true }));
+  assert.equal(app.canQueueTransfers(1), false); assert.equal(app.transfers.length, 256);
+});
+
+test('progress bursts coalesce and late progress cannot revive a completed row', async () => {
+  const { app, requests, timers } = uploadFixture();
+  const pending = app.uploadOne('a', { name: 'a', size: 100 }, '/work'); const xhr = requests[0];
+  for (let i = 1; i <= 100; i++) xhr.upload.onprogress({ lengthComputable: true, loaded: i, total: 100 });
+  assert.equal(timers.filter(Boolean).length, 1); assert.equal(app.transfers[0].loaded, 0);
+  app.flushTransferProgress(); assert.equal(app.transfers[0].loaded, 100); assert.equal(app.transfers[0].active, true);
+  xhr.status = 200; xhr.responseText = '{"ok":true}'; await xhr.onload(); await pending;
+  xhr.upload.onprogress({ lengthComputable: true, loaded: 1, total: 100 }); app.flushTransferProgress();
+  assert.equal(app.transfers[0].label, '完成'); assert.equal(app.transfers[0].active, false);
+});
+
+test('partial remote write reported as an error is retained for verification', async () => {
+  const { app, requests } = uploadFixture(); const pending = app.uploadOne('a', { name: 'a', size: 100 }, '/work');
+  requests[0].status = 400; requests[0].responseText = '{"ok":false,"outcome":"unknown","error":"write failed"}';
+  await requests[0].onload(); await pending; app.clearFinishedTransfers();
+  assert.equal(app.transfers.length, 1); assert.equal(app.transferNeedsVerification(app.transfers[0]), true);
+});
+
+test('cancel just after an overwrite retry requires verification even before progress arrives', async () => {
+  const { app, requests } = uploadFixture(); app.askConfirm = async () => true;
+  const pending = app.uploadOne('a', { name: 'a', size: 100 }, '/work');
+  requests[0].status = 409; requests[0].responseText = '{"ok":false,"needsOverwrite":true,"path":"/work/a"}';
+  await requests[0].onload(); assert.equal(requests.length, 2);
+  app.cancelTransfer(app.transfers[0].id); await pending;
+  assert.equal(app.transferNeedsVerification(app.transfers[0]), true);
+});
+
+test('upload authentication retries only after a known 401 and cancellation stops a late retry', async () => {
+  const { app, requests, sandbox } = uploadFixture(); let token;
+  sandbox.sessionStorage.setItem = (_key, value) => { token = value; }; app.ask = async () => 'new-token';
+  const pending = app.uploadOne('a', { name: 'a', size: 1 }, '/work');
+  requests[0].status = 401; requests[0].responseText = 'unauthorized'; await requests[0].onload();
+  assert.equal(requests.length, 2); assert.equal(token, 'new-token');
+  app.cancelTransfer(app.transfers[0].id); await pending; assert.equal(app.transferNeedsVerification(app.transfers[0]), true);
+  const second = uploadFixture(), answer = deferred(); second.app.ask = () => answer.promise;
+  second.sandbox.sessionStorage.setItem = () => {};
+  const stopped = second.app.uploadOne('a', { name: 'a', size: 1 }, '/work'); second.requests[0].status = 401;
+  const prompt = second.requests[0].onload(); second.app.cancelTransfer(second.app.transfers[0].id);
+  answer.resolve('token'); await prompt; await stopped; assert.equal(second.requests.length, 1);
+  assert.equal(second.app.transferNeedsVerification(second.app.transfers[0]), false);
+});
+
+test('cancelled HTTP authentication is not mistaken for an accepted command or download', async () => {
+  const { app, sandbox } = fixture(); app.csrf = 'csrf';
+  sandbox.sessionStorage = { getItem: () => '' }; sandbox.fetch = async () => jsonReply({}, 401);
+  app.ask = async () => null;
+  await app.wsDownload({ path: '/source/a', name: 'a' }, 'a');
+  assert.equal(app.transferNeedsVerification(app.transfers[0]), false); assert.equal(app.transfers[0].label, '失败');
+  app.exec.alias = 'a'; app.exec.command = 'echo once'; await app.runExec();
+  assert.equal(app.execUncertain, false); assert.equal(app.exec.command, 'echo once');
+});
+
+test('terminal acknowledges binary byte counts only after consumption and never on a replacement socket', async () => {
+  const { app, entry, sockets, control } = terminalFixture(); const callbacks = [];
+  entry.term.write = (_data, callback) => { if (callback) callbacks.push(callback); };
+  await app.connectTerm(entry); control(sockets[0], 'ready', 'output_ack');
+  sockets[0].onmessage({ data: new TextEncoder().encode('中文').buffer }); assert.equal(sockets[0].sent.length, 0);
+  callbacks.shift()(); assert.deepEqual(JSON.parse(sockets[0].sent[0]), { type: 'output_ack', bytes: 6 });
+  sockets[0].onmessage({ data: new Uint8Array(100).buffer }); sockets[0].close(); await app.reconnectTerminal();
+  callbacks.shift()(); assert.equal(sockets[1].sent.length, 0); assert.equal(sockets[0].sent.length, 1);
+});
+
+test('wide directory listings do not create thousands of placeholder nodes', () => {
+  const { app } = fixture(); app.files.path = '/work';
+  app.noteTree('/work', Array.from({ length: 2000 }, (_, i) => ({ dir: true, name: 'd' + i, path: '/work/d' + i })));
+  assert.ok(Object.keys(app.tree).length < 5); assert.equal(app.treeRows().length, 2002);
+});
+
+test('collapsing a loading directory prevents duplicate requests and late reopening', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work'; app.noteTree('/work', [{ path: '/work/child', dir: true, name: 'child' }]);
+  const reply = deferred(); let requests = 0; app.postRead = () => { requests++; return reply.promise; };
+  const row = { path: '/work/child', name: 'child' }; const pending = app.toggleTree(row);
+  await app.toggleTree(row); await app.toggleTree(row); await app.toggleTree(row);
+  reply.resolve({ path: row.path, entries: [{ path: '/work/child/deep', dir: true }] }); await pending;
+  assert.equal(requests, 1); assert.equal(app.tree[row.path].open, false); assert.equal(app.tree[row.path].pending, false);
+  assert.ok(!app.treeRows().some(item => item.path === '/work/child/deep'));
+});
+
+test('a directory read finishing after a host switch clears the original cache busy state', async () => {
+  const { app } = fixture(); connected(app); app.files.path = '/work'; app.noteTree('/work', []);
+  const reply = deferred(); app.postRead = () => reply.promise;
+  const pending = app.toggleTree({ path: '/work/child', name: 'child' }); const original = app.tree['/work/child'];
+  app.rememberWorkspace(); app.tree = {}; app.workspaceSeq++; app.termAlias = app.explicitAlias = 'b';
+  reply.resolve({ path: '/work/child', entries: [] }); await pending;
+  assert.equal(original.pending, false); assert.equal(app.tree['/work/child'], undefined);
+});
+
+test('directory cache evicts old branches while retaining the current path and visible reloadable rows', () => {
+  const { app } = fixture(); app.files.path = '/current/deep'; app.noteTree('/current/deep', []);
+  for (let i = 0; i < 50; i++) app.noteTree('/old' + i, []);
+  assert.ok(Object.keys(app.tree).length <= 32); assert.ok(app.tree['/current']); assert.ok(app.tree['/current/deep']);
+  assert.equal(app.tree['/old0'], undefined); assert.ok(app.treeRows().some(row => row.path === '/old0' && !row.open));
+});
+
+test('workspace cache respects aggregate entry budget and retains the most recently used host', () => {
+  const { app } = fixture();
+  for (let i = 0; i < 12; i++) {
+    app.files = { alias: 'h' + i, entries: Array.from({ length: 2000 }, () => ({})) };
+    app.tree = {}; app.rememberWorkspace();
+  }
+  assert.ok(Object.keys(app.workspaceCache).length <= 8); assert.ok(app.workspaceCache.h11);
+  assert.equal(app.workspaceCache.h0, undefined);
 });

@@ -1647,6 +1647,7 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
   border-bottom: 1px solid var(--mh-line);
 }
 .ws-dl-list .ws-queue-name { flex: none; font-weight: 650; }
+.ws-dl-list .ws-queue-row { min-height: 76px; }
 .ws-dl-list .ws-queue-name.is-open {
   border: 0;
   background: transparent;
@@ -1674,8 +1675,9 @@ td.ws-name-cell.is-dir { color: var(--mh-link); font-weight: 650; }
 .ws-queue-foot .ws-queue-meta {
   flex: 1 1 auto;
   min-width: 0;
-  overflow-wrap: anywhere;
-  white-space: normal;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .ws-queue-foot .ws-seg-btn { flex-shrink: 0; }
 /* xterm measures glyphs in a wide offscreen element attached to body. */

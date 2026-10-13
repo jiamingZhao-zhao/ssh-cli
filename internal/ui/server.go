@@ -23,6 +23,7 @@ import (
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/policyhmac"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/session"
+	"golang.org/x/crypto/ssh"
 )
 
 //go:embed web/*
@@ -167,17 +168,18 @@ func Serve(ctx context.Context, addr, dir string, allowRemote bool, bearer strin
 }
 
 type service struct {
-	dir         string
-	allowRemote bool
-	bearer      string
-	mu          sync.Mutex
-	sessions    map[string]string
-	tickets     map[string]termTicket
-	terms       map[*wsConn]string
-	sockets     map[*wsConn]struct{}
-	pool        *session.Pool
-	opMu        sync.Mutex
-	operations  map[string]*operation
+	dir             string
+	allowRemote     bool
+	bearer          string
+	mu              sync.Mutex
+	sessions        map[string]string
+	tickets         map[string]termTicket
+	terms           map[*wsConn]string
+	terminalClients map[*ssh.Client]chan struct{}
+	sockets         map[*wsConn]struct{}
+	pool            *session.Pool
+	opMu            sync.Mutex
+	operations      map[string]*operation
 	// A pool close has no HTTP response; retain its audit failure for the UI.
 	auditCloseFailed bool
 }
