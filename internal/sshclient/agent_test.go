@@ -44,7 +44,7 @@ func TestAgentAuthenticationWithoutPrivateKeyFile(t *testing.T) {
 		}
 	}()
 	t.Setenv("SSH_AUTH_SOCK", sock)
-	method, err := AgentAuth()
+	method, err := AgentAuth(ssh.FingerprintSHA256(signer.PublicKey()))
 	if err != nil {
 		t.Fatal(err)
 	}

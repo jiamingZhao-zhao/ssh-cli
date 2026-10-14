@@ -247,7 +247,7 @@
             </div>
             <aside class="ws-dl-rail" aria-label="传输队列">
               <div class="ws-dl-head">
-                <div class="ws-kicker">传输队列</div>
+                <div class="ws-kicker" :title="transferSummary()">传输队列<span class="ws-queue-count" x-show="transferSummary()" x-text="transferSummary()"></span></div>
                 <button type="button" class="ws-dl-clear" x-show="hasFinishedTransfers()" @click="clearFinishedTransfers()" aria-label="清除已结束且无待核验的记录" title="清除已完成，保留待核验记录">
                   <svg aria-hidden="true" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M3 6h18M9 6V4h6v2M5 6l1 14h12l1-14M10 10v6M14 10v6"/></svg>
                 </button>
@@ -283,10 +283,10 @@
             <div class="ws-gutter ws-gutter-v" role="separator" aria-orientation="vertical" aria-label="调整概况宽度" @mousedown.prevent="beginSplit('side', $event)"></div>
               <div class="ws-upper" data-pane="terminal">
                 <div class="ws-search" x-show="termSearch.open" role="search" aria-label="查找当前终端回看内容" @keydown.escape.stop.prevent="closeTermSearch()">
-                  <input id="term-search" type="search" maxlength="256" placeholder="查找当前终端" aria-label="查找内容" x-model="termSearch.text" @input="termSearch.found = true" @keydown.enter.prevent="searchTerminal($event.shiftKey)">
+                  <input id="term-search" type="search" maxlength="256" placeholder="查找当前终端" aria-label="查找内容" x-model="termSearch.text" @input="searchTerminalEvent($event, false, true)" @compositionend="searchTerminal(false, true)" @keydown.enter.prevent="searchTerminalEvent($event, $event.shiftKey, false)">
                   <button type="button" @click="searchTerminal(true)" aria-label="上一个匹配">↑</button>
                   <button type="button" @click="searchTerminal(false)" aria-label="下一个匹配">↓</button>
-                  <span x-show="!termSearch.found" role="status">无匹配</span>
+                  <span role="status" aria-live="polite" x-text="searchResultText()" title="最多高亮 200 项；200+ 表示匹配数达到显示上限"></span>
                   <button type="button" @click="closeTermSearch()" aria-label="关闭终端查找">×</button>
                 </div>
                 <div class="ws-banner" x-show="terminalError()">
@@ -294,20 +294,20 @@
                 </div>
                 <div class="ws-term-bar">
                   <div class="ws-tabs" x-show="termTabs.length > 0">
-                    <div class="term-tabs" role="tablist" aria-label="终端会话" @keydown="terminalTabKey($event)">
+                    <div class="term-tabs" role="tablist" aria-label="终端会话" @keydown="terminalTabKey($event)" @wheel="scrollTerminalTabs($event)">
                       <template x-for="tab in termTabs" :key="tab.id">
                         <div class="term-tab" role="presentation" :class="{ active: tab.id === termActive }">
                           <button class="term-tab-label" type="button" role="tab" :id="'tab-' + tab.id" :aria-controls="'pane-' + tab.id" :tabindex="tab.id === termActive ? 0 : -1" :aria-selected="tab.id === termActive" :title="terminalTabLabel(tab)" @click="showPane(tab.id)" x-text="terminalTabLabel(tab)"></button>
                           <span class="term-tab-via" x-show="tab.id === termActive && viaOf(tab.alias)" x-text="viaOf(tab.alias)"></span>
                           <span class="term-tab-busy" x-show="tabBusy(tab)" aria-hidden="true"></span>
-                          <span class="term-tab-state" x-show="tab.state !== 'connected'" x-text="tab.state === 'connecting' ? '连接中' : (tab.state === 'expired' ? '已到期' : '已断开')"></span>
-                          <button class="term-tab-close" type="button" @click="closeTab(tab.id)" :aria-label="'关闭 ' + terminalTabLabel(tab)" title="关闭此终端，会结束此 shell">×</button>
+                          <span class="term-tab-state" x-show="tab.state !== 'connected'" x-text="terminalTabState(tab)"></span>
+                          <button class="term-tab-close" type="button" @click="closeTab(tab.id, true)" :aria-label="'关闭 ' + terminalTabLabel(tab)" title="关闭此终端，会结束此 shell">×</button>
                         </div>
                       </template>
                     </div>
                   </div>
                   <div class="btn-list ws-connect-actions">
-                    <select class="form-select w-auto" x-model="termAlias" @change="onTermHost()" aria-label="终端主机">
+                    <select class="form-select w-auto" x-model="termAlias" @change="onTermHost()" :title="termAlias" aria-label="终端主机">
                       <template x-for="h in sortedHosts()" :key="'term-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
                     </select>
                     <button class="btn btn-primary" type="button" :disabled="termOpening || !termAlias" @click="openTerminal(termAlias)" x-text="termOpening ? '连接中…' : '打开终端'">打开终端</button>
@@ -327,7 +327,7 @@
                 <div class="ws-split-status" @mousedown.stop>
                   <span class="ws-identity-line" :title="terminalStatusLine()" x-text="terminalStatusLine()"></span>
                   <span class="ws-session-line" :title="workspaceSession()" x-text="workspaceSession()"></span>
-                  <button type="button" class="btn btn-sm btn-outline-primary" x-show="tabAlias() && !workspaceLive()" :disabled="termOpening" @click="reconnectTerminal()">重新连接</button>
+                  <button type="button" class="btn btn-sm btn-outline-primary" x-show="canReconnectTerminal()" :disabled="termOpening" @click="reconnectTerminal()">重新连接</button>
                   <button type="button" class="btn btn-sm btn-outline-secondary" x-show="terminalBlocked(panelAlias())" @click="show('operate')">执行受策略检查的命令</button>
                 </div>
               </div>
@@ -340,12 +340,12 @@
                   <div class="ws-file-status">
                     <span class="ws-identity-line" :title="terminalStatusLine()" x-text="terminalStatusLine()"></span>
                     <span class="ws-session-line" :title="workspaceSession()" x-text="workspaceSession()"></span>
-                    <button type="button" class="btn btn-sm btn-outline-primary" x-show="tabAlias() && !workspaceLive()" :disabled="termOpening" @click="reconnectTerminal()">重新连接</button>
+                    <button type="button" class="btn btn-sm btn-outline-primary" x-show="canReconnectTerminal()" :disabled="termOpening" @click="reconnectTerminal()">重新连接</button>
                     <button type="button" class="btn btn-sm btn-outline-secondary" x-show="terminalBlocked(panelAlias())" @click="show('operate')">执行受策略检查的命令</button>
                   </div>
                   <div class="btn-list" x-show="files.mode !== 'history'">
-                    <button class="btn btn-outline-secondary btn-sm" type="button" @click="refreshFiles()">刷新</button>
-                    <button class="btn btn-outline-primary btn-sm" type="button" @click="pickUpload()">上传</button>
+                    <button class="btn btn-outline-secondary btn-sm" type="button" :disabled="filesLoading || !workspaceLive()" @click="refreshFiles()">刷新</button>
+                    <button class="btn btn-outline-primary btn-sm" type="button" :disabled="fileBusy || !workspaceLive()" @click="pickUpload()">上传</button>
                     <input id="ws-upload" class="d-none" type="file" multiple @change="wsUpload($event)" aria-label="上传到当前目录">
                   </div>
                   <div class="btn-list" x-show="files.mode === 'history'">
@@ -359,8 +359,9 @@
                   <button class="btn btn-sm btn-outline-secondary" type="button" :disabled="fileBusy" @click="clearFileAction()" x-text="fileAction && fileAction.uncertain ? '已核验，清除提示' : '关闭提示'"></button>
                 </div>
                 <div x-show="workspaceLive() && files.mode !== 'history'" class="ws-file-body" @contextmenu.prevent="openMenu($event, null)">
-                  <form class="ws-pathbar" @submit.prevent="jumpPath()">
-                    <input class="form-control" x-model="pathDraft" @focus="pathFocused = true" @blur="pathFocused = false" @keydown.enter.prevent="jumpPath()" aria-label="远端路径" placeholder="/root" autocomplete="off" spellcheck="false">
+                  <form class="ws-pathbar" @submit.prevent="jumpPath($event)">
+                    <button class="btn btn-outline-secondary btn-sm" type="button" @click="listFiles(files.parent)" :disabled="filesLoading || !files.parent || files.parent === files.path" title="上一级目录（文件列表中按 Alt+↑）" aria-label="上一级目录">↑</button>
+                    <input class="form-control" x-model="pathDraft" @focus="pathFocused = true" @blur="pathFocused = false" @keydown.enter.prevent="jumpPath($event)" @keydown.escape="cancelPathEdit($event)" aria-label="远端路径" placeholder="/root" autocomplete="off" spellcheck="false">
                     <button class="btn btn-outline-primary btn-sm" type="submit">转到</button>
                   </form>
                   <p class="ws-path-error" x-show="pathError" x-text="pathError"></p>
@@ -377,13 +378,13 @@
                       </template>
                       <p class="ws-quiet px-2" x-show="!files.path">选择主机后列出目录。</p>
                     </div>
-                    <div class="ws-table-wrap" :aria-busy="filesLoading">
+                    <div class="ws-table-wrap" :aria-busy="filesLoading" tabindex="0" role="region" aria-label="远端文件列表，方向键选择，Enter 打开，Alt 加上方向键返回上一级" @keydown="fileListKey($event)">
                       <p class="ws-loading" role="status" x-show="filesLoading" x-text="'正在读取目录：' + filesPendingPath"></p>
                       <table class="table table-sm table-vcenter card-table">
                         <thead><tr><th>名称</th><th>大小</th><th>修改时间</th><th></th></tr></thead>
                         <tbody>
                           <template x-for="e in files.entries" :key="e.path">
-                            <tr :class="{ 'is-selected': selectedPath === e.path, 'is-drop': e.dir && drop.target === e.path }" draggable="true" @dragstart="dragRemoteStart($event, e)" @dragend="dragRemoteEnd($event, e)" @dragover.prevent.stop="dragOver($event, e.dir ? e.path : '')" @drop.prevent.stop="dropFiles($event, e.dir ? e.path : '')" @click="selectEntry(e)" @dblclick="openEntry(e)" @contextmenu.prevent="openMenu($event, e)">
+                            <tr :class="{ 'is-selected': selectedPath === e.path, 'is-drop': e.dir && drop.target === e.path }" draggable="true" @dragstart="dragRemoteStart($event, e)" @dragend="dragRemoteEnd($event, e)" @dragover.prevent.stop="dragOver($event, e.dir ? e.path : '')" @drop.prevent.stop="dropFiles($event, e.dir ? e.path : '')" @click="fileRowClick($event, e)" @dblclick="openEntry(e)" @contextmenu.prevent="openMenu($event, e)">
                               <td class="ws-name-cell" :class="e.dir ? 'is-dir' : ''">
                                 <span class="ws-name">
                                   <svg x-show="e.dir" class="ws-folder is-open" viewBox="0 0 16 14" aria-hidden="true"><path d="M1.2 2.4c0-.7.5-1.2 1.2-1.2h3.2L7 2.6h6.6c.7 0 1.2.5 1.2 1.2v7.4c0 .7-.5 1.2-1.2 1.2H2.4c-.7 0-1.2-.5-1.2-1.2V2.4z"/></svg>
@@ -1276,6 +1277,7 @@
               <div class="col-md-6"><label class="form-label">密码</label><input class="form-control" type="password" x-model="hostForm.password" :disabled="hostForm.agent" autocomplete="new-password"></div>
               <div class="col-md-6"><label class="form-label">私钥路径</label><input class="form-control" x-model="hostForm.identity" :disabled="hostForm.agent" placeholder="~/.ssh/id_ed25519" autocomplete="off"></div>
               <div class="col-12"><label class="form-check"><input class="form-check-input" type="checkbox" x-model="hostForm.agent"><span class="form-check-label">使用本机 SSH agent（不转发、不保存私钥）</span></label></div>
+              <div class="col-12" x-show="hostForm.agent"><label class="form-label">指定 agent 公钥（可选）</label><input class="form-control" x-model="hostForm.agentKey" :disabled="!hostForm.agent" placeholder="SHA256:…" autocomplete="off" spellcheck="false"><p class="form-hint">填写 ssh-add -l 显示的 SHA256 指纹，只使用这一把公钥；留空使用当前 agent 的密钥列表。</p></div>
               <div class="col-md-6"><label class="form-label">命名策略</label>
                 <select class="form-select" x-model="hostForm.policy">
                   <option value="">不引用</option>

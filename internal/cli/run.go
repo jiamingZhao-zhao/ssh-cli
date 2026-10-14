@@ -16,7 +16,6 @@ import (
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/output"
-	"github.com/jiamingZhao-zhao/ssh-cli/internal/secrets"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/sshclient"
 	"golang.org/x/crypto/ssh"
 )
@@ -200,42 +199,7 @@ func (a *App) dialVia(h config.ResolvedHost, commandTimeout time.Duration) (*ssh
 }
 
 func (a *App) auth(h config.ResolvedHost) ([]ssh.AuthMethod, error) {
-	switch h.Host.Auth {
-	case "agent":
-		method, err := sshclient.AgentAuth()
-		if err != nil {
-			return nil, exitcode.New(exitcode.Auth, "%s", err.Error())
-		}
-		return []ssh.AuthMethod{method}, nil
-	case "key":
-		if h.Host.Identity == "" {
-			return nil, exitcode.New(exitcode.Usage, "host %s: auth is key but identity is empty", h.Alias)
-		}
-		path, err := config.ExpandHome(h.Host.Identity)
-		if err != nil {
-			return nil, err
-		}
-		method, err := sshclient.IdentityAuth(path)
-		if err != nil {
-			return nil, exitcode.New(exitcode.Auth, "%s", err.Error())
-		}
-		return []ssh.AuthMethod{method}, nil
-	case "", "password":
-		if h.Host.PasswordRef == "" {
-			return nil, exitcode.New(exitcode.Auth, "host %s has no passwordRef", h.Alias)
-		}
-		st, err := secrets.Open(a.Dir, secrets.Options{Warn: a.Err})
-		if err != nil {
-			return nil, err
-		}
-		pw, err := st.Get(h.Host.PasswordRef)
-		if err != nil {
-			return nil, exitcode.New(exitcode.Auth, "host %s: %s", h.Alias, err.Error())
-		}
-		return sshclient.PasswordAuth(pw), nil
-	default:
-		return nil, exitcode.New(exitcode.Usage, "host %s: unsupported auth %q", h.Alias, h.Host.Auth)
-	}
+	return sshclient.AuthForHost(a.Dir, h, a.Err)
 }
 
 func (a *App) header(h config.ResolvedHost) {

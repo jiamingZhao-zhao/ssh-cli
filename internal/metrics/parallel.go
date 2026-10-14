@@ -86,7 +86,7 @@ func Parallel(ctx context.Context, exec ExecFunc, gate GateFunc, opt Options) (S
 		return text, code, err
 	}, gate, opt)
 	// The first samples may precede other slow probes; use the actual interval.
-	if elapsed := netEnd.Sub(netStart).Seconds(); elapsed > 0 && !netStart.IsZero() && !netEnd.IsZero() {
+	if elapsed := netEnd.Sub(netStart).Seconds(); snap.NetSampled && elapsed > 0 && !netStart.IsZero() && !netEnd.IsZero() {
 		for i, p := range probes {
 			if p.Name != "net" {
 				continue

@@ -230,6 +230,7 @@ type groupCanon struct {
 }
 
 type hostCanon struct {
+	AgentKey       string               `json:"agentKey,omitempty"`
 	Host           string               `json:"host,omitempty"`
 	Port           int                  `json:"port,omitempty"`
 	User           string               `json:"user,omitempty"`
@@ -287,7 +288,8 @@ func canonical(cfg *config.Config) []byte {
 					gc.Hosts = map[string]hostCanon{}
 				}
 				gc.Hosts[alias] = hostCanon{
-					Host: strings.TrimSpace(h.Host), Port: h.PortOrDefault(), User: h.User, Auth: hostAuth(h),
+					AgentKey: h.AgentKey,
+					Host:     strings.TrimSpace(h.Host), Port: h.PortOrDefault(), User: h.User, Auth: hostAuth(h),
 					Via:    strings.TrimSpace(h.Via),
 					Policy: h.Policy, Allow: copyAllow(h.Allow), Deny: nilEmpty(h.Deny),
 					Confirm: nilEmpty(h.Confirm), Capabilities: h.Capabilities, ProtectedPaths: nilEmpty(h.ProtectedPaths),

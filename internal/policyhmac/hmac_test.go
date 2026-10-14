@@ -24,6 +24,30 @@ func isolateKey(t *testing.T) {
 	t.Setenv("SSH_CLI_MASTER_KEY", "")
 }
 
+func TestAgentKeyIncludedInSignedPolicy(t *testing.T) {
+	isolateKey(t)
+	dir := t.TempDir()
+	host := &config.Host{Host: "example", User: "u", Auth: "agent"}
+	cfg := &config.Config{Version: 1, Groups: map[string]*config.Group{"app": {Env: "test", Hosts: map[string]*config.Host{"a": host}}}}
+	if err := SignNew(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	host.AgentKey = "SHA256:" + strings.Repeat("A", 43)
+	if err := Verify(dir, cfg); err == nil {
+		t.Fatal("unsigned identity selection accepted")
+	}
+	if err := Sign(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	host.AgentKey = ""
+	if err := Verify(dir, cfg); err == nil {
+		t.Fatal("removing signed selection accepted")
+	}
+}
+
 func TestSignAndTamper(t *testing.T) {
 	dir := t.TempDir()
 	isolateKey(t)

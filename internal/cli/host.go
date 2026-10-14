@@ -28,6 +28,7 @@ type hostFlags struct {
 	user     string
 	identity string
 	pwStdin  bool
+	agentKey string
 	agent    bool
 	policy   string
 	tags     []string
@@ -49,6 +50,7 @@ func bindHostFlags(cmd *cobra.Command, f *hostFlags, add bool) {
 	cmd.Flags().StringVar(&f.identity, "identity", "", "private key path (unencrypted)")
 	cmd.Flags().BoolVar(&f.pwStdin, "password-stdin", false, "read the password from stdin")
 	cmd.Flags().BoolVar(&f.agent, "agent", false, "authenticate using local SSH_AUTH_SOCK (no forwarding)")
+	cmd.Flags().StringVar(&f.agentKey, "agent-key", "", "select one ssh-agent SHA256 fingerprint; empty clears selection on edit")
 	cmd.Flags().StringVar(&f.policy, "policy", "", "named policy")
 	cmd.Flags().StringArrayVar(&f.tags, "tag", nil, "tag (repeatable; replaces tags on edit)")
 	cmd.Flags().StringVar(&f.via, "via", "", "already registered jump host; the shell still runs on this host")
@@ -70,6 +72,9 @@ func (a *App) hostAdd() *cobra.Command {
 			if f.agent && (f.pwStdin || f.identity != "") {
 				return exitcode.New(exitcode.Usage, "--agent cannot be combined with --identity or --password-stdin")
 			}
+			if f.agentKey != "" && !f.agent {
+				return exitcode.New(exitcode.Usage, "--agent-key requires --agent")
+			}
 			if f.group == "" || f.address == "" || f.user == "" {
 				return exitcode.New(exitcode.Usage, "--group, --host, and --user are required")
 			}
@@ -86,6 +91,7 @@ func (a *App) hostAdd() *cobra.Command {
 				User:       f.user,
 				Identity:   f.identity,
 				Agent:      f.agent,
+				AgentKey:   f.agentKey,
 				Policy:     f.policy,
 				Tags:       splitList(f.tags),
 				Via:        strings.TrimSpace(f.via),
@@ -141,6 +147,7 @@ func (a *App) hostList() *cobra.Command {
 				Port        int      `json:"port"`
 				User        string   `json:"user"`
 				Auth        string   `json:"auth"`
+				AgentKey    string   `json:"agentKey,omitempty"`
 				Via         string   `json:"via,omitempty"`
 				Tags        []string `json:"tags,omitempty"`
 				Policy      string   `json:"policy,omitempty"`
@@ -152,7 +159,7 @@ func (a *App) hostList() *cobra.Command {
 				views = append(views, view{
 					Alias: alias, Group: h.Group, Env: h.EnvName,
 					Host: h.Host.Host, Port: h.Host.PortOrDefault(), User: h.Host.User,
-					Auth: authLabel(h.Host), Via: strings.TrimSpace(h.Host.Via),
+					AgentKey: h.Host.AgentKey, Auth: authLabel(h.Host), Via: strings.TrimSpace(h.Host.Via),
 					Tags: h.Host.Tags, Policy: h.Host.Policy,
 					PasswordRef: h.Host.PasswordRef,
 				})
@@ -194,6 +201,9 @@ func (a *App) hostEdit() *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			alias := args[0]
 			draft := catalog.HostDraft{Alias: alias}
+			if cmd.Flags().Changed("agent-key") {
+				draft.AgentKey, draft.HasAgentKey = f.agentKey, true
+			}
 			if cmd.Flags().Changed("agent") {
 				if !f.agent || f.pwStdin || cmd.Flags().Changed("identity") {
 					return exitcode.New(exitcode.Usage, "use --agent alone, or --identity/--password-stdin to change auth")

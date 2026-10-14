@@ -7,6 +7,7 @@ package config
 import (
 	"bytes"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
@@ -190,6 +191,7 @@ type Host struct {
 	Auth           string        `yaml:"auth,omitempty"`
 	PasswordRef    string        `yaml:"passwordRef,omitempty"`
 	Identity       string        `yaml:"identity,omitempty"`
+	AgentKey       string        `yaml:"agentKey,omitempty"`
 	Tags           []string      `yaml:"tags,omitempty"`
 	Policy         string        `yaml:"policy,omitempty"`
 	Allow          *[]string     `yaml:"allow,omitempty"`
@@ -232,6 +234,9 @@ func (h *Host) ConnFingerprint() string {
 		h.PasswordRef,
 		strings.TrimSpace(h.Via),
 	}, "\x00")
+	if h.AgentKey != "" {
+		canon += "\x00agentKey\x00" + h.AgentKey
+	}
 	sum := sha256.Sum256([]byte(canon))
 	return hex.EncodeToString(sum[:])
 }
@@ -273,7 +278,7 @@ func hopCanon(alias string, h *Host) string {
 	if auth == "" {
 		auth = "password"
 	}
-	return strings.Join([]string{
+	canon := strings.Join([]string{
 		alias,
 		strings.TrimSpace(h.Host),
 		strconv.Itoa(h.PortOrDefault()),
@@ -282,6 +287,10 @@ func hopCanon(alias string, h *Host) string {
 		h.Identity,
 		h.PasswordRef,
 	}, "\x1f")
+	if h.AgentKey != "" {
+		canon += "\x1fagentKey\x1f" + h.AgentKey
+	}
+	return canon
 }
 
 // SessionDefaults is the in-process pool window. Empty fields use the built-in
@@ -563,6 +572,9 @@ func (c *Config) Validate() error {
 			case "", "password", "key", "agent":
 			default:
 				return fmt.Errorf("host %q: unsupported auth %q", alias, h.Auth)
+			}
+			if err := ValidateAgentKey(h.Auth, h.AgentKey); err != nil {
+				return fmt.Errorf("host %q: %w", alias, err)
 			}
 			if h.Policy != "" && !ValidName(h.Policy) {
 				return fmt.Errorf("host %q: invalid policy %q", alias, h.Policy)
@@ -901,4 +913,19 @@ func ExpandHome(path string) (string, error) {
 		return home, nil
 	}
 	return filepath.Join(home, path[2:]), nil
+}
+
+// ValidateAgentKey accepts an optional OpenSSH SHA256 public-key fingerprint.
+func ValidateAgentKey(auth, fingerprint string) error {
+	if fingerprint == "" {
+		return nil
+	}
+	if auth != "agent" {
+		return fmt.Errorf("agentKey requires agent authentication")
+	}
+	digest, err := base64.RawStdEncoding.Strict().DecodeString(strings.TrimPrefix(fingerprint, "SHA256:"))
+	if !strings.HasPrefix(fingerprint, "SHA256:") || err != nil || len(digest) != sha256.Size {
+		return fmt.Errorf("agentKey must be an OpenSSH SHA256 fingerprint (see ssh-add -l)")
+	}
+	return nil
 }

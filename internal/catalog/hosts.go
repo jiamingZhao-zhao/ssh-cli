@@ -31,6 +31,7 @@ type HostDraft struct {
 	User       string
 	Password   string
 	Identity   string
+	AgentKey   string
 	Agent      bool
 	Policy     string
 	Tags       []string
@@ -46,6 +47,7 @@ type HostDraft struct {
 	HasPassword bool
 	HasIdentity bool
 	HasAgent    bool
+	HasAgentKey bool
 	HasPolicy   bool
 	HasTags     bool
 	HasVia      bool
@@ -70,6 +72,12 @@ func addHost(dir string, cfg *config.Config, in HostDraft, opt Options) error {
 		return fmt.Errorf("group, host, and user are required")
 	}
 	identity := strings.TrimSpace(in.Identity)
+	if in.AgentKey != "" && !in.Agent {
+		return fmt.Errorf("agentKey requires agent authentication")
+	}
+	if err := config.ValidateAgentKey("agent", strings.TrimSpace(in.AgentKey)); err != nil {
+		return err
+	}
 	if in.Agent && (in.Password != "" || identity != "") {
 		return fmt.Errorf("agent auth cannot be combined with password or identity")
 	}
@@ -106,6 +114,7 @@ func addHost(dir string, cfg *config.Config, in HostDraft, opt Options) error {
 	}
 	if in.Agent {
 		h.Auth = "agent"
+		h.AgentKey = strings.TrimSpace(in.AgentKey)
 	} else if identity != "" {
 		h.Auth = "key"
 		h.Identity = identity
@@ -155,7 +164,7 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) ([]co
 	if in.Agent && (in.Password != "" || in.HasIdentity) {
 		return nil, fmt.Errorf("agent auth cannot be combined with password or identity")
 	}
-	changed := in.HasAgent || in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
+	changed := in.HasAgentKey || in.HasAgent || in.HasGroup || in.HasAddress || in.HasPort || in.HasUser || in.HasIdentity ||
 		in.HasPassword || in.HasPolicy || in.HasTags || in.HasVia || in.ClearVia ||
 		in.SetDefault || in.ClearTags
 	if !changed {
@@ -178,6 +187,17 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) ([]co
 	}
 	if err := confirmgate.Require(dir, opt.Actor, opt.HumanConfirm, needs); err != nil {
 		return nil, err
+	}
+	if in.HasAgentKey && !(in.Agent || h.Auth == "agent") {
+		return nil, fmt.Errorf("agentKey requires agent authentication")
+	}
+	if in.HasAgentKey {
+		if in.Password != "" || in.HasIdentity {
+			return nil, fmt.Errorf("agentKey cannot be combined with password or identity")
+		}
+		if err := config.ValidateAgentKey("agent", strings.TrimSpace(in.AgentKey)); err != nil {
+			return nil, err
+		}
 	}
 	oldRef := h.PasswordRef
 	if in.HasGroup {
@@ -242,12 +262,17 @@ func updateHost(dir string, cfg *config.Config, in HostDraft, opt Options) ([]co
 	if in.HasAgent && in.Agent {
 		h.Auth, h.Identity, h.PasswordRef = "agent", "", ""
 	}
+	if in.HasAgentKey {
+		h.AgentKey = strings.TrimSpace(in.AgentKey)
+	}
 	if in.HasIdentity && strings.TrimSpace(in.Identity) != "" {
+		h.AgentKey = ""
 		h.Auth = "key"
 		h.Identity = strings.TrimSpace(in.Identity)
 		h.PasswordRef = ""
 	}
 	if in.Password != "" {
+		h.AgentKey = ""
 		h.Auth = "password"
 		h.Identity = ""
 		if h.PasswordRef == "" {

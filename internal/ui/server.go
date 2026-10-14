@@ -268,6 +268,7 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		Host            string   `json:"host"`
 		Port            int      `json:"port"`
 		User            string   `json:"user"`
+		AgentKey        string   `json:"agentKey,omitempty"`
 		Auth            string   `json:"auth"`
 		Tags            []string `json:"tags,omitempty"`
 		Policy          string   `json:"policy,omitempty"`
@@ -309,7 +310,7 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 		view := hostView{
 			Alias: alias, Group: h.Group, Env: h.EnvName,
 			Host: h.Host.Host, Port: h.Host.PortOrDefault(), User: h.Host.User,
-			Auth: authOf(h.Host), Tags: h.Host.Tags, Policy: h.Host.Policy,
+			AgentKey: h.Host.AgentKey, Auth: authOf(h.Host), Tags: h.Host.Tags, Policy: h.Host.Policy,
 			Via:     strings.TrimSpace(h.Host.Via),
 			Default: cfg.Default == alias,
 		}
@@ -571,6 +572,12 @@ func draftFromMap(raw map[string]json.RawMessage) (HostDraft, error) {
 	if v, ok := raw["identity"]; ok {
 		d.HasIdentity = true
 		_ = json.Unmarshal(v, &d.Identity)
+	}
+	if v, ok := raw["agentKey"]; ok {
+		d.HasAgentKey = true
+		if json.Unmarshal(v, &d.AgentKey) != nil {
+			return HostDraft{}, fmt.Errorf("invalid agentKey")
+		}
 	}
 	if v, ok := raw["agent"]; ok {
 		var agent bool

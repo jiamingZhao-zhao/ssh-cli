@@ -17,9 +17,12 @@ import (
 )
 
 func (s *service) probeRun(ctx context.Context, h config.ResolvedHost, command string) (string, string, int, error) {
+	return s.probeRunFingerprint(ctx, h, s.fingerprint(h), command)
+}
+
+func (s *service) probeRunFingerprint(ctx context.Context, h config.ResolvedHost, fp, command string) (string, string, int, error) {
 	ctx, cancel := context.WithTimeout(ctx, 8*time.Second)
 	defer cancel()
-	fp := s.fingerprint(h)
 	if err := s.pool.OpenConn(ctx, h.Alias, fp); err != nil {
 		return "", "", 0, err
 	}
@@ -52,7 +55,7 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	_ = body.Source
-	_, h, eff, err := s.hostPlan(body.Alias)
+	cfg, h, eff, err := s.hostPlan(body.Alias)
 	if err != nil {
 		writeFail(w, err)
 		return
@@ -63,11 +66,12 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	human := s.workspaceProbeExempt(r)
-	s.reconcile()
+	s.reconcileConfig(cfg)
+	fp := cfg.SessionFingerprint(h)
 	ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
 	defer cancel()
 	snap, runErr := metrics.Parallel(ctx, func(ctx context.Context, command string) (string, int, error) {
-		stdout, _, code, err := s.probeRun(ctx, h, command)
+		stdout, _, code, err := s.probeRunFingerprint(ctx, h, fp, command)
 		return stdout, code, err
 	}, func(command string) error {
 		if human {
@@ -97,7 +101,8 @@ func (s *service) metricsAPI(w http.ResponseWriter, r *http.Request) {
 		"cpuPercent": snap.CPU, "mem": snap.Mem, "swap": snap.Swap,
 		"procs": snap.Procs, "disks": snap.Disks,
 		"netRx": snap.NetRx, "netTx": snap.NetTx, "netRxRate": snap.NetRxRate, "netTxRate": snap.NetTxRate,
-		"notes": snap.Notes,
+		"netSampled": snap.NetSampled,
+		"notes":      snap.Notes,
 	})
 }
 
