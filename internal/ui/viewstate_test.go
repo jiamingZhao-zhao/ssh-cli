@@ -16,7 +16,7 @@ const fs = require("fs");
 const vm = require("vm");
 const src = fs.readFileSync(process.argv[1], "utf8");
 const cut = src.split("document.addEventListener")[0];
-const sandbox = {};
+const sandbox = { TextEncoder };
 vm.createContext(sandbox);
 vm.runInContext(cut, sandbox, { filename: "app.js" });
 function assert(cond, msg) {

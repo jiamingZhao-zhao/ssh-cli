@@ -50,7 +50,7 @@ jobs:
         run: go test ./internal/cli ./internal/ui ./internal/audit ./internal/transfer ./internal/metrics ./internal/guard ./internal/sshclient -run 'Test(Integrity.*|ShortPasswordRedaction|UploadReaderPreservesOriginal|DownloadCancelPreservesOriginal|RelayFailureAndSymlinkPreserveOriginal|Elevation.*|DaemonIPC|DaemonReusesConnectionAndRechecksPolicy|ParallelBoundAndPartialSnapshot|AgentAuthenticationWithoutPrivateKeyFile|SessionExpiredRejectedBeforeDispatch|AuditPreflightStopsDispatch|TransferAdmissionAndMalformedControls)$' -count=1
       - name: workspace polish and agent identity regressions
         shell: bash
-        run: go test ./internal/cli ./internal/ui ./internal/config ./internal/catalog ./internal/policyhmac ./internal/metrics ./internal/sshclient -run 'Test(Agent.*|NetworkSamplesDistinguishZeroMissingAndReset)$' -count=1 -timeout 60s
+        run: go test ./internal/cli ./internal/ui ./internal/config ./internal/catalog ./internal/policyhmac ./internal/metrics ./internal/sshclient -run 'Test(Agent.*|NetworkSamplesDistinguishZeroMissingAndReset|PageStatusHelpers)$' -count=1 -timeout 60s
 
   integration:
     name: openssh integration
