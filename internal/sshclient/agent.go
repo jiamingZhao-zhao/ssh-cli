@@ -7,13 +7,25 @@ import (
 	"strings"
 	"time"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
+
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
 
 // AgentAuth uses an explicitly selected local SSH_AUTH_SOCK; it never forwards
 // the agent to a server, exports a key, or falls back to another credential.
-func AgentAuth() (ssh.AuthMethod, error) {
+func AgentAuth(selected ...string) (ssh.AuthMethod, error) {
+	fingerprint := ""
+	if len(selected) > 1 {
+		return nil, fmt.Errorf("select only one ssh-agent identity")
+	}
+	if len(selected) == 1 {
+		fingerprint = selected[0]
+	}
+	if err := config.ValidateAgentKey("agent", fingerprint); err != nil {
+		return nil, err
+	}
 	sock := strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK"))
 	if sock == "" {
 		sock = defaultAgentSocket()
@@ -34,8 +46,12 @@ func AgentAuth() (ssh.AuthMethod, error) {
 		if len(keys) == 0 {
 			return nil, fmt.Errorf("ssh-agent has no identities")
 		}
+		keys, err = selectAgentKeys(keys, fingerprint)
+		if err != nil {
+			return nil, err
+		}
 		if len(keys) > 16 {
-			return nil, fmt.Errorf("ssh-agent has too many identities (limit 16); select a smaller keyring")
+			return nil, fmt.Errorf("ssh-agent has too many identities (limit 16); set agentKey to one fingerprint from ssh-add -l")
 		}
 		signers := make([]ssh.Signer, 0, len(keys))
 		for _, key := range keys {
@@ -88,4 +104,16 @@ func (s *localAgentSigner) SignWithAlgorithm(_ io.Reader, data []byte, algorithm
 	}
 	defer conn.Close()
 	return agent.NewClient(conn).SignWithFlags(s.key, data, flags)
+}
+
+func selectAgentKeys(keys []*agent.Key, fingerprint string) ([]*agent.Key, error) {
+	if fingerprint == "" {
+		return keys, nil
+	}
+	for _, key := range keys {
+		if ssh.FingerprintSHA256(key) == fingerprint {
+			return []*agent.Key{key}, nil
+		}
+	}
+	return nil, fmt.Errorf("selected ssh-agent identity is unavailable; check ssh-add -l")
 }

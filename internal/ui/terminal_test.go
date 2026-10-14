@@ -588,7 +588,7 @@ func TestTerminalTabAliasIsNotNestedButton(t *testing.T) {
 		`:class="{ active: tab.id === termActive }"`,
 		`x-text="terminalTabLabel(tab)"`,
 		`showPane(tab.id)`,
-		`closeTab(tab.id)`,
+		`closeTab(tab.id, true)`,
 		`class="term-tab-label"`,
 		`class="term-tab-close"`,
 		`关闭 `,

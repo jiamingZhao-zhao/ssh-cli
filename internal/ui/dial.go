@@ -11,7 +11,6 @@ import (
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
-	"github.com/jiamingZhao-zhao/ssh-cli/internal/secrets"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/session"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/sshclient"
 	"golang.org/x/crypto/ssh"
@@ -37,6 +36,13 @@ func (s *service) dialAlias(ctx context.Context, alias, fingerprint string) (*ss
 func (s *service) reconcile() {
 	cfg, err := config.Load(s.dir)
 	if err != nil || s.pool == nil {
+		return
+	}
+	s.reconcileConfig(cfg)
+}
+
+func (s *service) reconcileConfig(cfg *config.Config) {
+	if s.pool == nil {
 		return
 	}
 	want := map[string]string{}
@@ -120,42 +126,7 @@ func (s *service) dialVia(ctx context.Context, h config.ResolvedHost) (*sshclien
 }
 
 func (s *service) authMethods(h config.ResolvedHost) ([]ssh.AuthMethod, error) {
-	switch h.Host.Auth {
-	case "agent":
-		method, err := sshclient.AgentAuth()
-		if err != nil {
-			return nil, err
-		}
-		return []ssh.AuthMethod{method}, nil
-	case "key":
-		if h.Host.Identity == "" {
-			return nil, fmt.Errorf("host %s: auth is key but identity is empty", h.Alias)
-		}
-		path, err := config.ExpandHome(h.Host.Identity)
-		if err != nil {
-			return nil, err
-		}
-		method, err := sshclient.IdentityAuth(path)
-		if err != nil {
-			return nil, err
-		}
-		return []ssh.AuthMethod{method}, nil
-	case "", "password":
-		if h.Host.PasswordRef == "" {
-			return nil, fmt.Errorf("host %s has no passwordRef", h.Alias)
-		}
-		st, err := secrets.Open(s.dir, secrets.Options{})
-		if err != nil {
-			return nil, err
-		}
-		pw, err := st.Get(h.Host.PasswordRef)
-		if err != nil {
-			return nil, fmt.Errorf("host %s: %s", h.Alias, err.Error())
-		}
-		return sshclient.PasswordAuth(pw), nil
-	default:
-		return nil, fmt.Errorf("host %s: unsupported auth %q", h.Alias, h.Host.Auth)
-	}
+	return sshclient.AuthForHost(s.dir, h, nil)
 }
 
 // fingerprint is the pooled session identity for h, including the resolved

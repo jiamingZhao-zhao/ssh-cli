@@ -3,6 +3,10 @@ const PAGE_SIZES = [10, 20, 50];
 const termMap = new Map();
 const TERM_CHUNK = 32 << 10;
 const TERM_INPUT_LIMIT = 4 << 20;
+const inputEncoder = new TextEncoder();
+const SEARCH_LIMIT = 200;
+function entryReady(id) { const entry = termMap.get(id); return entry && entry.wasReady; }
+function blankSearch() { return { open: false, text: "", found: true, index: -1, count: 0 }; }
 const transferCtl = new Map();
 const transferJobs = new Map();
 const transferQueue = [];
@@ -457,7 +461,7 @@ function sshui() {
     hostLoading: false,
     termOpening: false,
     termFontSize: 14,
-	termSearch: { open: false, text: "", found: true },
+	termSearch: blankSearch(),
     filesCollapsed: false,
     workspaceCache: Object.create(null),
     workspaceSeq: 0,
@@ -593,6 +597,7 @@ function sshui() {
         this.show(next.view || "home");
       });
       document.addEventListener("keydown", (ev) => {
+        if (ev.isComposing || ev.keyCode === 229) return;
         if (this.anyDialog()) { this.dialogKey(ev); return; }
         if (ev.key !== "/" || ev.ctrlKey || ev.metaKey || ev.altKey) return;
         const tag = (ev.target && ev.target.tagName || "").toLowerCase();
@@ -608,6 +613,7 @@ function sshui() {
         if (this.view === "terminal") this.fitActive();
       });
       document.addEventListener("visibilitychange", () => {
+        if (document.hidden && this._endSplit) this._endSplit();
         if (document.hidden) this.stopMetrics();
         else if (this.view === "terminal") this.startMetrics();
       });
@@ -744,6 +750,7 @@ function sshui() {
     },
 
     show(name) {
+      if (this._endSplit) this._endSplit();
       const parsed = this.readHash(name);
       const view = this.viewAlias[parsed.view] || "home";
       if (view === "host" && parsed.arg) this.currentHost = parsed.arg;
@@ -1399,6 +1406,7 @@ function sshui() {
       screen.appendChild(pane);
       const term = new Terminal({
         cursorBlink: true,
+        allowProposedApi: true,
         disableStdin: true,
         fontFamily: '"SF Mono", Menlo, Consolas, monospace',
         fontSize: this.termFontSize,
@@ -1406,54 +1414,112 @@ function sshui() {
       });
       const fit = new FitAddon.FitAddon();
       term.loadAddon(fit);
-	  const search = typeof SearchAddon !== "undefined" ? new SearchAddon.SearchAddon() : null;
-	  if (search) term.loadAddon(search);
+      const search = typeof SearchAddon !== "undefined" ? new SearchAddon.SearchAddon({ highlightLimit: SEARCH_LIMIT }) : null;
+      if (search) term.loadAddon(search);
       term.open(pane);
       fit.fit();
       const app = this;
       const ordinal = 1 + this.termTabs.filter((t) => t.alias === alias).reduce((n, t) => Math.max(n, t.ordinal || 1), 0);
-      const entry = { id: id, alias: alias, term: term, fit: fit, search: search, pane: pane, ws: null, generation: 0, ready: false, input: [], inputBytes: 0, inputTimer: 0 };
+      const entry = { id: id, alias: alias, term: term, fit: fit, search: search, searchState: blankSearch(), pane: pane, ws: null, generation: 0, ready: false, input: [], inputBytes: 0, inputTimer: 0 };
       termMap.set(id, entry);
+      if (search) entry.searchResults = search.onDidChangeResults((result) => {
+        Object.assign(entry.searchState, { index: result.resultIndex, count: result.resultCount, found: result.resultCount > 0 });
+        if (app.termActive === id) Object.assign(app.termSearch, entry.searchState);
+      });
       this.termTabs.push({ id: id, alias: alias, ordinal: ordinal, busy: true, state: "connecting", error: "" });
       if (typeof ResizeObserver !== "undefined") {
         entry.observer = new ResizeObserver(() => { if (app.termActive === id) app.fitActive(); });
         entry.observer.observe(pane);
       }
       term.onData((data) => app.queueTerminalInput(entry, data));
-      term.onResize(({ cols, rows }) => {
-        if (entry.ws && entry.ws.readyState === 1) entry.ws.send(JSON.stringify({ type: "resize", cols: cols, rows: rows }));
-      });
-      term.attachCustomKeyEventHandler((ev) => {
-	    if (ev.type === "keydown" && (ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "f") {
-	      ev.preventDefault(); app.openTermSearch(); return false;
-	    }
-        if (ev.type === "keydown" && (ev.ctrlKey || ev.metaKey) && ev.shiftKey && ev.key.toLowerCase() === "c") {
-          ev.preventDefault();
-          app.copyTerminal(entry);
-          return false;
-        }
-        return true;
-      });
+      term.onResize(({ cols, rows }) => app.queueTerminalResize(entry, cols, rows));
+      term.attachCustomKeyEventHandler((ev) => app.terminalKey(entry, ev));
       this.showPane(id);
       await this.connectTerm(entry);
     },
 
+    terminalKey(entry, ev) {
+      // Let the IME and AltGr finish before interpreting application shortcuts.
+      if (ev.isComposing || ev.keyCode === 229 || ev.altKey || ev.type !== "keydown") return true;
+      if ((ev.ctrlKey || ev.metaKey) && ev.shiftKey) {
+        const key = String(ev.key || "").toLowerCase();
+        if (key === "f" || key === "c") {
+          ev.preventDefault();
+          if (key === "f") this.openTermSearch(); else this.copyTerminal(entry);
+          return false;
+        }
+      }
+      return true;
+    },
+
     openTermSearch() {
-      if (!termMap.get(this.termActive)) return;
-      this.termSearch.open = true; this.termSearch.found = true;
+      const entry = termMap.get(this.termActive);
+      if (!entry || !entry.search) return;
+      this.termSearch.open = true;
+      this.searchTerminal(false, true);
       this.$nextTick(() => { const input = document.getElementById("term-search"); if (input) { input.focus(); input.select(); } });
     },
 
-    searchTerminal(previous) {
+    searchTerminal(previous, incremental) {
       const entry = termMap.get(this.termActive), text = this.termSearch.text;
-      if (!entry || !entry.search || !text) { this.termSearch.found = true; return; }
-      this.termSearch.found = previous ? entry.search.findPrevious(text) : entry.search.findNext(text);
+      if (!entry || !entry.search) return;
+      if (!entry.searchState) entry.searchState = blankSearch();
+      if (incremental && entry.searchState.open && entry.searchState.text === text) return;
+      Object.assign(entry.searchState, this.termSearch);
+      if (!text) {
+        entry.search.clearDecorations();
+        Object.assign(this.termSearch, { found: true, count: 0, index: -1 });
+      } else {
+        const options = { incremental: !!incremental, decorations: {
+          matchBackground: "#665400", matchBorder: "#bca02b", matchOverviewRuler: "#bca02b",
+          activeMatchBackground: "#795b00", activeMatchBorder: "#ffdf70", activeMatchColorOverviewRuler: "#ffdf70"
+        } };
+        this.termSearch.found = previous ? entry.search.findPrevious(text, options) : entry.search.findNext(text, options);
+      }
+      Object.assign(entry.searchState, this.termSearch);
+    },
+
+    searchTerminalEvent(ev, previous, incremental) {
+      if (ev.isComposing || ev.keyCode === 229) return;
+      this.searchTerminal(previous, incremental);
+    },
+
+    searchResultText() {
+      const s = this.termSearch;
+      if (!s.text) return "";
+      if (!s.found) return "无匹配";
+      return (s.index >= 0 ? s.index + 1 : "—") + " / " + s.count + (s.count >= SEARCH_LIMIT ? "+" : "");
     },
 
     closeTermSearch() {
       this.termSearch.open = false;
       const entry = termMap.get(this.termActive);
-      if (entry) { if (entry.search) entry.search.clearDecorations(); entry.term.focus(); }
+      if (entry) {
+        Object.assign(entry.searchState || {}, this.termSearch);
+        if (entry.search) entry.search.clearDecorations();
+        entry.term.focus();
+      }
+    },
+
+    clearTerminalResize(entry) {
+      if (entry.resizeTimer) clearTimeout(entry.resizeTimer);
+      entry.resizeTimer = 0; entry.pendingResize = null; entry.lastResize = "";
+    },
+
+    queueTerminalResize(entry, cols, rows) {
+      entry.pendingResize = { cols: cols, rows: rows };
+      if (entry.resizeTimer) return;
+      const generation = entry.generation;
+      entry.resizeTimer = setTimeout(() => {
+        if (generation !== entry.generation || termMap.get(entry.id) !== entry) return;
+        entry.resizeTimer = 0;
+        const size = entry.pendingResize; entry.pendingResize = null;
+        if (!size || termMap.get(entry.id) !== entry || generation !== entry.generation || !entry.ws || entry.ws.readyState !== 1) return;
+        const key = size.cols + ":" + size.rows;
+        if (entry.lastResize === key) return;
+        try { entry.ws.send(JSON.stringify({ type: "resize", cols: size.cols, rows: size.rows })); entry.lastResize = key; }
+        catch (err) { /* Socket close is reported by the connection handler. */ }
+      }, 40);
     },
 
     async connectTerm(entry) {
@@ -1461,10 +1527,12 @@ function sshui() {
       const generation = ++entry.generation;
       let ws;
       const current = () => termMap.get(id) === entry && entry.generation === generation;
+      this.clearTerminalResize(entry);
       entry.ready = false;
       entry.outputAck = false;
       entry.maxLife = false;
       entry.hadError = false;
+      entry.wasReady = false;
       term.options.disableStdin = true;
       this.setTabState(id, "connecting");
       this.setTerminalError(id, "");
@@ -1493,6 +1561,7 @@ function sshui() {
             if (state.state === "ready") {
               entry.outputAck = state.category === "output_ack";
               entry.ready = true;
+              entry.wasReady = true;
               term.options.disableStdin = false;
               app.setTabState(id, "connected");
               app.setTerminalError(id, "");
@@ -1528,7 +1597,7 @@ function sshui() {
         } else term.write(output);
       };
       ws.onopen = () => {
-        if (current() && ws.readyState === 1) ws.send(JSON.stringify({ type: "resize", cols: term.cols, rows: term.rows }));
+        if (current() && ws.readyState === 1) app.queueTerminalResize(entry, term.cols, term.rows);
       };
       ws.onerror = () => {
         if (current()) entry.hadError = true;
@@ -1540,6 +1609,7 @@ function sshui() {
         entry.ready = false;
         term.options.disableStdin = true;
         app.clearTerminalInput(entry);
+        app.clearTerminalResize(entry);
         app.setTabState(id, entry.maxLife ? "expired" : "closed");
         if (app.termActive === id) app.syncWorkspace();
         if (entry.maxLife) return;
@@ -1553,7 +1623,7 @@ function sshui() {
     },
 
     setTerminalError(id, message) {
-      this.termTabs = this.termTabs.map((tab) => tab.id === id ? Object.assign({}, tab, { error: message }) : tab);
+      this.termTabs = this.termTabs.map((tab) => tab.id === id ? Object.assign({}, tab, { error: message, failed: tab.state === "closed" ? (!entryReady(tab.id) || tab.failed) : tab.failed }) : tab);
     },
 
     terminalError() {
@@ -1575,12 +1645,14 @@ function sshui() {
     queueTerminalInput(entry, text) {
       if (!entry.ready || !entry.ws || entry.ws.readyState !== 1) return;
       // Reject oversized input before sending any part of this command.
-      const size = new Blob([text]).size;
+      if (!text) return;
+      // Encode once: the byte limit and chunk sender use the same representation.
+      const bytes = inputEncoder.encode(text);
+      const size = bytes.length;
       if (size + entry.inputBytes + entry.ws.bufferedAmount > TERM_INPUT_LIMIT) {
         this.toast("待发送内容超过 4 MiB，本次输入未发送，请使用文件上传。", "bad");
         return;
       }
-      const bytes = new TextEncoder().encode(text);
       entry.input.push({ bytes: bytes, offset: 0 });
       entry.inputBytes += bytes.length;
       this.flushTerminalInput(entry);
@@ -1626,6 +1698,9 @@ function sshui() {
     },
 
     showPane(id, focus) {
+      const previous = termMap.get(this.termActive), next = termMap.get(id);
+      if (previous && previous.searchState) Object.assign(previous.searchState, this.termSearch);
+      this.termSearch = Object.assign(blankSearch(), next && next.searchState);
       this.termActive = id;
       this.setError("terminal", "");
       termMap.forEach((entry) => {
@@ -1645,6 +1720,7 @@ function sshui() {
       const tabs = this.termTabs, index = tabs.findIndex((t) => t.id === this.termActive);
       if (!tabs.length || index < 0) return;
       let next;
+      if (ev.key === "Delete") { ev.preventDefault(); this.closeTab(tabs[index].id, true); return; }
       if (ev.key === "ArrowRight") next = (index + 1) % tabs.length;
       else if (ev.key === "ArrowLeft") next = (index + tabs.length - 1) % tabs.length;
       else if (ev.key === "Home") next = 0;
@@ -1664,20 +1740,23 @@ function sshui() {
       entry.fitTimer = setTimeout(() => {
         entry.fitTimer = 0;
         if (termMap.get(entry.id) !== entry || this.view !== "terminal" || !entry.pane.classList.contains("active") || !entry.pane.clientWidth || !entry.pane.clientHeight) return;
-        entry.fit.fit();
+        const size = entry.fit.proposeDimensions ? entry.fit.proposeDimensions() : null;
+        if (!size || size.cols !== entry.term.cols || size.rows !== entry.term.rows) entry.fit.fit();
         const active = document.activeElement;
         if (entry.focusAfterFit && !this.anyDialog() && entry.ready && (!active || !active.matches("input,textarea,select,[contenteditable='true']") || entry.pane.contains(active))) entry.term.focus();
         entry.focusAfterFit = false;
       }, 30);
     },
 
-    closeTab(id) {
+    closeTab(id, focusTab) {
       const index = this.termTabs.findIndex((tab) => tab.id === id);
       const entry = termMap.get(id);
       if (entry) {
         entry.generation++;
         entry.ready = false;
         this.clearTerminalInput(entry);
+        this.clearTerminalResize(entry);
+        if (entry.searchResults) entry.searchResults.dispose();
         if (entry.fitTimer) clearTimeout(entry.fitTimer);
         if (entry.observer) entry.observer.disconnect();
         if (entry.ws) {
@@ -1693,8 +1772,18 @@ function sshui() {
         const next = this.termTabs[Math.min(Math.max(0, index), this.termTabs.length - 1)];
         this.termActive = next ? next.id : "";
         if (next) this.showPane(next.id);
-        else this.syncWorkspace();
+        else { this.termSearch = blankSearch(); this.syncWorkspace(); }
       }
+      if (focusTab && this.$nextTick) this.$nextTick(() => {
+        const el = document.getElementById("tab-" + this.termActive);
+        if (el) el.focus();
+      });
+    },
+
+    scrollTerminalTabs(ev) {
+      const el = ev.currentTarget;
+      if (ev.ctrlKey || ev.metaKey || ev.altKey || el.scrollWidth <= el.clientWidth || Math.abs(ev.deltaY) <= Math.abs(ev.deltaX)) return;
+      ev.preventDefault(); el.scrollLeft += ev.deltaY * (ev.deltaMode === 1 ? 16 : ev.deltaMode === 2 ? el.clientWidth : 1);
     },
 
     tabAlias() {
@@ -1717,12 +1806,18 @@ function sshui() {
     },
 
     setTabState(id, state) {
-      this.termTabs = this.termTabs.map((tab) => tab.id === id ? Object.assign({}, tab, { state: state, busy: false }) : tab);
+      this.termTabs = this.termTabs.map((tab) => tab.id === id ? Object.assign({}, tab, { state: state, busy: false, failed: state === "connecting" || state === "connected" ? false : tab.failed }) : tab);
     },
 
-    terminalState() {
+    terminalTabState(tab) {
+      return tab ? ({ connecting: "连接中", connected: "已连接", closed: tab.failed ? "连接失败" : "已断开", expired: "已到期" }[tab.state] || "已断开") : "未连接";
+    },
+
+    terminalState() { return this.terminalTabState(this.termTabs.find((item) => item.id === this.termActive)); },
+
+    canReconnectTerminal() {
       const tab = this.termTabs.find((item) => item.id === this.termActive);
-      return tab ? ({ connecting: "连接中", connected: "已连接", closed: "已断开", expired: "已到期" }[tab.state] || "已断开") : "未连接";
+      return !!tab && (tab.state === "closed" || tab.state === "expired");
     },
 
     async reconnectTerminal() {
@@ -1878,7 +1973,7 @@ function sshui() {
       const alias = this.panelAlias();
       const tab = this.termTabs.find((item) => item.id === this.termActive);
       if (tab) {
-        const label = { connected: "在线", connecting: "连接中", closed: "已断开", expired: "已到期" }[tab.state];
+          const label = tab.state === "connected" ? "在线" : this.terminalTabState(tab);
         if (label) return label;
       }
       const live = this.metrics && alias && this.metrics.alias === alias ? this.metrics : null;
@@ -1890,7 +1985,7 @@ function sshui() {
     },
 
     overviewStatusClass() {
-      return { "在线": "is-online", "连接中": "is-connecting", "状态待确认": "is-connecting", "已断开": "is-closed", "已到期": "is-closed" }[this.overviewStatus()] || "";
+      return { "在线": "is-online", "连接中": "is-connecting", "状态待确认": "is-connecting", "连接失败": "is-closed", "已断开": "is-closed", "已到期": "is-closed" }[this.overviewStatus()] || "";
     },
 
     overviewIP() {
@@ -1927,13 +2022,18 @@ function sshui() {
 
     sideStyle() { return "width:" + this.ws.side + "px"; },
     beginSplit(which, ev) {
+      if (this._endSplit) this._endSplit();
       const startX = ev.clientX;
       const startY = ev.clientY;
       const baseSide = this.ws.side;
       const pane = document.querySelector(".ws-lower");
       const baseLower = pane ? pane.getBoundingClientRect().height : (this.ws.lower || window.innerHeight / 3);
       const app = this;
-      const move = (e) => {
+      let pending, frame = 0;
+      const apply = () => {
+        frame = 0;
+        const e = pending; pending = null;
+        if (!e) return;
         if (which === "side") {
           app.ws.side = Math.max(220, Math.min(460, baseSide + (e.clientX - startX)));
         } else {
@@ -1941,11 +2041,18 @@ function sshui() {
           app.ws.lower = Math.max(160, Math.min(limit, baseLower - (e.clientY - startY)));
         }
       };
+      const move = (e) => {
+        pending = { clientX: e.clientX, clientY: e.clientY };
+        if (!frame) frame = window.requestAnimationFrame(apply);
+      };
       const prevCursor = document.body.style.cursor;
       const prevSelect = document.body.style.userSelect;
       document.body.style.cursor = which === "side" ? "col-resize" : "row-resize";
       document.body.style.userSelect = "none";
       const up = () => {
+        if (frame) window.cancelAnimationFrame(frame);
+        apply(); app._endSplit = null;
+        window.removeEventListener("blur", up);
         window.removeEventListener("mousemove", move);
         window.removeEventListener("mouseup", up);
         document.body.style.cursor = prevCursor;
@@ -1953,6 +2060,8 @@ function sshui() {
         app.saveSplit();
         app.fitActive();
       };
+      this._endSplit = up;
+      window.addEventListener("blur", up);
       window.addEventListener("mousemove", move);
       window.addEventListener("mouseup", up);
     },
@@ -2051,6 +2160,7 @@ function sshui() {
         if (err && err.name === "AbortError") return;
         if (seq !== this.metricsSeq) return;
         this.metricsFailures++;
+        this.pushNet(alias, { connected: false });
         this.setError("metrics", err.message || "概况暂时不可用");
       } finally {
         if (seq === this.metricsSeq) {
@@ -2070,7 +2180,7 @@ function sshui() {
       const now = Date.now();
       if (!this.netSeries[alias]) this.netSeries[alias] = [];
       const series = this.netSeries[alias];
-      const unavailable = !data.connected || (data.notes || []).some((note) => /^net:/.test(note));
+      const unavailable = !data.connected || data.netSampled === false || (data.notes || []).some((note) => /^net:/.test(note));
       const rate = (value) => !unavailable && Number.isFinite(value) && value >= 0 ? value : null;
       const point = { t: now, rxRate: rate(data.netRxRate), txRate: rate(data.netTxRate) };
       series.push(point);
@@ -2342,7 +2452,45 @@ function sshui() {
       await this.listFiles(this.files.alias === alias && this.files.path ? this.files.path : ".");
     },
 
-    async jumpPath() {
+    cancelPathEdit(ev) {
+      if (ev.isComposing || ev.keyCode === 229) return;
+      ev.preventDefault(); this.pathDraft = this.files.path; this.pathError = "";
+      ev.target.blur();
+    },
+
+    fileListKey(ev) {
+      if (ev.target !== ev.currentTarget || ev.isComposing || ev.keyCode === 229 || ev.ctrlKey || ev.metaKey || ev.shiftKey || this.filesLoading || this.fileBusy) return;
+      if (ev.key === "Backspace" && !ev.altKey || ev.altKey && ev.key === "ArrowUp") {
+        ev.preventDefault(); if (this.files.parent) this.listFiles(this.files.parent); return;
+      }
+      if (ev.altKey) return;
+      const entries = this.files.entries || [], index = entries.findIndex((e) => e.path === this.selectedPath);
+      if (ev.key === "Enter") { if (index >= 0) { ev.preventDefault(); this.openEntry(entries[index]); } return; }
+      let next;
+      if (ev.key === "ArrowDown") next = Math.min(entries.length - 1, index + 1);
+      else if (ev.key === "ArrowUp") next = index < 0 ? entries.length - 1 : Math.max(0, index - 1);
+      else if (ev.key === "Home") next = 0;
+      else if (ev.key === "End") next = entries.length - 1;
+      else return;
+      ev.preventDefault();
+      if (entries[next]) {
+        this.selectEntry(entries[next]);
+        const list = ev.currentTarget;
+        if (this.$nextTick) this.$nextTick(() => {
+          const row = list.querySelector(".is-selected");
+          if (row) row.scrollIntoView({ block: "nearest" });
+        });
+      }
+    },
+
+    fileRowClick(ev, entry) {
+      this.selectEntry(entry);
+      const list = ev.currentTarget.closest(".ws-table-wrap");
+      if (list) list.focus({ preventScroll: true });
+    },
+
+    async jumpPath(ev) {
+      if (ev && (ev.isComposing || ev.keyCode === 229)) return;
       const norm = normalizeRemotePath(this.files.path, this.pathDraft);
       if (norm.error) {
         this.pathError = norm.error;
@@ -2788,11 +2936,20 @@ function sshui() {
       }
     },
 
+    transferSummary() {
+      let running = 0, queued = 0, uncertain = 0;
+      for (const t of this.transfers) {
+        if (this.transferNeedsVerification(t)) uncertain++;
+        else if (t.active) { if (t.started) running++; else queued++; }
+      }
+      return [running && running + " 运行", queued && queued + " 排队", uncertain && uncertain + " 待核验"].filter(Boolean).join(" · ");
+    },
+
     transferDetail(item) {
       if (!item) return "";
       const loadedN = Number(item.loaded) || 0;
       const total = Number(item.total) || 0;
-      const status = item.label || "";
+      const status = item.active && total > 0 && loadedN >= total && item.label === "写入远端" ? "等待远端提交确认" : (item.label || "");
       if (total > 0) {
         const bits = this.pct(this.itemPct(item)) + " · " + this.formatBytes(loadedN) + " / " + this.formatBytes(total);
         return bits + (status ? " · " + status : "");
@@ -3458,7 +3615,7 @@ function sshui() {
 
     blankHost() {
       return {
-        editing: false, alias: "", group: "", host: "", port: "", user: "", password: "", identity: "", agent: false,
+        editing: false, alias: "", group: "", host: "", port: "", user: "", password: "", identity: "", agent: false, agentKey: "",
         policy: "", tags: "", useVia: false, via: "", allowMode: "all", allow: [], deny: [], confirm: [], setDefault: false
       };
     },
@@ -3493,6 +3650,7 @@ function sshui() {
           password: "",
           identity: "",
           agent: h.auth === "agent",
+          agentKey: h.agentKey || "",
           policy: h.policy || "",
           tags: (h.tags || []).join(","),
           useVia: !!h.via,
@@ -3536,9 +3694,9 @@ function sshui() {
         setDefault: !!form.setDefault
       }, this.rulePayload(form));
       if (String(form.port) !== "") body.port = Number(form.port);
-      if (form.password) body.password = form.password;
-      if (form.agent) body.agent = true;
-      if (String(form.identity || "").trim()) body.identity = String(form.identity).trim();
+      if (!form.agent && form.password) body.password = form.password;
+      if (form.agent) { body.agent = true; body.agentKey = String(form.agentKey || "").trim(); }
+      if (!form.agent && String(form.identity || "").trim()) body.identity = String(form.identity).trim();
       try {
         await this.postJSON(form.editing ? "/api/hosts/update" : "/api/hosts", body);
         this.closeDialogs();

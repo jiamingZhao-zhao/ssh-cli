@@ -28,6 +28,8 @@ function fixture() {
     document: { hidden: false, addEventListener() {}, getElementById() { return null; } },
     setTimeout(fn) { timers.push(fn); return timers.length; }, clearTimeout(id) { timers[id - 1] = null; } };
   sandbox.window = sandbox;
+  sandbox.requestAnimationFrame = sandbox.setTimeout;
+  sandbox.cancelAnimationFrame = sandbox.clearTimeout;
   vm.createContext(sandbox); vm.runInContext(source, sandbox);
   const app = sandbox.sshui();
   app.loadAudit = app.loadDashboard = app.loadSessions = () => {};
@@ -921,6 +923,160 @@ test('terminal search is scoped to the active tab and never sends shell input', 
   app.termActive = 'a'; app.termSearch.text = 'needle'; app.searchTerminal(false);
   assert.deepEqual(calls, ['needle']); assert.equal(app.termSearch.found, false);
   app.termActive = 'missing'; app.searchTerminal(false); assert.equal(calls.length, 1);
+});
+
+test('terminal shortcuts leave IME, AltGr, keyup and ordinary shell keys alone', () => {
+  const { app } = fixture(); let search = 0, copy = 0, prevented = 0;
+  app.openTermSearch = () => search++; app.copyTerminal = () => copy++;
+  const base = { type: 'keydown', key: 'f', ctrlKey: true, shiftKey: true, preventDefault() { prevented++; } };
+  for (const patch of [{ isComposing: true }, { keyCode: 229 }, { altKey: true }, { type: 'keyup' }, { shiftKey: false }]) {
+    assert.equal(app.terminalKey({}, { ...base, ...patch }), true);
+  }
+  assert.equal(search + copy + prevented, 0);
+  assert.equal(app.terminalKey({}, base), false);
+  assert.equal(app.terminalKey({}, { ...base, key: 'c' }), false);
+  assert.equal(search, 1); assert.equal(copy, 1); assert.equal(prevented, 2);
+});
+
+test('search input waits until IME composition completes', () => {
+  const { app } = fixture(); let searches = 0;
+  app.searchTerminal = () => searches++;
+  app.searchTerminalEvent({ isComposing: true }, false, true);
+  app.searchTerminalEvent({ keyCode: 229 }, false, false);
+  assert.equal(searches, 0);
+  app.searchTerminalEvent({}, false, true); assert.equal(searches, 1);
+});
+
+test('selecting agent auth in the host form never submits disabled credentials', async () => {
+  const { app } = fixture(); let body;
+  app.hostForm = { ...app.blankHost(), alias: 'a', group: 'g', host: 'example', user: 'u', agent: true, agentKey: 'SHA256:pin', password: 'disabled-password', identity: 'disabled-key' };
+  app.postJSON = async (_url, value) => { body = value; }; app.closeDialogs = app.loadCatalog = () => {};
+  await app.saveHost();
+  assert.equal(body.agent, true); assert.equal(body.agentKey, 'SHA256:pin');
+  assert.equal(body.password, undefined); assert.equal(body.identity, undefined);
+});
+
+test('resize sends only the latest dimensions, deduplicates and cannot reach a replacement socket', () => {
+  const { app, entry, timers } = terminalFixture(); const sent = [];
+  entry.ws = { readyState: 1, send: value => sent.push(JSON.parse(value)) };
+  app.queueTerminalResize(entry, 80, 24); app.queueTerminalResize(entry, 100, 32);
+  assert.equal(timers.length, 1); timers[0]();
+  assert.deepEqual(sent, [{ type: 'resize', cols: 100, rows: 32 }]);
+  app.queueTerminalResize(entry, 100, 32); timers[1](); assert.equal(sent.length, 1);
+  app.queueTerminalResize(entry, 120, 40); const late = timers[2];
+  entry.generation++; app.clearTerminalResize(entry);
+  entry.ws = { readyState: 1, send: () => assert.fail('old resize reached new socket') };
+  late(); assert.equal(entry.resizeTimer, 0);
+});
+
+test('terminal fit skips work when measured dimensions are unchanged', () => {
+  const { app, sandbox, timers } = fixture(); let fits = 0;
+  sandbox.entry = { id: 't', pane: { classList: { contains: () => true }, clientWidth: 800, clientHeight: 400 },
+    term: { cols: 80, rows: 24 }, fit: { proposeDimensions: () => ({ cols: 80, rows: 24 }), fit: () => fits++ } };
+  vm.runInContext('termMap.set("t", entry)', sandbox); app.termActive = 't'; app.view = 'terminal';
+  app.fitActive(); timers[0](); assert.equal(fits, 0);
+  sandbox.entry.term.rows = 20; app.fitActive(); timers[1](); assert.equal(fits, 1);
+});
+
+test('search text and result labels remain independent across terminal tabs', () => {
+  const { app, entry, sandbox } = terminalFixture(); app.$nextTick = fn => fn();
+  entry.searchState = { open: true, text: 'alpha', found: true, index: 0, count: 2 };
+  entry.search = { findNext: () => true, clearDecorations() {} };
+  sandbox.other = { id: 'other', searchState: { open: false, text: 'beta', found: false, index: -1, count: 0 }, pane: { classList: { toggle() {} } } };
+  vm.runInContext('termMap.set("other", other)', sandbox);
+  Object.assign(app.termSearch, entry.searchState);
+  app.showPane('other'); assert.equal(app.termSearch.text, 'beta'); assert.equal(app.searchResultText(), '无匹配');
+  app.showPane('t'); assert.equal(app.termSearch.text, 'alpha'); assert.equal(app.searchResultText(), '1 / 2');
+  app.termSearch.count = 200; app.termSearch.index = -1; assert.equal(app.searchResultText(), '— / 200+');
+});
+
+test('reopening an already open search does not advance to another match', () => {
+  const { app, entry } = terminalFixture(); let searches = 0;
+  entry.search = { findNext: () => { searches++; return true; } };
+  entry.searchState = { open: true, text: 'same', found: true, index: 4, count: 10 };
+  Object.assign(app.termSearch, entry.searchState);
+  app.searchTerminal(false, true); assert.equal(searches, 0); assert.equal(app.searchResultText(), '5 / 10');
+  app.termSearch.text = 'new'; app.searchTerminal(false, true); assert.equal(searches, 1);
+});
+
+test('tab wheel scrolling keeps browser zoom and native horizontal scrolling intact', () => {
+  const { app } = fixture(), target = { scrollWidth: 800, clientWidth: 300, scrollLeft: 0 }; let prevented = 0;
+  const ev = { currentTarget: target, deltaY: 3, deltaX: 0, deltaMode: 1, preventDefault: () => prevented++ };
+  app.scrollTerminalTabs(ev); assert.equal(target.scrollLeft, 48); assert.equal(prevented, 1);
+  app.scrollTerminalTabs({ ...ev, ctrlKey: true }); app.scrollTerminalTabs({ ...ev, deltaX: 5 });
+  assert.equal(target.scrollLeft, 48); assert.equal(prevented, 1);
+});
+
+test('Delete closes a focused terminal tab and restores focus to its neighbor', () => {
+  const { app, sandbox } = terminalFixture(); let focused = '';
+  app.termTabs.push({ id: 'other', alias: 'b', state: 'connected' });
+  app.$nextTick = fn => fn(); sandbox.document.getElementById = id => ({ focus: () => { focused = id; } });
+  app.terminalTabKey({ key: 'Delete', target: { closest: () => true }, preventDefault() {} });
+  assert.equal(app.termActive, 'other'); assert.equal(focused, 'tab-other');
+});
+
+test('terminal failure, disconnect, connecting and expiry expose the correct retry state', async () => {
+  const { app, entry, sockets, control } = terminalFixture();
+  await app.connectTerm(entry); assert.equal(app.canReconnectTerminal(), false);
+  control(sockets[0], 'error', 'auth', 'rejected'); sockets[0].close();
+  assert.equal(app.terminalState(), '连接失败'); assert.equal(app.canReconnectTerminal(), true);
+  await app.connectTerm(entry); control(sockets[1], 'ready'); sockets[1].close();
+  assert.equal(app.terminalState(), '已断开');
+  app.setTabState('t', 'expired'); assert.equal(app.terminalState(), '已到期'); assert.equal(app.canReconnectTerminal(), true);
+});
+
+test('file keyboard navigation ignores IME and nested controls and reveals selection after the event', () => {
+  const { app } = fixture(); let opened = '', listed = '', revealed = 0, later;
+  const list = { querySelector: () => ({ scrollIntoView: () => revealed++ }) };
+  app.files.entries = [{ path: '/a', dir: true }, { path: '/b' }]; app.files.parent = '/';
+  app.openEntry = e => { opened = e.path; }; app.listFiles = p => { listed = p; };
+  app.$nextTick = fn => { later = fn; };
+  const ev = { key: 'ArrowDown', currentTarget: list, target: list, preventDefault() {} };
+  app.fileListKey({ ...ev, isComposing: true }); assert.equal(app.selectedPath, '');
+  app.fileListKey({ ...ev, target: {} }); assert.equal(app.selectedPath, '');
+  app.fileListKey(ev); assert.equal(app.selectedPath, '/a'); ev.currentTarget = null; later(); assert.equal(revealed, 1);
+  app.fileListKey({ ...ev, currentTarget: list, key: 'End' }); assert.equal(app.selectedPath, '/b');
+  app.fileListKey({ ...ev, currentTarget: list, key: 'Enter' }); assert.equal(opened, '/b');
+  app.fileListKey({ ...ev, currentTarget: list, altKey: true, key: 'ArrowUp' }); assert.equal(listed, '/');
+});
+
+test('path editing does not navigate during composition and Escape restores the current directory', async () => {
+  const { app } = fixture(); app.files.path = '/work'; app.pathDraft = '/new'; app.pathError = 'bad';
+  app.listFiles = () => assert.fail('IME Enter navigated'); await app.jumpPath({ isComposing: true });
+  let blurred = false; app.cancelPathEdit({ target: { blur: () => { blurred = true; } }, preventDefault() {} });
+  assert.equal(app.pathDraft, '/work'); assert.equal(app.pathError, ''); assert.equal(blurred, true);
+});
+
+test('split drag coalesces mouse moves and releases the layout lock on window blur', () => {
+  const { app, sandbox, timers } = fixture(), handlers = {}; let saves = 0;
+  sandbox.document.querySelector = () => ({ getBoundingClientRect: () => ({ height: 300 }) });
+  sandbox.document.body = { style: { cursor: 'auto', userSelect: 'text' } }; sandbox.innerHeight = 900;
+  sandbox.addEventListener = (name, fn) => { handlers[name] = fn; };
+  sandbox.removeEventListener = name => { delete handlers[name]; };
+  app.saveSplit = () => saves++; app.fitActive = () => {};
+  app.beginSplit('lower', { clientX: 0, clientY: 600 });
+  handlers.mousemove({ clientX: 0, clientY: 550 }); handlers.mousemove({ clientX: 0, clientY: 500 });
+  assert.equal(timers.length, 1); assert.equal(app.ws.lower, null);
+  handlers.blur(); assert.equal(app.ws.lower, 400); assert.equal(saves, 1);
+  assert.equal(sandbox.document.body.style.cursor, 'auto'); assert.equal(sandbox.document.body.style.userSelect, 'text');
+  assert.equal(Object.keys(handlers).length, 0); assert.equal(app._endSplit, null);
+});
+
+test('transfer summary distinguishes queued, active and unknown; 100 percent still awaits commit', () => {
+  const { app } = fixture();
+  app.transfers = [{ active: true }, { active: true, started: true }, { label: '结果待确认', needsVerification: true }, { label: '完成' }];
+  assert.equal(app.transferSummary(), '1 运行 · 1 排队 · 1 待核验');
+  assert.match(app.transferDetail({ active: true, started: true, loaded: 100, total: 100, label: '写入远端' }), /等待远端提交确认/);
+});
+
+test('network gaps remain distinct from genuine zero traffic and failed polling adds a gap', async () => {
+  const { app } = fixture(); connected(app); app.metrics.alias = 'a';
+  app.pushNet('a', { connected: true, netSampled: true, netRxRate: 0, netTxRate: 0 });
+  assert.equal(app.netSeries.a.at(-1).rxRate, 0);
+  app.pushNet('a', { connected: true, netSampled: false, netRxRate: 0, netTxRate: 0 });
+  assert.equal(app.netSeries.a.at(-1).rxRate, null);
+  app.postRead = async () => { throw new Error('timeout'); }; await app.refreshMetrics();
+  assert.equal(app.netSeries.a.length, 3); assert.equal(app.netSeries.a.at(-1).rxRate, null);
 });
 
 test('cancelled HTTP authentication is not mistaken for an accepted command or download', async () => {

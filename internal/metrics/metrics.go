@@ -84,21 +84,22 @@ type Disk struct {
 
 // Snapshot is safe to show when individual probes fail.
 type Snapshot struct {
-	Connected bool     `json:"connected"`
-	Hostname  string   `json:"hostname,omitempty"`
-	Uptime    string   `json:"uptime,omitempty"`
-	Load      string   `json:"load,omitempty"`
-	CPU       *float64 `json:"cpuPercent,omitempty"`
-	Mem       *Mem     `json:"mem,omitempty"`
-	Swap      *Mem     `json:"swap,omitempty"`
-	Procs     []Proc   `json:"procs"`
-	Disks     []Disk   `json:"disks"`
-	NetRx     uint64   `json:"netRx"`
-	NetTx     uint64   `json:"netTx"`
-	NetRxRate uint64   `json:"netRxRate"`
-	NetTxRate uint64   `json:"netTxRate"`
-	Notes     []string `json:"notes"`
-	Commands  []string `json:"-"`
+	Connected  bool     `json:"connected"`
+	Hostname   string   `json:"hostname,omitempty"`
+	Uptime     string   `json:"uptime,omitempty"`
+	Load       string   `json:"load,omitempty"`
+	CPU        *float64 `json:"cpuPercent,omitempty"`
+	Mem        *Mem     `json:"mem,omitempty"`
+	Swap       *Mem     `json:"swap,omitempty"`
+	Procs      []Proc   `json:"procs"`
+	Disks      []Disk   `json:"disks"`
+	NetRx      uint64   `json:"netRx"`
+	NetTx      uint64   `json:"netTx"`
+	NetRxRate  uint64   `json:"netRxRate"`
+	NetTxRate  uint64   `json:"netTxRate"`
+	NetSampled bool     `json:"netSampled"`
+	Notes      []string `json:"notes"`
+	Commands   []string `json:"-"`
 }
 
 const (
@@ -202,22 +203,20 @@ func Collect(ctx context.Context, exec ExecFunc, gate GateFunc, opt Options) (Sn
 		}
 	}
 	if okNet1 {
-		rx, tx := NetBytes(net1)
+		rx, tx, valid1 := netBytesSample(net1)
 		snap.NetRx, snap.NetTx = rx, tx
 		if okNet2 && pause > 0 {
-			rx2, tx2 := NetBytes(net2)
+			rx2, tx2, valid2 := netBytesSample(net2)
 			snap.NetRx, snap.NetTx = rx2, tx2
-			sec := uint64(pause / time.Second)
-			if sec < 1 {
-				sec = 1
-			}
-			if rx2 >= rx {
-				snap.NetRxRate = (rx2 - rx) / sec
-			}
-			if tx2 >= tx {
-				snap.NetTxRate = (tx2 - tx) / sec
+			if valid1 && valid2 && rx2 >= rx && tx2 >= tx {
+				snap.NetSampled = true
+				snap.NetRxRate = uint64(float64(rx2-rx) / pause.Seconds())
+				snap.NetTxRate = uint64(float64(tx2-tx) / pause.Seconds())
 			}
 		}
+	}
+	if !snap.NetSampled {
+		snap.Notes = append(snap.Notes, "net: rate unavailable")
 	}
 	if text, ok := run("mem"); ok {
 		mem, swap, okm := ParseFree(text)
@@ -573,6 +572,11 @@ func firstCol(col map[string]int, names ...string) int {
 
 // NetBytes sums non-loopback receive and transmit bytes from /proc/net/dev.
 func NetBytes(text string) (rx, tx uint64) {
+	rx, tx, _ = netBytesSample(text)
+	return rx, tx
+}
+
+func netBytesSample(text string) (rx, tx uint64, valid bool) {
 	for _, line := range strings.Split(text, "\n") {
 		if !strings.Contains(line, ":") {
 			continue
@@ -593,6 +597,7 @@ func NetBytes(text string) (rx, tx uint64) {
 		}
 		rx += r
 		tx += t
+		valid = true
 	}
-	return rx, tx
+	return rx, tx, valid
 }

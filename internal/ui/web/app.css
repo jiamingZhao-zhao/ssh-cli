@@ -1793,6 +1793,11 @@ html, body { overflow-x: clip; }
 .ws-search input { width: 170px; min-width: 60px; max-width: 45vw; border: 1px solid var(--mh-line); border-radius: 3px; padding: 3px 5px; background: var(--mh-bg); color: inherit; }
 .ws-search button { border: 0; background: transparent; color: inherit; min-width: 24px; min-height: 26px; }
 .ws-search span { font-size: 12px; white-space: nowrap; }
+.ws-queue-count { display: inline-block; vertical-align: middle; margin-left: 4px; max-width: 55px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 10px; color: var(--mh-muted); }
+.ws-table-wrap:focus-visible { outline: 2px solid var(--tblr-primary); outline-offset: -2px; }
+.ws .term-tab-label { max-width: clamp(7rem, 18vw, 14rem); }
+.ws .term-tabs { overscroll-behavior-x: contain; }
+.ws-connect-actions .form-select.w-auto { width: clamp(8rem, 14vw, 12rem) !important; }
 .ws-connect-actions { flex-shrink: 0; }
 .term-tab-state { white-space: nowrap; }
 .ws-file-bar > .ws-seg { flex-shrink: 0; }
