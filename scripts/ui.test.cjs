@@ -353,7 +353,7 @@ test('terminal audit warning does not disconnect a ready PTY', async () => {
   assert.equal(entry.ready, true); assert.equal(app.termTabs[0].state, 'connected'); assert.match(app.auditWarning, /审计写入失败/);
 });
 
-function terminalFixture() {
+function terminalFixture(realFit) {
   const ctx = fixture(), sockets = [], output = [];
   const { app, sandbox } = ctx;
   sandbox.location = { protocol: 'http:', host: 'localhost' };
@@ -368,7 +368,8 @@ function terminalFixture() {
   sandbox.entry = entry; vm.runInContext("termMap.set('t', entry)", sandbox);
   app.termTabs = [{ id: 't', alias: 'a', state: 'closed', ordinal: 1, error: '' }]; app.termActive = 't';
   app.postJSON = async () => ({ ticket: 'fixture' });
-  app.syncWorkspace = app.fitActive = () => {};
+  app.syncWorkspace = () => {};
+  if (!realFit) app.fitActive = () => {};
   const control = (ws, state, category, message) => ws.onmessage({ data: JSON.stringify({ type: 'terminal', state, category, message }) });
   return { ...ctx, entry, sockets, output, control };
 }
@@ -1013,6 +1014,22 @@ test('Delete closes a focused terminal tab and restores focus to its neighbor', 
   app.$nextTick = fn => fn(); sandbox.document.getElementById = id => ({ focus: () => { focused = id; } });
   app.terminalTabKey({ key: 'Delete', target: { closest: () => true }, preventDefault() {} });
   assert.equal(app.termActive, 'other'); assert.equal(focused, 'tab-other');
+});
+
+test('closing a searched tab keeps the neighbor search intact and delayed fit cannot steal tab focus', () => {
+  const { app, entry, sandbox, timers } = terminalFixture(true); let focused = '', terminalFocus = 0;
+  app.termSearch = { open: true, text: 'old', found: true, index: 3, count: 9 };
+  sandbox.other = { id: 'other', searchState: { open: false, text: 'neighbor', found: true, index: 1, count: 2 },
+    focusAfterFit: true, ready: true, pane: { clientWidth: 800, clientHeight: 400, classList: { toggle() {}, contains: () => true }, contains: () => false },
+    fit: { fit() {} }, term: { cols: 80, rows: 24, focus: () => terminalFocus++ } };
+  vm.runInContext('termMap.set("other", other)', sandbox);
+  app.termTabs.push({ id: 'other', alias: 'b', state: 'connected' }); app.view = 'terminal';
+  app.$nextTick = fn => fn();
+  sandbox.document.getElementById = id => ({ focus: () => { focused = id; sandbox.document.activeElement = { matches: () => false }; } });
+  app.closeTab(entry.id, true);
+  for (const fn of timers) if (fn) fn();
+  assert.equal(app.termSearch.text, 'neighbor'); assert.equal(app.termSearch.index, 1); assert.equal(app.termSearch.open, false);
+  assert.equal(focused, 'tab-other'); assert.equal(terminalFocus, 0);
 });
 
 test('terminal failure, disconnect, connecting and expiry expose the correct retry state', async () => {

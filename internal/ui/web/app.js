@@ -1735,7 +1735,7 @@ function sshui() {
     fitActive(focus) {
       const entry = termMap.get(this.termActive);
       if (!entry) return;
-      entry.focusAfterFit = entry.focusAfterFit || !!focus;
+      entry.focusAfterFit = focus === false ? false : (entry.focusAfterFit || !!focus);
       if (entry.fitTimer) clearTimeout(entry.fitTimer);
       entry.fitTimer = setTimeout(() => {
         entry.fitTimer = 0;
@@ -1770,9 +1770,8 @@ function sshui() {
       this.termTabs = this.termTabs.filter((tab) => tab.id !== id);
       if (this.termActive === id) {
         const next = this.termTabs[Math.min(Math.max(0, index), this.termTabs.length - 1)];
-        this.termActive = next ? next.id : "";
-        if (next) this.showPane(next.id);
-        else { this.termSearch = blankSearch(); this.syncWorkspace(); }
+        if (next) this.showPane(next.id, !focusTab);
+        else { this.termActive = ""; this.termSearch = blankSearch(); this.syncWorkspace(); }
       }
       if (focusTab && this.$nextTick) this.$nextTick(() => {
         const el = document.getElementById("tab-" + this.termActive);
