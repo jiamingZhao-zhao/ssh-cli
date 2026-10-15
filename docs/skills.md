@@ -8,7 +8,7 @@
 
 **CLI 负责连服务器，Skill 教 Agent 怎样调用 CLI。** 本仓库提供标准 `SKILL.md`，安装时只有目录因客户端而异；不依赖某一家模型的 API、MCP 服务或专用工具名称。
 
-需要先在 **Agent 实际执行命令的环境** 中安装 `ssh-cli` 并登记主机：
+需要在 **Agent 实际执行命令的环境** 中安装 `ssh-cli`。安装脚本会补齐这个依赖；主机可在安装完成后登记。使用远程操作前检查：
 
 ```sh
 ssh-cli version
@@ -38,7 +38,7 @@ Windows PowerShell：
 .\scripts\install-skill.ps1 -Agent claude
 ```
 
-可选名称：`claude`、`codex`、`cursor`、`copilot`、`opencode`。脚本只复制当前仓库的 `SKILL.md`，不会安装 CLI、修改 Agent 设置、放宽执行权限或复制 SSH 配置。已有文件一致时成功跳过，有差异才报错；先检查旧内容，确认需要更新时再加 `--force` / `-Force`。
+可选名称：`claude`、`codex`、`cursor`、`copilot`、`opencode`。**CLI 是安装 Skill 的硬性依赖。** 脚本复用已可用的 CLI，缺失时自动调用仓库的 CLI 安装脚本并强制校验发布包，只有 `version` 验证通过才写入 `SKILL.md`。失败时保留原 Skill 或不创建新文件；不修改 Agent 设置、放宽执行权限或复制 SSH 配置。已有文件一致时也会检查 CLI，有差异默认拒绝覆盖；先检查旧内容，确认需要更新时再加 `--force` / `-Force`。
 
 | Agent | 个人安装目录 | 项目安装目录 | 如何使用 / 官方说明 |
 | --- | --- | --- | --- |
@@ -62,7 +62,7 @@ sh scripts/install-skill.sh claude --project /path/to/your-project
 .\scripts\install-skill.ps1 -Agent claude -Project 'D:\code\your-project'
 ```
 
-也可以手动创建表中的目录，把仓库根目录的 `SKILL.md` 复制进去。避免在同一客户端的多个可发现目录里重复安装同名 Skill。
+手动复制或使用客户端自己的安装器时，同样必须先准备 CLI 并通过 `ssh-cli version` 验证；只复制 `SKILL.md` 不算安装完成。主机登记是后续使用步骤，不是安装成功的前提。避免在同一客户端的多个可发现目录里重复安装同名 Skill。
 
 ## 装好后，直接这样说
 
@@ -112,7 +112,7 @@ sh scripts/install-skill.sh claude --force
 | --- | --- |
 | 找不到 Skill | 检查文件名是否是大写 `SKILL.md`、父目录是否叫 `ssh-cli`，以及是否装在当前客户端扫描的位置；重新打开会话，仍不显示再重启客户端 |
 | Copilot CLI 中途安装后看不到 | 在会话里运行 `/skills reload`，再用 `/skills info ssh-cli` 检查位置 |
-| 能加载 Skill，但找不到命令 | 在 Agent 的执行环境检查 PATH 和 `ssh-cli version`；安装 Skill 不等于安装可执行文件 |
+| 能加载 Skill，但找不到命令 | 安装未完成或运行环境已变化；检查 PATH 和默认安装路径，缺失时安装 CLI 并验证版本后再使用 |
 | 找不到已经登记的主机 | 检查运行用户、`SSH_CLI_HOME` / `--config` 和工作环境；不要在聊天中粘贴密码 |
 | agent 认证失败 | 在同一环境检查 `ssh-add -l`；有 `agentKey` 时必须能找到对应公钥，不要清空指纹绕过失败 |
 | 显示策略拒绝 / 需要人工确认 | 交给用户处理该确认；不要自动改策略、切环境或换一个命令包装方式 |

@@ -1,5 +1,5 @@
 #!/bin/sh
-# Install the one canonical SKILL.md; no binary, credentials or agent settings are changed.
+# Ensure the CLI works before installing the canonical SKILL.md.
 set -eu
 
 usage() {
@@ -36,16 +36,34 @@ else
   destination=$HOME/$user_dir/ssh-cli
 fi
 target=$destination/SKILL.md
+identical=false
 [ ! -L "$target" ] || { echo 'Refusing to replace a symbolic link.' >&2; exit 1; }
 if [ -e "$target" ] && [ "$force" != true ]; then
   if cmp -s "$root/SKILL.md" "$target"; then
-    printf 'ssh-cli skill already installed for %s:\n%s\n' "$agent" "$target"
-    exit 0
+    identical=true
+  else
+    echo "Already exists: $target. Review it, then use --force to update." >&2
+    exit 1
   fi
-  echo "Already exists: $target. Review it, then use --force to update." >&2
+fi
+cli=${SSH_CLI_BIN:-${HOME:?HOME is required}/.local/bin}/ssh-cli
+if [ ! -e "$cli" ]; then
+  if command -v ssh-cli >/dev/null 2>&1; then
+    cli=$(command -v ssh-cli)
+  else
+    SSH_CLI_ALLOW_MISSING_CHECKSUM=0 sh "$root/install.sh"
+  fi
+fi
+if [ ! -x "$cli" ] || ! cli_version=$("$cli" version) || [ -z "$cli_version" ]; then
+  echo 'ssh-cli version failed; Skill was not installed. Repair the CLI before retrying.' >&2
   exit 1
+fi
+printf 'CLI ready: %s (%s)\n' "$cli" "$cli_version"
+if [ "$identical" = true ]; then
+  printf 'ssh-cli skill already installed for %s:\n%s\n' "$agent" "$target"
+  exit 0
 fi
 mkdir -p -- "$destination"
 cp -- "$root/SKILL.md" "$target"
 printf 'Installed ssh-cli skill for %s:\n%s\n' "$agent" "$target"
-echo 'The ssh-cli executable and SSH inventory must be available in the agent environment.'
+echo 'CLI verified. Configure hosts separately before remote operations.'

@@ -15,7 +15,7 @@
 https://github.com/jiamingZhao-zhao/ssh-cli
 ```
 
-具备仓库读取和命令执行能力的 Agent，可按[自动安装指引](SETUP.md)识别当前客户端、安装 Skill、检查并补齐 CLI，然后展示安装路径、校验结果和简短用法。**如果你是接到安装请求的 Agent，请先读取 [SETUP.md](SETUP.md)，执行验证后再报告成功。**
+具备仓库读取和命令执行能力的 Agent，可按[自动安装指引](SETUP.md)识别当前客户端、先安装并验证 CLI，再安装 Skill，然后展示安装路径、校验结果和简短用法。**CLI 是硬性依赖；如果你是接到安装请求的 Agent，请先读取 [SETUP.md](SETUP.md)，两者验证通过后再报告成功。**
 
 一个 Go 编写的单文件 SSH 工具，带本机网页工作台和通用 Agent Skill。管理主机、执行远程命令、传文件、看机器状态，使用同一份主机配置。发布包支持 **Windows / macOS / Linux，amd64 / arm64**，运行时无需安装 Python、Node.js 或 Go。
 
@@ -80,7 +80,7 @@ ssh-cli ls -H demo /var/log --json
 
 **Claude Code、Codex、Cursor、GitHub Copilot CLI、OpenCode，共用这一份 [SKILL.md](SKILL.md)。**
 
-推荐直接把仓库链接交给 Agent，按 [SETUP.md](SETUP.md) 自动安装。也可以手动安装：先准备上面的 CLI，再获取 Skill 和安装脚本。
+推荐直接把仓库链接交给 Agent，按 [SETUP.md](SETUP.md) 自动安装。也可以运行下面的安装脚本：它会检查 CLI，缺失时先安装并验证，再写入 Skill。
 
 <details>
 <summary>展开手动安装命令</summary>

@@ -15,7 +15,7 @@
 https://github.com/jiamingZhao-zhao/ssh-cli
 ```
 
-An agent with repository-reading and command-execution tools can follow the [setup workflow](SETUP.en.md) to identify its client, install the skill, check or install the CLI, then report paths, verification and minimal usage. **If you are an agent handling an installation request, read [SETUP.en.md](SETUP.en.md) and verify the result before claiming success.**
+An agent with repository-reading and command-execution tools can follow the [setup workflow](SETUP.en.md) to identify its client, install and verify the CLI first, then install the skill and report paths, verification and minimal usage. **The CLI is mandatory. If you are an agent handling an installation request, read [SETUP.en.md](SETUP.en.md) and verify both before claiming success.**
 
 A single-binary SSH tool written in Go, with a local web workspace and a portable Agent Skill. Manage hosts, run remote commands, transfer files and inspect server health using the same inventory. Release binaries support **Windows, macOS and Linux on amd64 and arm64**, without a Python, Node.js or Go runtime.
 
@@ -80,7 +80,7 @@ The workspace binds to localhost by default. Files/history occupy about a third 
 
 **Claude Code, Codex, Cursor, GitHub Copilot CLI and OpenCode share the same [SKILL.md](SKILL.md).**
 
-Send the repository link to your agent for the [automatic workflow](SETUP.en.md). For manual setup, install the CLI first, then obtain the skill and its installers.
+Send the repository link to your agent for the [automatic workflow](SETUP.en.md). You can also run the installer below: it checks the CLI, installs and verifies it if missing, then writes the skill.
 
 <details>
 <summary>Manual installation commands</summary>

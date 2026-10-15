@@ -5,9 +5,19 @@ description: Use ssh-cli for SSH server health checks, remote commands, logs, se
 
 # SSH CLI
 
-Use this instruction-only Agent Skill with any host that supports standard `SKILL.md` files and local command execution. It needs no provider API, MCP server or provider-specific tools. Do not assume that installing the skill installs the CLI, grants shell access or makes local credentials available in a cloud sandbox.
+Use this Agent Skill with any host that supports standard `SKILL.md` files and local command execution. It needs no provider API, MCP server or provider-specific tools. A working `ssh-cli` is a mandatory installation prerequisite; copying this file alone is not completed setup. Installation does not grant shell access or make local credentials available in a cloud sandbox.
 
-Use the installed `ssh-cli` and the user's existing inventory. Check `ssh-cli version`, `ssh-cli host list --json` and the relevant subcommand's `--help` before an unfamiliar operation. If the executable or inventory is unavailable, report the missing prerequisite; do not invent a host or fall back to another SSH tool. Use `-H <alias>` explicitly so the configured default cannot silently select another host.
+## Required CLI setup
+
+Before reporting installation success or using the skill, verify `ssh-cli version` in the agent's execution environment. Check PATH and `SSH_CLI_BIN` (an installation directory), or the default `~/.local/bin/ssh-cli` / `%LOCALAPPDATA%\ssh-cli\bin\ssh-cli.exe`; use an absolute path when PATH has not refreshed. Reuse a working version. If a found executable fails, report the failure rather than replacing it automatically.
+
+If the CLI is missing, an installation request includes this dependency. Obtain a trusted checkout of https://github.com/jiamingZhao-zhao/ssh-cli in a fresh temporary directory, read its installer, then run `install.ps1` on Windows or `sh install.sh` on Linux/macOS. Require release checksum verification, including unsetting any inherited `SSH_CLI_ALLOW_MISSING_CHECKSUM=1` for that invocation. Do not elevate privileges, disable verification or overwrite host configuration. If execution permissions, download, checksum or version verification fails, stop setup and report it as incomplete. A request to omit CLI installation cannot produce a completed installation of this skill; explain the mandatory dependency instead of claiming success. For full client setup use [SETUP.md](https://github.com/jiamingZhao-zhao/ssh-cli/blob/main/SETUP.md) or [SETUP.en.md](https://github.com/jiamingZhao-zhao/ssh-cli/blob/main/SETUP.en.md).
+
+Verify the actual executable's `version`, report its path and version, then read `host list --json` without connecting to servers. An empty inventory does not prevent installation; report that hosts still need configuring. A failed inventory read is a separate configuration issue, not permission to clear or recreate it. Resume the user's authorized operation only when its target is available. Do not invent a host or fall back to another SSH tool.
+
+## Remote operations
+
+Use the installed `ssh-cli` and the user's existing inventory. Check the relevant subcommand's `--help` before an unfamiliar operation. Use `-H <alias>` explicitly so the configured default cannot silently select another host.
 
 - Read state first (`status`, `ls`, `history` or an allowed `exec`), then perform only the remote changes the user requested.
 - Prefer `--json` for structured results. Tool errors use 250 (usage), 251 (connection), 252 (authentication), 253 (policy/confirmation) and 254 (host key). Remote exit codes pass through and can overlap; inspect `results[].status`, `outcome`, `error` and output as well as the process status.
