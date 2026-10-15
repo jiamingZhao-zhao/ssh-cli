@@ -153,7 +153,7 @@ ssh-cli update --check
 | Agent 安装、调用、排错 | [中文](docs/skills.md) / [English](docs/skills.en.md) |
 | 只发链接的自动安装流程 | [中文](SETUP.md) / [English](SETUP.en.md) |
 | 配置、权限、退出码和详细用法 | [使用参考](docs/usage.md) |
-| 各轮迭代 | [版本索引](docs/releases/README.md)；[0.7.27](docs/releases/v0.7.27.md) |
+| 各轮迭代 | [版本索引](docs/releases/README.md)；[0.7.28](docs/releases/v0.7.28.md) |
 | 架构与规划 | [PLAN.md](docs/PLAN.md) |
 
 从源码构建需要 Go 1.26+（当前 CI 使用 Go 1.27）：

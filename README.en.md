@@ -153,7 +153,7 @@ Also available: jump hosts, remote-to-remote relay, configuration import/export,
 | Agent setup, invocation and troubleshooting | [English](docs/skills.en.md) / [中文](docs/skills.md) |
 | Installation from just a repository link | [English](SETUP.en.md) / [中文](SETUP.md) |
 | Configuration, policies, exit codes and detailed usage | [Reference (中文)](docs/usage.md) |
-| Iterations | [Release index](docs/releases/README.md), [0.7.27 (中文)](docs/releases/v0.7.27.md) |
+| Iterations | [Release index](docs/releases/README.md), [0.7.28 (中文)](docs/releases/v0.7.28.md) |
 | Architecture and roadmap | [PLAN.md (中文)](docs/PLAN.md) |
 
 Building requires Go 1.26+; CI currently uses Go 1.27:
