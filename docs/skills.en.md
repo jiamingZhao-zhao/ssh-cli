@@ -8,7 +8,7 @@
 
 **The CLI connects to servers; the skill teaches an agent how to call it.** This repository ships one standard `SKILL.md`. Discovery directories differ between hosts, but its instructions require no provider API, MCP server or provider-specific tool names.
 
-Install the CLI and register hosts in the **environment where your agent actually executes commands**:
+The CLI must be installed in the **environment where your agent actually executes commands**. The skill installer supplies this dependency if missing; hosts can be registered afterward. Before remote operations check:
 
 ```sh
 ssh-cli version
@@ -38,7 +38,7 @@ Windows PowerShell:
 .\scripts\install-skill.ps1 -Agent claude
 ```
 
-Choices: `claude`, `codex`, `cursor`, `copilot`, `opencode`. The script only copies this checkout's `SKILL.md`; it does not install the CLI, change agent settings, loosen permissions or copy SSH configuration. Identical existing bytes are a successful no-op; different content causes an error. Review the old file before explicitly updating with `--force` / `-Force`.
+Choices: `claude`, `codex`, `cursor`, `copilot`, `opencode`. **The CLI is a mandatory skill installation dependency.** The script reuses a working CLI, or invokes this checkout's CLI installer with mandatory release checksums if missing. It writes `SKILL.md` only after `version` succeeds. Failure preserves the existing skill or leaves a new one absent. It does not change agent settings, loosen permissions or copy SSH configuration. Identical content still requires a CLI check; different content is preserved by default. Review the old file before explicitly updating with `--force` / `-Force`.
 
 | Agent | Personal directory | Project directory | Invocation / official docs |
 | --- | --- | --- | --- |
@@ -62,7 +62,7 @@ sh scripts/install-skill.sh claude --project /path/to/your-project
 .\scripts\install-skill.ps1 -Agent claude -Project 'D:\code\your-project'
 ```
 
-Alternatively, create a directory from the table and copy the root `SKILL.md` into it. Avoid installing the same named skill in several directories that a single client scans.
+Manual copies and native client installers also require a working CLI verified with `ssh-cli version`; copying `SKILL.md` alone is not completed installation. Registering hosts is a subsequent usage step, not an installation prerequisite. Avoid installing the same named skill in several directories that a single client scans.
 
 ## Start with a clear request
 
@@ -112,7 +112,7 @@ For a project installation, pass the same project directory again. To uninstall,
 | --- | --- |
 | Skill not found | Check uppercase `SKILL.md`, parent directory `ssh-cli` and the client's discovery location; reopen the session, then restart the client if needed |
 | Copilot CLI cannot see a newly added skill | Run `/skills reload`, then `/skills info ssh-cli` |
-| Skill loads, command is missing | Check PATH and `ssh-cli version` inside the agent's execution environment |
+| Skill loads, command is missing | Setup is incomplete or the execution environment changed; check PATH and the default installation path, install the missing CLI and verify its version before use |
 | Registered hosts are missing | Check the execution user, `SSH_CLI_HOME` / `--config` and environment; do not paste credentials into chat |
 | SSH agent authentication fails | Check `ssh-add -l` in that environment. A saved `agentKey` must match an available identity; do not clear it to bypass a failure |
 | Policy denial / human confirmation required | Leave that confirmation to the user; do not edit policies, move environments or rewrap the command |

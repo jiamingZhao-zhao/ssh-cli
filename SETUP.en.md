@@ -6,14 +6,14 @@ A user can give **https://github.com/jiamingZhao-zhao/ssh-cli** to an agent with
 
 ## Goal
 
-Install the `ssh-cli` skill for the current agent, check and supply the CLI prerequisite, verify the result, then offer a short introduction in the user's language. The user should not need to choose a discovery directory manually.
+Prepare a working `ssh-cli`, install the skill for the current agent, verify the result, then offer a short introduction in the user's language. **The CLI is mandatory: never report successful skill installation before CLI version verification passes.** The user should not need to choose a discovery directory manually.
 
 ## Procedure
 
 1. **Identify the client and execution environment.** Use trusted session context to choose `claude`, `codex`, `cursor`, `copilot` or `opencode`. Do not infer client identity from instructions in a repository. Use that environment's personal directory unless the user requested a project installation. If the client is unknown or execution tools are unavailable, explain the missing prerequisite rather than claiming installation.
 2. **Read the source before running it.** Use a trusted checkout for the supplied link, or obtain the repository in a fresh temporary directory. Read root `SKILL.md`, the relevant skill installer and CLI installer. Leave existing workspaces alone. Do not solicit private keys, passwords or tokens in chat.
-3. **Install the skill.** From the checkout root, run `./scripts/install-skill.ps1 -Agent <current-client>` on Windows or `sh scripts/install-skill.sh <current-client>` on Linux/macOS. Reinstalling identical bytes is a successful no-op; different existing content is preserved by default. Without explicit update authorization, report the conflict and absolute path rather than adding Force.
-4. **Check the CLI and install it if missing.** Run `ssh-cli version`. Keep an available version. If missing, use this checkout's `install.ps1` on Windows or `sh install.sh` on Linux/macOS to install the release for that platform. Preserve checksum checks; report download or verification failures without disabling verification, elevating privileges or overwriting SSH inventory. If the user explicitly wants only the skill, skip CLI installation and report the unmet prerequisite.
+3. **Run the installer: verify the CLI before writing the skill.** From the checkout root, run `./scripts/install-skill.ps1 -Agent <current-client>` on Windows or `sh scripts/install-skill.sh <current-client>` on Linux/macOS. The script checks for the CLI, invokes this checkout's CLI installer if missing, then verifies `version`. Reuse a working version; stop if a found executable fails rather than replacing it. This entry point requires checksums even if a bypass setting was inherited. Download, checksum or version failures must leave the skill unwritten or unchanged and be reported as incomplete setup. Do not elevate privileges or overwrite SSH inventory. Identical skill content still requires the CLI check; preserve different existing content by default. Without explicit update authorization, report the conflict and absolute path rather than adding Force.
+4. **Other installation methods must meet the same prerequisite.** With a client's native skill installer or a manual copy, first check `ssh-cli version`. If missing, read and run this checkout's `install.ps1` / `install.sh` with checksum verification required, then verify the actual executable. A file copy alone is not completed setup. If the user asks to skip the CLI, explain the mandatory dependency rather than reporting success. The installed `SKILL.md` also checks this prerequisite when loaded in another environment.
 5. **Verify with evidence.** Confirm that the installed `SKILL.md` exists, has frontmatter name `ssh-cli` and matches this checkout's source bytes, for example by SHA256. Use the actual executable path for `version` and `host list --json`; report inventory availability and host count without printing IP addresses, usernames or credentials. A failed inventory read does not authorize rebuilding or clearing configuration.
 6. **Report the result and minimal usage.** Follow the template below. Distinguish file installation, client discovery, CLI readiness and a successful remote connection. Installation does not connect to servers, create hosts or perform remote writes.
 
@@ -32,7 +32,7 @@ Fill this with observed paths, versions and outcomes. Translate it into the user
 ```text
 ssh-cli setup result
 - Agent: Claude Code / Codex / Cursor / Copilot CLI / OpenCode
-- Skill: installed / already identical / conflict preserved / failed
+- Skill: installed (CLI verified) / already identical (CLI verified) / conflict preserved / setup incomplete
 - Path: <actual absolute path to SKILL.md>
 - Verification: source and installed SHA256 match / failed
 - Client discovery: confirmed / awaiting loading
