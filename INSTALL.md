@@ -7,7 +7,7 @@
 | Linux、macOS | `ssh-cli_<version>_<os>_<arch>.tar.gz` | `ssh-cli` |
 | Windows | `ssh-cli_<version>_windows_<arch>.zip` | `ssh-cli.exe` |
 
-`os` 是 `linux`、`darwin`、`windows`；`arch` 是 `amd64` 或 `arm64`。可选的 `checksums.txt` 是 sha256sum 清单。仓库目前还没有 GitHub Release 时，下面的下载命令会失败，可以先用 `go build`。
+`os` 是 `linux`、`darwin`、`windows`；`arch` 是 `amd64` 或 `arm64`。`checksums.txt` 是 SHA256 清单，安装默认要求它存在并校验通过。目标 Release 尚未提供对应平台的资产时，下载会失败，也可以选择从源码构建。
 
 `install.sh`、`install.ps1`、`install.cmd` 和 `ssh-cli update` 用同一种方式找最新版本：请求 `https://github.com/<仓库>/releases/latest`，从重定向的 `Location`（`/releases/tag/<tag>`）读出标签，再下载 `https://github.com/<仓库>/releases/download/<tag>/...`。这些路径都不访问 `api.github.com`。`ssh-cli update` 在直接解析失败且设置了 `GITHUB_TOKEN` 时，才会用该 token 回退到 Releases API；不设置 token 也能更新。
 
@@ -42,7 +42,7 @@ curl.exe -fsSL -o %TEMP%\ssh-cli-install.cmd https://raw.githubusercontent.com/j
 
 读不到重定向时，脚本改用 `0.1.0` 并打印警告。`SSH_CLI_REPO` 可设为 `owner/name`。`PROCESSOR_ARCHITECTURE`（以及 32 位 cmd 里的 `PROCESSOR_ARCHITEW6432`）用来区分 `amd64` 和 `arm64`。
 
-发布里如果有 `checksums.txt`，用 `certutil -hashfile` 做 SHA256 校验；没有则警告后继续。校验和不匹配，或清单里没有这个 zip，会停止安装。
+Windows cmd 安装器用 `certutil -hashfile` 做 SHA256 校验。缺失 `checksums.txt` 默认拒绝安装，显式设置 `SSH_CLI_ALLOW_MISSING_CHECKSUM=1` 才允许缺失清单；校验和不匹配，或清单里没有这个 zip，仍会停止安装。Linux/macOS 与 PowerShell 安装器采用相同的默认校验要求。
 
 用户 Path 写在 `HKCU\Environment`（保留原来的 `REG_EXPAND_SZ`，不用 `setx`，避免 PATH 超过 1024 字符被截断）。当前这个 cmd 窗口会立刻生效。开始菜单里新开的窗口要注销再登录后才会继承这次写入。
 
