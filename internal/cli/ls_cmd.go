@@ -32,6 +32,7 @@ source cli.`,
 			path := "."
 			if len(args) == 1 {
 				path = args[0]
+				a.warnMSYS([]string{path})
 			}
 			return a.listRemote(path, timeout)
 		},

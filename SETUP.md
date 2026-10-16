@@ -19,6 +19,15 @@
 
 安装指令本身授权所请求的安装步骤；仍遵守宿主 Agent 的工具权限。出现权限限制时说明被阻止的具体动作，给出最短补救，不声称绕过了权限。
 
+## Windows 与 Git Bash 路径
+
+在 Git Bash（MSYS）里，传给 Windows 程序的绝对 Unix 路径可能在 ssh-cli 启动前就被改写：`/etc/nginx` 会变成 `D:/soft/git/Git/etc/nginx` 这种带安装前缀的路径。ssh-cli 发现这种形状会警告，并且不会擅自改回。两条做法：
+
+- 远端路径多写一个斜杠：`//etc/nginx`、`//root/app`。程序会还原成 `/etc/nginx`、`/root/app`。
+- 只对这一条命令关闭转换：`MSYS_NO_PATHCONV=1 ssh-cli exec -H demo -- cat /etc/nginx`。
+
+PowerShell 和 cmd 不会做这层转换。不要把改写后的 `D:/.../etc/...` 当成远端真实路径。
+
 ## PATH 与发现
 
 - Linux/macOS 默认 CLI 为 `~/.local/bin/ssh-cli`；可直接使用其绝对路径验证，并告知用户 PATH 是否已包含该目录，不必改用户的 shell 配置。

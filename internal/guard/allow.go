@@ -71,10 +71,11 @@ func prefixMatch(p pattern, args []Arg) bool {
 func matchAny(patterns []string, args []Arg) (string, bool) {
 	// Deny and confirm match the command basename. Allow stays on the full
 	// argv0 so an arbitrary path cannot widen a whitelist entry.
-	viewed := normalizeOps(basenameArgs(args))
-	for _, raw := range patterns {
-		if prefixMatch(parsePattern(raw), viewed) {
-			return raw, true
+	// Lifecycle equivalents expand confirm and deny only.
+	viewed := canonicalizeService(normalizeOps(basenameArgs(args)))
+	for _, item := range expandLifecycle(patterns) {
+		if prefixMatch(parsePattern(item.match), viewed) {
+			return item.detail, true
 		}
 	}
 	return "", false

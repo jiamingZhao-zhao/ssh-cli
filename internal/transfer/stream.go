@@ -37,7 +37,7 @@ func UploadReaderWithOptions(client *ssh.Client, src io.Reader, name string, siz
 	}
 	prog := &byteProgress{fn: opt.Progress, total: size}
 	prog.report(true)
-	err = uploadReader(sf, src, dest, 0o600, nil, opt.RejectOverwrite, check, prog, nil)
+	err = uploadReader(sf, src, dest, 0o600, nil, opt.RejectOverwrite, check, prog, nil, nil)
 	prog.report(true)
 	return err
 }

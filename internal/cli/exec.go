@@ -23,9 +23,37 @@ func (a *App) execCmd() *cobra.Command {
 	var fromStdin bool
 	var allowOutflow bool
 	var parallel int
+	var forwardStdin bool
 	cmd := &cobra.Command{
 		Use:   "exec [--] <command>",
 		Short: "Run a remote command",
+		Long: `Run a command on the selected host.
+
+Transmission depends on how many arguments follow --.
+
+  One argument is a remote shell script and is sent unchanged. The remote
+  login shell parses it once, so pipes, redirects and quotes in that string
+  are shell syntax:
+    ssh-cli exec -H main -- "df -h / | head"
+    ssh-cli exec -H main -- "curl -d '{\"k\":\"v\"}' http://127.0.0.1/api"
+
+  Two or more arguments are an argv array. ssh-cli POSIX-single-quotes any
+  element that the shell would otherwise reinterpret, then joins them. The
+  remote login shell parses that line once and executes the restored argv.
+  Quotes, spaces and metacharacters inside an argument are data, not syntax,
+  and are not parsed a second time:
+    ssh-cli exec -H main -- sh -c 'mkdir -p /a /b'
+    ssh-cli exec -H main -- curl -d '{"k":"v"}' http://127.0.0.1/api
+
+  A plain command whose words are all literal is unchanged:
+    ssh-cli exec -H main -- systemctl status nginx
+
+--forward-stdin copies local stdin to that remote command (for example
+crontab -). It is direct-only: one host, not --daemon, and not combined
+with --script or --stdin. --script and --stdin still send a script body.
+
+policy show -H <host> lists the gates before you run a command. It does
+not connect.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if err := a.rejectYesWithoutTTY(); err != nil {
 				return err
@@ -43,9 +71,16 @@ func (a *App) execCmd() *cobra.Command {
 			if sources != 1 {
 				return exitcode.New(exitcode.Usage, "provide exactly one of a command, --script, or --stdin")
 			}
+			if forwardStdin && (script != "" || fromStdin) {
+				return exitcode.New(exitcode.Usage, "--forward-stdin cannot be combined with --script or --stdin")
+			}
+			if forwardStdin && a.UseDaemon {
+				return exitcode.New(exitcode.Usage, "--forward-stdin is not available with --daemon")
+			}
 			var command string
 			var scriptBody string
 			remote := ""
+			var warnings []string
 			switch {
 			case script != "":
 				body, err := readScriptFile(script)
@@ -64,8 +99,9 @@ func (a *App) execCmd() *cobra.Command {
 				command = scriptBody
 				remote = shellForScript(scriptBody)
 			default:
-				command = strings.Join(args, " ")
+				command = shellCommand(args)
 				remote = command
+				warnings = a.warnMSYS(args)
 			}
 			if strings.TrimSpace(command) == "" {
 				return exitcode.New(exitcode.Usage, "empty command")
@@ -86,19 +122,27 @@ func (a *App) execCmd() *cobra.Command {
 			if parallel > 1 && len(hosts) > guard.MaxBatchHosts {
 				return exitcode.New(exitcode.Usage, "at most %d hosts", guard.MaxBatchHosts)
 			}
+			if forwardStdin && (parallel > 1 || len(hosts) != 1) {
+				return exitcode.New(exitcode.Usage, "--forward-stdin requires exactly one host and --parallel 1")
+			}
+			var stdin io.Reader
+			if forwardStdin {
+				stdin = a.In
+			}
 			plan, err := a.plan(cfg, hosts, meta, func(eff guard.Effective) guard.Decision {
 				return guard.Decide(eff, command)
 			})
 			if err != nil {
 				return err
 			}
-			return a.runAll(meta, plan, remote, scriptBody, dur, allowOutflow, parallel)
+			return a.runAll(meta, plan, remote, scriptBody, dur, allowOutflow, parallel, stdin, warnings)
 		},
 	}
 	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds); also bounds SSH connect")
 	cmd.Flags().StringVar(&script, "script", "", "read the remote script from a file")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read the remote script from stdin")
 	cmd.Flags().BoolVar(&allowOutflow, "allow-outflow", false, "return stdout and stderr from a noDataOutflow env; requires typing outflow")
+	cmd.Flags().BoolVar(&forwardStdin, "forward-stdin", false, "copy local stdin to the remote command (one host; not with --daemon, --script, or --stdin)")
 	cmd.Flags().IntVar(&parallel, "parallel", 1, "run up to N selected hosts at once (1-4); above 1, at most 16 hosts")
 	return cmd
 }
@@ -118,9 +162,9 @@ type execResult struct {
 	Error            string `json:"error,omitempty"`
 }
 
-func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool, parallel int) error {
+func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool, parallel int, stdin io.Reader, warnings []string) error {
 	if parallel > 1 {
-		return a.runParallel(meta, plan, remote, scriptBody, timeout, allowOutflow, parallel)
+		return a.runParallel(meta, plan, remote, scriptBody, timeout, allowOutflow, parallel, warnings)
 	}
 	var results []execResult
 	final := 0
@@ -158,7 +202,7 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 			stderr = io.MultiWriter(a.Err, errCap)
 		}
 		start := time.Now()
-		code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, timeout)
+		code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, stdin, timeout)
 		hostMeta := meta
 		hostMeta.started = start
 		if runErr != nil {
@@ -192,7 +236,11 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 		final = preferCode(final, res.ExitCode)
 	}
 	if a.JSON {
-		if err := a.emit(map[string]any{"results": results}); err != nil {
+		body := map[string]any{"results": results}
+		if len(warnings) > 0 {
+			body["warnings"] = warnings
+		}
+		if err := a.emit(body); err != nil {
 			return err
 		}
 	}
@@ -222,7 +270,7 @@ func (a *App) confirmAll(meta auditMeta, plan []planned, allowOutflow bool) erro
 	return nil
 }
 
-func (a *App) runParallel(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool, parallel int) error {
+func (a *App) runParallel(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool, parallel int, warnings []string) error {
 	if err := a.confirmAll(meta, plan, allowOutflow); err != nil {
 		return err
 	}
@@ -251,7 +299,11 @@ func (a *App) runParallel(meta auditMeta, plan []planned, remote, scriptBody str
 		return auditErr
 	}
 	if a.JSON {
-		if err := a.emit(map[string]any{"results": results}); err != nil {
+		body := map[string]any{"results": results}
+		if len(warnings) > 0 {
+			body["warnings"] = warnings
+		}
+		if err := a.emit(body); err != nil {
 			return err
 		}
 	}
@@ -282,7 +334,7 @@ func (a *App) execCaptured(meta auditMeta, p planned, remote, scriptBody string,
 		stderr = io.MultiWriter(&errBuf, errCap)
 	}
 	start := time.Now()
-	code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, timeout)
+	code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, nil, timeout)
 	hostMeta := meta
 	hostMeta.started = start
 	if runErr != nil {
@@ -335,7 +387,7 @@ func executionOutcome(err error) string {
 	return "completed"
 }
 
-func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Writer, timeout time.Duration) (int, error) {
+func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Writer, stdin io.Reader, timeout time.Duration) (int, error) {
 	if a.OperationContext != nil {
 		if err := a.OperationContext.Err(); err != nil {
 			return 0, err
@@ -361,7 +413,6 @@ func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Wri
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
 	}
-	var stdin io.Reader
 	if scriptBody != "" {
 		stdin = strings.NewReader(scriptBody)
 	}

@@ -84,6 +84,8 @@ Codex 桌面客户端可从 Skill 选择器选择；具体提及符号以当前�
 使用 ssh-cli skill，先列出已登记主机，再检查 demo 的磁盘和内存，只读。
 ```
 
+调用时先跑 `ssh-cli policy show -H <别名> --json`（只读，不连接），用 `confirm`、`protectedPaths`、`equivalence` 和 `envRules` 看确认门槛，不要靠退出码 253 试探。多参数 `exec` 会保留引号，例如 `exec -H demo -- curl -d '{"k":"v"}' http://127.0.0.1/api`；一个参数仍是远端 shell 脚本。Git Bash 可能把 `/etc/nginx` 改写成 `D:/.../etc/nginx`，看到警告后改用 `//etc/nginx` 或 `MSYS_NO_PATHCONV=1`。`docker restart` 的确认也覆盖 `stop`、`start` 和 `kill`，不要拆成 stop 再 start 来绕过。详情在 `SKILL.md` 和[使用参考](usage.md)。
+
 之后可以试这些明确的请求：
 
 - “查看 demo 最近的操作记录，说明有没有失败；不要重跑命令。”
@@ -115,7 +117,7 @@ sh scripts/install-skill.sh claude --force
 | 能加载 Skill，但找不到命令 | 安装未完成或运行环境已变化；检查 PATH 和默认安装路径，缺失时安装 CLI 并验证版本后再使用 |
 | 找不到已经登记的主机 | 检查运行用户、`SSH_CLI_HOME` / `--config` 和工作环境；不要在聊天中粘贴密码 |
 | agent 认证失败 | 在同一环境检查 `ssh-add -l`；有 `agentKey` 时必须能找到对应公钥，不要清空指纹绕过失败 |
-| 显示策略拒绝 / 需要人工确认 | 交给用户处理该确认；不要自动改策略、切环境或换一个命令包装方式 |
+| 显示策略拒绝 / 需要人工确认 | 先看 `policy show -H <别名>`；交给用户处理该确认；不要自动改策略、切环境，或把 `restart` 拆成 `stop`/`start` |
 | 本地能用，云端不能用 | 个人 Skill、CLI、网络和凭据不自动同步；Cursor 和 Claude 的本地个人目录也不能视为云端已经安装 |
 
 平台安装和发现方式按上面的官方文档核实于 **2026-10-15**。没有原生 Skill 机制的 Agent，可以让它显式读取这份文件作为任务说明，但那是手动加载，不应声称它会自动发现或获得 SSH 能力。

@@ -126,7 +126,8 @@ ssh-cli exec -H demo --timeout 30s --json -- uptime
 ssh-cli upload -H demo ./artifact.jar /tmp/artifact.jar --json
 ssh-cli download -H demo /var/log/app.log ./app.log --json
 
-# Explain policy before deciding what to do
+# Read the host gates, then explain one command
+ssh-cli policy show -H demo
 ssh-cli policy explain -H demo -- "systemctl restart nginx"
 
 # Inspect recorded operations

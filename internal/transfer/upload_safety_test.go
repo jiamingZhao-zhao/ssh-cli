@@ -177,8 +177,27 @@ func TestUploadPreservesOriginalOnRefusalAndCancel(t *testing.T) {
 	if err = transfer.Upload(client.Raw(), local, "/keep.txt", nil); err != nil {
 		t.Fatal(err)
 	}
-	if read() != "after" {
-		t.Fatal("confirmed replacement did not complete")
+	var stats transfer.UploadStats
+	if err = os.WriteFile(local, []byte("third"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err = transfer.UploadWithOptions(client.Raw(), local, "/keep.txt", nil, transfer.UploadOptions{Backup: true, Stats: &stats}); err != nil {
+		t.Fatal(err)
+	}
+	if stats.Bytes != 5 || len(stats.Backups) != 1 || stats.SHA256 == "" {
+		t.Fatalf("stats %+v", stats)
+	}
+	bak, err := sf.Open(stats.Backups[0])
+	if err != nil {
+		t.Fatal(err)
+	}
+	backed, err := io.ReadAll(bak)
+	_ = bak.Close()
+	if err != nil || string(backed) != "after" {
+		t.Fatalf("backup %q %v", backed, err)
+	}
+	if read() != "third" {
+		t.Fatalf("replaced %q", read())
 	}
 }
 
