@@ -3,8 +3,10 @@ package transfer
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"hash"
 	"io"
 	"io/fs"
 	"os"
@@ -49,9 +51,25 @@ type UploadOptions struct {
 	Protected       []string
 	Check           func(dest string, protected []string) error
 	RejectOverwrite bool
+	// Backup copies an existing regular file to <path>.ssh-cli.bak before
+	// replacement. A name that already exists gets a unix-second suffix.
+	Backup bool
+	// OnOverwrite runs before an existing regular file is replaced. A non-nil
+	// error leaves that file unchanged.
+	OnOverwrite func(remotePath string) error
+	// Stats receives bytes and a sha256 of regular-file contents in plan
+	// order when non-nil. Directory metadata is not hashed.
+	Stats *UploadStats
 	// Progress reports bytes copied to the remote. total is the planned
 	// regular-file size and may be 0. Callbacks run on the upload goroutine.
 	Progress func(done, total int64)
+}
+
+// UploadStats is the byte count and content hash of one upload.
+type UploadStats struct {
+	Bytes   int64
+	SHA256  string
+	Backups []string
 }
 
 // OverwriteError means an existing regular file needs an explicit overwrite decision.
@@ -117,13 +135,31 @@ func UploadWithOptions(client *ssh.Client, local, remote string, log LogFunc, op
 				if !st.Mode().IsRegular() {
 					return fmt.Errorf("refusing to replace non-regular file %s", item.remote)
 				}
+				if opt.OnOverwrite != nil {
+					if err := opt.OnOverwrite(item.remote); err != nil {
+						return err
+					}
+				}
 				if opt.RejectOverwrite {
 					return &OverwriteError{Path: item.remote}
+				}
+				if opt.Backup {
+					bak, err := backupRemoteFile(sf, item.remote)
+					if err != nil {
+						return err
+					}
+					if bak != "" && opt.Stats != nil {
+						opt.Stats.Backups = append(opt.Stats.Backups, bak)
+					}
 				}
 			} else if !os.IsNotExist(err) {
 				return err
 			}
 		}
+	}
+	var meter *countHash
+	if opt.Stats != nil {
+		meter = &countHash{h: sha256.New()}
 	}
 	var prog *byteProgress
 	if opt.Progress != nil {
@@ -149,7 +185,11 @@ func UploadWithOptions(client *ssh.Client, local, remote string, log LogFunc, op
 			}
 			continue
 		}
-		if err := uploadFile(sf, item.local, item.remote, item.mode, log, opt.RejectOverwrite, checkPath, prog); err != nil {
+		var tee io.Writer
+		if meter != nil {
+			tee = meter
+		}
+		if err := uploadFile(sf, item.local, item.remote, item.mode, log, opt.RejectOverwrite, checkPath, prog, tee); err != nil {
 			if prog != nil {
 				prog.report(true)
 			}
@@ -159,7 +199,68 @@ func UploadWithOptions(client *ssh.Client, local, remote string, log LogFunc, op
 	if prog != nil {
 		prog.report(true)
 	}
+	if opt.Stats != nil && meter != nil {
+		opt.Stats.Bytes = meter.n
+		opt.Stats.SHA256 = hex.EncodeToString(meter.h.Sum(nil))
+	}
 	return nil
+}
+
+// backupRemoteFile copies an existing regular file next to itself. The
+// original stays in place until the upload's own replacement commits.
+func backupRemoteFile(sf *sftp.Client, remote string) (string, error) {
+	st, err := sf.Lstat(remote)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	if !st.Mode().IsRegular() {
+		return "", nil
+	}
+	bak := remote + ".ssh-cli.bak"
+	if _, err := sf.Lstat(bak); err == nil {
+		bak = fmt.Sprintf("%s.ssh-cli.bak.%d", remote, time.Now().Unix())
+	} else if !os.IsNotExist(err) {
+		return "", err
+	}
+	src, err := sf.Open(remote)
+	if err != nil {
+		return "", err
+	}
+	defer src.Close()
+	dst, err := sf.OpenFile(bak, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
+	if err != nil {
+		return "", fmt.Errorf("backup %s: %w", remote, err)
+	}
+	_, copyErr := io.Copy(dst, src)
+	closeErr := dst.Close()
+	if copyErr != nil || closeErr != nil {
+		_ = sf.Remove(bak)
+		if copyErr != nil {
+			return "", copyErr
+		}
+		return "", closeErr
+	}
+	if err := sf.Chmod(bak, st.Mode().Perm()); err != nil {
+		return "", fmt.Errorf("backup %s: %w", remote, err)
+	}
+	return bak, nil
+}
+
+type countHash struct {
+	h hash.Hash
+	n int64
+}
+
+func (c *countHash) Write(p []byte) (int, error) {
+	if c == nil {
+		return len(p), nil
+	}
+	n, err := c.h.Write(p)
+	c.n += int64(n)
+	return n, err
 }
 
 // Upload never follows existing destination symlinks. This also rejects links
@@ -326,17 +427,17 @@ func download(client *ssh.Client, remote, local string, log LogFunc, progress fu
 	return err
 }
 
-func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error, prog *byteProgress) error {
+func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error, prog *byteProgress, tee io.Writer) error {
 	src, err := os.Open(local)
 	if err != nil {
 		return err
 	}
 	defer src.Close()
-	return uploadReader(sf, src, remote, mode, log, rejectOverwrite, check, prog, nil)
+	return uploadReader(sf, src, remote, mode, log, rejectOverwrite, check, prog, nil, tee)
 }
 
 // uploadReader commits only after the entire stream and optional verification succeed.
-func uploadReader(sf *sftp.Client, src io.Reader, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error, prog *byteProgress, verify func(string) error) error {
+func uploadReader(sf *sftp.Client, src io.Reader, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error, prog *byteProgress, verify func(string) error, tee io.Writer) error {
 	if dir := path.Dir(remote); dir != "" && dir != "." {
 		if err := sf.MkdirAll(dir); err != nil {
 			return fmt.Errorf("mkdir %s: %w", dir, err)
@@ -357,7 +458,11 @@ func uploadReader(sf *sftp.Client, src io.Reader, remote string, mode os.FileMod
 		_ = dst.Close()
 		return fmt.Errorf("restrict temporary upload permissions: %w", err)
 	}
-	copyErr := copyWithProgress(dst, src, prog)
+	reader := src
+	if tee != nil {
+		reader = io.TeeReader(src, tee)
+	}
+	copyErr := copyWithProgress(dst, reader, prog)
 	closeErr := dst.Close()
 	if copyErr != nil {
 		return copyErr

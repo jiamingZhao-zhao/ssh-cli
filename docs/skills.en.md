@@ -84,6 +84,8 @@ Use the skill selector in the Codex desktop client; mention syntax depends on th
 Use the ssh-cli skill. List registered hosts, then check disk and memory on demo, read only.
 ```
 
+Before a change, run `ssh-cli policy show -H <alias> --json`. It is read-only and does not connect. Use `confirm`, `protectedPaths`, `equivalence` and `envRules` instead of probing for exit 253. Multi-argument `exec` preserves quotes (`exec -H demo -- curl -d '{"k":"v"}' http://127.0.0.1/api`); one argument is still a remote shell script. Git Bash may rewrite `/etc/nginx` to `D:/.../etc/nginx`; use `//etc/nginx` or `MSYS_NO_PATHCONV=1` when warned. A `docker restart` gate also covers `stop`, `start` and `kill`. Details are in `SKILL.md` and the [usage reference](usage.md).
+
 Other concrete requests:
 
 - “Inspect demo's recent audit records and explain failures. Do not replay commands.”
@@ -115,7 +117,7 @@ For a project installation, pass the same project directory again. To uninstall,
 | Skill loads, command is missing | Setup is incomplete or the execution environment changed; check PATH and the default installation path, install the missing CLI and verify its version before use |
 | Registered hosts are missing | Check the execution user, `SSH_CLI_HOME` / `--config` and environment; do not paste credentials into chat |
 | SSH agent authentication fails | Check `ssh-add -l` in that environment. A saved `agentKey` must match an available identity; do not clear it to bypass a failure |
-| Policy denial / human confirmation required | Leave that confirmation to the user; do not edit policies, move environments or rewrap the command |
+| Policy denial / human confirmation required | Read `policy show -H <alias>` first. Leave that confirmation to the user; do not edit policies, move environments, or split `restart` into `stop`/`start` |
 | Works locally, fails in the cloud | Personal skills, CLI, network access and credentials do not transfer automatically; local personal directories in Cursor or Claude do not establish a cloud installation |
 
 Discovery paths and invocation methods were checked against the linked official documentation on **2026-10-15**. For agents without native skills, explicitly reading the file can supply task instructions; it does not create automatic discovery or SSH access.

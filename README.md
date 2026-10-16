@@ -126,7 +126,8 @@ ssh-cli exec -H demo --timeout 30s --json -- uptime
 ssh-cli upload -H demo ./artifact.jar /tmp/artifact.jar --json
 ssh-cli download -H demo /var/log/app.log ./app.log --json
 
-# 先解释策略，再决定下一步
+# 先看这台主机的确认门槛和受保护路径，再解释一条命令
+ssh-cli policy show -H demo
 ssh-cli policy explain -H demo -- "systemctl restart nginx"
 
 # 查看工具记录的操作

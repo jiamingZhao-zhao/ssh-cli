@@ -78,13 +78,33 @@ ssh-cli exec -H main --timeout 30s -- "df -h /"
 ssh-cli exec -H a -H b --parallel 2 -- "uptime"
 ssh-cli exec -H main --script ./status.sh
 ssh-cli upload -H main ./dist //root/app/dist
+ssh-cli upload -H main ./app.conf /etc/app.conf --backup --json
 ssh-cli download -H main /var/log/app.log ./app.log
 
 ssh-cli policy show -H main
 ssh-cli policy explain -H main -- "systemctl restart nginx"
 ```
 
-`//root/...` 会还原成 `/root/...`，用来避开 Git Bash 对绝对路径的改写。
+`//root/...` 会还原成 `/root/...`，用来避开 Git Bash 对绝对路径的改写。Git Bash 还可能在程序看到参数之前，把 `/etc/nginx` 改写成 `D:/soft/git/Git/etc/nginx` 这种带盘符的路径。`exec`、`upload`、`download` 和 `ls` 发现这种形状会在 stderr 警告，并在 `--json` 里加上 `warnings`；命令不会改写该参数。处理办法是写成 `//etc/nginx`，或在这一条命令前加上 `MSYS_NO_PATHCONV=1`。PowerShell 和 cmd 没有这层转换。
+
+## exec 怎么把参数送到远端
+
+远端登录 shell 只会解析一次 ssh-cli 送出的命令字符串。
+
+- **一个参数**是远端 shell 脚本，原样送出。管道、重定向和你写在这串字符串里的引号仍是 shell 语法：`ssh-cli exec -H main -- "df -h / | head"`。
+- **两个及以上参数**是 argv。含空格、引号或其它 shell 元字符的参数会按 POSIX 单引号包起来再拼接。远端 shell 解析这一次后，按还原出的 argv 执行，参数内部不会再被解析。因此 `ssh-cli exec -H main -- sh -c 'mkdir -p /a /b'` 收到的是完整脚本，`ssh-cli exec -H main -- curl -d '{"k":"v"}' http://127.0.0.1/api` 收到的 JSON 仍带引号。
+- 全是普通字面量的参数保持原样，`ssh-cli exec -H main -- systemctl status nginx` 送出的仍是 `systemctl status nginx`。
+- `--forward-stdin` 把本机 stdin 交给这一条远端命令（例如 `crontab -`）。只能一台主机，不能和 `--script`、`--stdin`、`--daemon` 或 `--parallel` 大于 1 一起用。`--script` / `--stdin` 仍然表示脚本正文。
+
+策略检查用的是同一条命令字符串，所以 `policy explain` 看到的和远端将要执行的一致。
+
+## 先看策略，再执行
+
+`ssh-cli policy show -H main` 只读本机 `hosts.yaml`，不连接、不执行。它列出确认门槛（`confirm`）、受保护路径、能力开关，以及环境规则：`maxMode`、`defaultPolicy`、`noDataOutflow`、`breakGlass`。`--json` 的 `envRules` 和 `equivalence` 是给 Agent 用的。有 `equivalence` 行时，表示某条 confirm/deny 还会挡住等价操作，例如配置了 `docker restart` 时，`docker stop`、`docker start`、`docker kill` 同样要确认。`docker container restart` 与 `docker restart` 相同。`systemctl restart` 和 `apps.sh restart` 同样覆盖 `stop` 和 `start`。只配置了 `docker stop` 时，会连带 `restart` 和 `kill`，不会连带单独的 `start`。
+
+`./script.sh`、`/path/file.sh`、`sh script.sh`、`source script.sh` 和 `. script.sh` 都是看不到正文的脚本，standard 需要确认，readonly 拒绝。把脚本正文贴进 `sh -c` 会按里面的每条命令检查，不能用来绕过其中已经被拦住的命令。没有 `.sh` 后缀、也没有用 `sh` / `source` 拉起的可执行文件（例如 `./deploy`）不在这组规则里。`docker compose` 也不在这组规则里。
+
+`podman` 只有在策略写了 `podman` 时才套用同一套生命周期规则，不会因为写了 `docker` 就挡住 `podman`。
 
 `--timeout` 同时约束两段时间，彼此分开计时：SSH 建连，以及连上之后的命令。没写 `--timeout` 时建连仍是 20 秒。写了更短的时间（例如 `3s`、`8s`）时，连不上的主机会在这段时间内失败，而不会固定等到大约 20 秒。比 20 秒更长的 `--timeout` 只加长命令本身，建连仍在 20 秒内结束。`status`、`service`、`keys` 的 `--timeout` 同样限制建连。
 
@@ -164,7 +184,9 @@ ssh-cli keys known list
 ssh-cli keys known remove 192.0.2.10:22
 ```
 
-`status` 做连通性和一组固定的只读检查（主机名、负载、内存、磁盘、监听端口）。`service` 只是 `systemctl <action> <name>`，动作限于 `status` / `start` / `stop` / `restart` / `reload`，服务名有字面量限制；只读策略默认只允许 `status`，`restart` / `stop` 仍按确认规则处理。`keys` 打印远端 `authorized_keys` 的 SHA256 指纹。`keys known` 查看或删除本机 `known_hosts`：删掉一条之后，下次连接会记下看到的第一把钥匙；还留在文件里的钥匙如果变了，仍然拒绝。
+`status` 做连通性和一组固定的只读检查（主机名、负载、内存、磁盘、监听端口）。这些探测仍是固定的 shell 字符串，不走 `exec` 的多参数 argv 封送。`service` 只是 `systemctl <action> <name>`，动作限于 `status` / `start` / `stop` / `restart` / `reload`，服务名有字面量限制；只读策略默认只允许 `status`，`restart` / `stop` 仍按确认规则处理。标准策略里的 `systemctl restart` 还会让 `systemctl start` 进入确认。`keys` 打印远端 `authorized_keys` 的 SHA256 指纹。`keys known` 查看或删除本机 `known_hosts`：删掉一条之后，下次连接会记下看到的第一把钥匙；还留在文件里的钥匙如果变了，仍然拒绝。
+
+`upload` 默认直接覆盖已有普通文件。`--backup` 会先把原文件复制为 `<路径>.ssh-cli.bak`（同一秒内再次备份会加上 Unix 时间后缀），复制失败则不写入。`--confirm-overwrite` 在覆盖前要求输入主机别名；没有 TTY 时退出 253，原文件保持不变。`--json` 在成功时增加 `bytes`、`durationMs`、`sha256`。`sha256` 是按上传计划顺序拼接的普通文件内容，不含目录名和权限。`backups` 列出这次写出的备份路径。下载的 JSON 形状不变。
 
 ## 远程目录与 shell 历史
 
@@ -275,4 +297,4 @@ ssh-cli config import bundle.yaml
 ssh-cli policy sign
 ```
 
-`session run` 在同一个进程里复用一个 shell，命令结束后关闭。空闲默认 5 分钟，最长 60 分钟，忙着也会到点关闭；本机终端会先写出提示，并在页面上显示横幅。连接大约每 30 秒发送 SSH keepalive，对端没有应答就关闭，避免空闲或半开连接把终端和旁边的概况、文件面板挂死。另开一个进程看不到这些会话。UI 进程是会话的持有者。`relay` 只经本机转发一个文件，并用远端 `sha256sum`（否则 `md5sum`）核对。配置包保存主机、策略和密钥引用，不写密码明文，也不改 `secrets.json`。
+`session run` 在同一个进程里复用一个 shell，命令结束后关闭。空闲默认 5 分钟，最长 60 分钟，忙着也会到点关闭；本机终端会先写出提示，并在页面上显示横幅。连接大约每 30 秒发送 SSH keepalive，对端没有应答就关闭，避免空闲或半开连接把终端和旁边的概况、文件面板挂死。另开一个进程看不到这些会话。UI 进程是会话的持有者。普通 `exec` 每次仍是一条新连接，不会自动复用。要复用必须先在另一个终端运行 `ssh-cli daemon serve`，再对字面量命令使用 `exec --daemon`。daemon 不自动启动，不接受需要确认的命令，不执行 `--stdin`、`--script` 或 `--forward-stdin`，也不覆盖文件传输，失败不重试。`relay` 只经本机转发一个文件，并用远端 `sha256sum`（否则 `md5sum`）核对。配置包保存主机、策略和密钥引用，不写密码明文，也不改 `secrets.json`。

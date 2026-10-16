@@ -19,6 +19,15 @@ Prepare a working `ssh-cli`, install the skill for the current agent, verify the
 
 The user's installation request authorizes the requested setup steps, subject to host tool permissions. If an action is blocked, name it and give the shortest remedy; do not claim permissions were bypassed.
 
+## Windows and Git Bash paths
+
+Git Bash (MSYS) can rewrite an absolute Unix path before a Windows program starts. `/etc/nginx` may arrive as `D:/soft/git/Git/etc/nginx`. ssh-cli warns when it sees that shape and does not rewrite the argument. Two workarounds:
+
+- Add a slash: `//etc/nginx`, `//root/app`. ssh-cli restores `/etc/nginx` and `/root/app`.
+- Disable conversion for one command: `MSYS_NO_PATHCONV=1 ssh-cli exec -H demo -- cat /etc/nginx`.
+
+PowerShell and cmd do not apply this conversion. Do not treat the rewritten `D:/.../etc/...` string as the real remote path.
+
 ## PATH and discovery
 
 - Linux/macOS defaults to `~/.local/bin/ssh-cli`. Verify by absolute path when needed, report whether the directory is on PATH and leave shell configuration alone.

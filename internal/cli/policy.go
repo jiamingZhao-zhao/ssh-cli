@@ -79,10 +79,27 @@ func (a *App) policyShow() *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Show the merged policy for the selected host(s)",
+		Long: `Show the effective policy for each selected host. This command only reads
+local hosts.yaml. It does not connect, and it does not run a remote command.
+
+The report includes confirmation-gate patterns, protected paths, capability
+switches, and env rules (maxMode, defaultPolicy, noDataOutflow, breakGlass).
+equivalence lines name extra commands that match a confirm or deny pattern,
+such as docker stop when docker restart is gated.
+
+Agents should run this before a change instead of discovering a gate by
+exiting 253.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			cfg, hosts, err := a.loadSelection()
 			if err != nil {
 				return err
+			}
+			type envRules struct {
+				MaxMode       string `json:"maxMode"`
+				DefaultPolicy string `json:"defaultPolicy,omitempty"`
+				NoDataOutflow bool   `json:"noDataOutflow"`
+				BreakGlass    bool   `json:"breakGlass"`
+				BreakGlassTTL string `json:"breakGlassMaxTtl,omitempty"`
 			}
 			type view struct {
 				Host         string             `json:"host"`
@@ -95,8 +112,10 @@ func (a *App) policyShow() *cobra.Command {
 				AllowEmpty   bool               `json:"allowEmpty"`
 				Deny         []string           `json:"deny,omitempty"`
 				Confirm      []string           `json:"confirm,omitempty"`
+				Equivalence  []string           `json:"equivalence,omitempty"`
 				Capabilities guard.Capabilities `json:"capabilities"`
 				Protected    []string           `json:"protectedPaths,omitempty"`
+				EnvRules     envRules           `json:"envRules"`
 				Warnings     []string           `json:"warnings,omitempty"`
 				BuiltinDeny  []string           `json:"builtinDeny"`
 			}
@@ -106,12 +125,22 @@ func (a *App) policyShow() *cobra.Command {
 				if err != nil {
 					return exitcode.New(exitcode.Usage, "%s", err.Error())
 				}
+				rules := envRules{NoDataOutflow: h.Env.NoDataOutflow}
+				if h.Env.MaxMode.Valid() {
+					rules.MaxMode = string(h.Env.MaxMode)
+				}
+				rules.DefaultPolicy = h.Env.DefaultPolicy
+				if h.Env.BreakGlass != nil && h.Env.BreakGlass.Enabled {
+					rules.BreakGlass = true
+					rules.BreakGlassTTL = h.Env.BreakGlass.MaxTTL
+				}
+				notes := guard.EquivalenceNotes(append(append([]string{}, eff.Confirm...), eff.Deny...))
 				views = append(views, view{
 					Host: h.Alias, Group: h.Group, Env: h.EnvName,
 					Mode: string(eff.Mode), ModeClamped: eff.Clamped,
 					Allow: eff.Allow, AllowAll: eff.AllowAll, AllowEmpty: eff.AllowEmpty,
-					Deny: eff.Deny, Confirm: eff.Confirm, Capabilities: eff.Caps(),
-					Protected: eff.Protected, Warnings: eff.Warnings,
+					Deny: eff.Deny, Confirm: eff.Confirm, Equivalence: notes, Capabilities: eff.Caps(),
+					Protected: eff.Protected, EnvRules: rules, Warnings: eff.Warnings,
 					BuiltinDeny: []string{
 						"rm -rf of filesystem root",
 						"mkfs",
@@ -131,6 +160,11 @@ func (a *App) policyShow() *cobra.Command {
 				}
 				fmt.Fprintf(a.Out, "host %s  group %s  env %s\n", v.Host, v.Group, v.Env)
 				fmt.Fprintf(a.Out, "mode %s\n", v.Mode)
+				fmt.Fprintf(a.Out, "env-rules maxMode=%s defaultPolicy=%s noDataOutflow=%t breakGlass=%t\n",
+					v.EnvRules.MaxMode, v.EnvRules.DefaultPolicy, v.EnvRules.NoDataOutflow, v.EnvRules.BreakGlass)
+				if v.EnvRules.BreakGlassTTL != "" {
+					fmt.Fprintf(a.Out, "breakGlassMaxTtl %s\n", v.EnvRules.BreakGlassTTL)
+				}
 				if v.AllowAll {
 					fmt.Fprintln(a.Out, "allow (universal)")
 				} else if v.AllowEmpty {
@@ -148,6 +182,9 @@ func (a *App) policyShow() *cobra.Command {
 					fmt.Fprintln(a.Out, "confirm (none)")
 				} else {
 					fmt.Fprintf(a.Out, "confirm %s\n", strings.Join(v.Confirm, ", "))
+				}
+				for _, note := range v.Equivalence {
+					fmt.Fprintf(a.Out, "equivalence %s\n", note)
 				}
 				fmt.Fprintf(a.Out, "capabilities upload=%t download=%t relay=%s forward=%t\n",
 					v.Capabilities.Upload, v.Capabilities.Download, v.Capabilities.Relay, v.Capabilities.Forward)
@@ -171,7 +208,7 @@ func (a *App) policyExplain() *cobra.Command {
 			if len(args) == 0 {
 				return exitcode.New(exitcode.Usage, "pass a command after --")
 			}
-			command := strings.Join(args, " ")
+			command := shellCommand(args)
 			cfg, hosts, err := a.loadSelection()
 			if err != nil {
 				return err

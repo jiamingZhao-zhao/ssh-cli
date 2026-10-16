@@ -46,7 +46,7 @@ func (a *App) elevateCmd() *cobra.Command {
 		if err != nil {
 			return exitcode.New(exitcode.Denied, "%s", err.Error())
 		}
-		command := strings.Join(args[1:], " ")
+		command := shellCommand(args[1:])
 		dec := guard.Decide(eff, command)
 		if !dec.Allowed {
 			return exitcode.New(exitcode.Denied, "%s", decisionReason(dec))
@@ -66,7 +66,7 @@ func (a *App) elevateCmd() *cobra.Command {
 		a.OperationContext = ctx
 		defer func() { a.OperationContext = nil }()
 		meta := a.auditMeta(audit.OpExec, command, "", "")
-		return a.runAll(meta, []planned{{host: h, eff: eff, dec: dec}}, command, "", duration, false, 1)
+		return a.runAll(meta, []planned{{host: h, eff: eff, dec: dec}}, command, "", duration, false, 1, nil, nil)
 	}}
 	cmd.Flags().StringVar(&ttl, "ttl", "15m", "maximum operation duration, bounded by configured breakGlass.maxTtl")
 	cmd.Flags().StringVar(&reason, "reason", "", "reason recorded in the audit log")

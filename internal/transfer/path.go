@@ -7,6 +7,65 @@ import (
 	"strings"
 )
 
+// MSYSRewrittenPath reports a Unix path that Git Bash / MSYS likely rewrote
+// into a Windows path before this process saw the argument. guess is the
+// Unix path. Callers warn and leave the argument unchanged.
+//
+// Conversion inserts the MSYS install prefix, so /etc/nginx arrives as
+// something like D:/soft/git/Git/etc/nginx. The signal is a drive letter, a
+// Git/MSYS prefix component, then a well-known Unix directory. C:/etc and
+// C:/Users/dev/file.txt are not flagged.
+func MSYSRewrittenPath(p string) (guess string, ok bool) {
+	p = strings.TrimSpace(strings.ReplaceAll(p, "\\", "/"))
+	if len(p) < 4 || p[1] != ':' || (p[2] != '/') {
+		return "", false
+	}
+	if !isDriveLetter(p[0]) {
+		return "", false
+	}
+	parts := strings.Split(strings.Trim(p[3:], "/"), "/")
+	if len(parts) < 2 {
+		return "", false
+	}
+	// Git Bash inserts its install prefix (Git, msys64, …) before the Unix
+	// path. A later "dev" or "tmp" without that prefix is an ordinary
+	// Windows directory, not /dev or /tmp.
+	marked := false
+	for i := 1; i < len(parts); i++ {
+		if !marked {
+			if msysPrefix(parts[i-1]) {
+				marked = true
+			} else {
+				continue
+			}
+		}
+		if msysUnixRoot[parts[i]] {
+			return "/" + strings.Join(parts[i:], "/"), true
+		}
+	}
+	return "", false
+}
+
+func msysPrefix(part string) bool {
+	switch strings.ToLower(part) {
+	case "git", "msys", "msys64", "msys32", "mingw64", "mingw32", "cygwin":
+		return true
+	default:
+		return false
+	}
+}
+
+func isDriveLetter(r byte) bool {
+	return (r >= 'A' && r <= 'Z') || (r >= 'a' && r <= 'z')
+}
+
+var msysUnixRoot = map[string]bool{
+	"etc": true, "var": true, "usr": true, "opt": true, "root": true,
+	"home": true, "bin": true, "sbin": true, "lib": true, "lib64": true,
+	"tmp": true, "srv": true, "proc": true, "sys": true, "dev": true,
+	"run": true, "boot": true, "mnt": true,
+}
+
 // RestoreRemotePath undoes the Git Bash / MSYS leading-slash escape.
 // A remote path typed as //root/app reaches the program as //root/app and
 // must be restored to /root/app. Three or more leading slashes are left alone.

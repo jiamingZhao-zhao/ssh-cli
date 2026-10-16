@@ -92,7 +92,7 @@ func RelayWithOptions(src, dst *ssh.Client, srcPath, dstPath string, opt UploadO
 		}
 		return nil
 	}
-	err = uploadReader(sfDst, io.TeeReader(in, io.MultiWriter(sha, md)), dest, mode, nil, opt.RejectOverwrite, check, prog, verify)
+	err = uploadReader(sfDst, io.TeeReader(in, io.MultiWriter(sha, md)), dest, mode, nil, opt.RejectOverwrite, check, prog, verify, nil)
 	prog.report(true)
 	if err != nil {
 		return RelayResult{}, err

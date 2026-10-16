@@ -66,6 +66,22 @@ func TestPlanPathsHomeRelativeAndTilde(t *testing.T) {
 	}
 }
 
+func TestMSYSRewrittenPath(t *testing.T) {
+	guess, ok := MSYSRewrittenPath(`D:/soft/git/Git/etc/nginx`)
+	if !ok || guess != "/etc/nginx" {
+		t.Fatalf("git bash %q %v", guess, ok)
+	}
+	guess, ok = MSYSRewrittenPath(`C:\Program Files\Git\usr\bin\ssh`)
+	if !ok || guess != "/usr/bin/ssh" {
+		t.Fatalf("backslash %q %v", guess, ok)
+	}
+	for _, p := range []string{"/etc/nginx", "//etc/nginx", `C:/etc/nginx`, `C:/Users/dev/file.txt`, `D:/data/tmp/file`, ""} {
+		if _, ok := MSYSRewrittenPath(p); ok {
+			t.Fatalf("flagged %q", p)
+		}
+	}
+}
+
 func TestRestoreRemotePath(t *testing.T) {
 	cases := []struct {
 		in, want string

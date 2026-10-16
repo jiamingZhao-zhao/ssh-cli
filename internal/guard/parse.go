@@ -290,9 +290,6 @@ func (p *parsed) call(call *syntax.CallExpr) {
 		}
 		return
 	}
-	if rest[0].Static && (rest[0].Value == "source" || rest[0].Value == ".") && proc {
-		p.noteObfuscated("source of a process substitution")
-	}
 	if script, isShell, skind, swhy := shellScript(rest); isShell {
 		switch skind {
 		case unwrapUnresolved:
@@ -305,7 +302,38 @@ func (p *parsed) call(call *syntax.CallExpr) {
 		p.feed(script)
 		return
 	}
+	if rest[0].Static && (rest[0].Value == "source" || rest[0].Value == ".") && proc {
+		p.noteObfuscated("source of a process substitution")
+	} else if why, ok := uninspectedScript(rest); ok {
+		// A path ending in .sh, or source of a file, is the same class as
+		// `sh script.sh`: the file body is not visible, so inlining that body
+		// is checked as commands and running the file is not a bypass.
+		p.noteDynamic(why)
+		return
+	}
 	p.commands = append(p.commands, command{args: rest})
+}
+
+// uninspectedScript reports commands whose body lives in a file this process
+// cannot read. Bare names such as apps.sh stay ordinary commands. A slash
+// plus a .sh basename is a script path. source and . always take a file.
+func uninspectedScript(args []Arg) (string, bool) {
+	if len(args) == 0 || !args[0].Static {
+		return "", false
+	}
+	base, _ := commandIdentity(args[0].Value)
+	switch base {
+	case "source", ".":
+		if len(args) < 2 {
+			return "", false
+		}
+		return "sourced shell script is not inspected", true
+	}
+	name := args[0].Value
+	if strings.Contains(name, "/") && strings.HasSuffix(strings.ToLower(path.Base(name)), ".sh") {
+		return "shell script path is not inspected", true
+	}
+	return "", false
 }
 
 func (p *parsed) assign(as *syntax.Assign) {
