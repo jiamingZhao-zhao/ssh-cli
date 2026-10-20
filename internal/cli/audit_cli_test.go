@@ -139,8 +139,8 @@ func TestAuditDenialsUploadsAndRemoteResults(t *testing.T) {
 		switch {
 		case strings.Contains(cmd, "rm -rf /"):
 			sawRM = true
-			if rec["high_risk"] != true {
-				t.Fatalf("rm high_risk %+v", rec)
+			if rec["high_risk"] == true {
+				t.Fatalf("readonly ceiling denial is not an active dangerous-command rule: %+v", rec)
 			}
 			rmID, _ = rec["id"].(string)
 		case strings.Contains(cmd, "systemctl restart nginx"):
@@ -158,7 +158,7 @@ func TestAuditDenialsUploadsAndRemoteResults(t *testing.T) {
 	}
 
 	code, out, errb = run("audit", "show", rmID, "--json")
-	if code != 0 || !strings.Contains(out, "rm -rf /") || !strings.Contains(out, `"high_risk": true`) {
+	if code != 0 || !strings.Contains(out, "rm -rf /") || !strings.Contains(out, `"high_risk": false`) {
 		t.Fatalf("show %d\n%s\n%s", code, out, errb)
 	}
 	code, out, errb = run("audit", "list", "--host", "box", "--status", "ok", "--json")

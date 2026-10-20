@@ -143,6 +143,9 @@ func highRisk(dec guard.Decision) bool {
 		if f.Layer == "builtin" || f.Kind == "confirm" || f.Kind == "obfuscated" {
 			return true
 		}
+		if f.Layer == "dangerous" && f.Kind == "deny" {
+			return true
+		}
 	}
 	return false
 }

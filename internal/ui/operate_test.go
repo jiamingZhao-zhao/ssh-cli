@@ -164,7 +164,7 @@ func TestUIExecUploadDownload(t *testing.T) {
 		t.Fatalf("progress download %d %s %s", progressRR.Code, progressRR.Header().Get("Content-Type"), progressBody)
 	}
 
-	rr = post("/api/exec", `{"alias":"box","command":"rm -rf /"}`)
+	rr = post("/api/exec", `{"alias":"box","command":"docker system prune -a"}`)
 	if rr.Code != http.StatusForbidden {
 		t.Fatalf("deny %d %s", rr.Code, rr.Body.String())
 	}

@@ -84,7 +84,7 @@ Use the skill selector in the Codex desktop client; mention syntax depends on th
 Use the ssh-cli skill. List registered hosts, then check disk and memory on demo, read only.
 ```
 
-Before a change, run `ssh-cli policy show -H <alias> --json`. It is read-only and does not connect. Use `confirm`, `protectedPaths`, `equivalence` and `envRules` instead of probing for exit 253. Multi-argument `exec` preserves quotes (`exec -H demo -- curl -d '{"k":"v"}' http://127.0.0.1/api`); one argument is still a remote shell script. Git Bash may rewrite `/etc/nginx` to `D:/.../etc/nginx`; use `//etc/nginx` or `MSYS_NO_PATHCONV=1` when warned. A `docker restart` gate also covers `stop`, `start` and `kill`. Details are in `SKILL.md` and the [usage reference](usage.md).
+Before a change, run `ssh-cli policy show -H <alias> --json`. It is read-only and does not connect. Use `confirm`, `protectedPaths`, `equivalence`, `envRules` and `dangerousCommands` instead of probing for exit 253. `dangerousCommands.catalog` is only a suggestion; do not treat it as an active denial while `enforcedHere` is false. Multi-argument `exec` preserves quotes (`exec -H demo -- curl -d '{"k":"v"}' http://127.0.0.1/api`); one argument is still a remote shell script. Git Bash may rewrite `/etc/nginx` to `D:/.../etc/nginx`; use `//etc/nginx` or `MSYS_NO_PATHCONV=1` when warned. A `docker restart` gate also covers `stop`, `start` and `kill`. Details are in `SKILL.md` and the [usage reference](usage.md).
 
 Other concrete requests:
 

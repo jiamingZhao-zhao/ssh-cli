@@ -48,6 +48,35 @@ func TestAgentKeyIncludedInSignedPolicy(t *testing.T) {
 	}
 }
 
+func TestDangerousCommandsAreSigned(t *testing.T) {
+	isolateKey(t)
+	dir := t.TempDir()
+	cfg := &config.Config{Version: 1}
+	if err := cfg.Normalize(); err != nil {
+		t.Fatal(err)
+	}
+	if err := SignNew(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Dangerous = &config.DangerousCommands{Enabled: true, Rules: []string{config.DangerRMRoot}}
+	if err := Verify(dir, cfg); err == nil {
+		t.Fatal("unsigned dangerous-command change accepted")
+	}
+	if err := Sign(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	if err := Verify(dir, cfg); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Dangerous = nil
+	if err := Verify(dir, cfg); err == nil {
+		t.Fatal("dropping a signed dangerous-command list accepted")
+	}
+}
+
 func TestSignAndTamper(t *testing.T) {
 	dir := t.TempDir()
 	isolateKey(t)

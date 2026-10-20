@@ -825,7 +825,7 @@
               <div class="card-header">
                 <div>
                   <h3 class="card-title">危险命令</h3>
-                  <p class="text-secondary m-0">某一层不写允许列表就是全集；写成空列表则会把这一层交空。内置硬拒绝不能关掉。HMAC 不代替人工确认。</p>
+                  <p class="text-secondary m-0">某一层不写允许列表就是全集；写成空列表则会把这一层交空。危险命令清单默认不拦截，启用后默认只作用于生产环境。HMAC 不代替人工确认。</p>
                 </div>
                 <div class="card-actions"><button class="btn btn-primary" type="button" @click="openPolicyForm()">添加命名策略</button></div>
               </div>
