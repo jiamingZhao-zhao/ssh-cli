@@ -20,13 +20,14 @@ func (a *App) policyCmd() *cobra.Command {
 		Long: `Show the merged policy for a host, explain one command, and edit named policies.
 
 policy add and policy edit write hosts.yaml through the same store as the localhost UI.
-policy sign writes policy.mac from the master key. The sidecar covers policy and
-each host's address, port, user, and auth. A missing sidecar still loads until
+policy sign writes policy.mac from the master key. The sidecar covers policy,
+the dangerous-command catalog selection, and each host's address, port, user,
+and auth. A missing sidecar still loads until
 the first successful sign, which records policySigned in hosts.yaml. After that,
 a missing policy.mac refuses to load. policy unsign clears that marker.
 HMAC does not replace typing a confirmation phrase. A v1 sidecar must be signed again.`,
 	}
-	cmd.AddCommand(a.policyShow(), a.policyExplain(), a.policyList(), a.policyAdd(), a.policyEdit(), a.policyRemove(), a.policySign(), a.policyUnsign())
+	cmd.AddCommand(a.policyShow(), a.policyExplain(), a.policyDangerous(), a.policyList(), a.policyAdd(), a.policyEdit(), a.policyRemove(), a.policySign(), a.policyUnsign())
 	return cmd
 }
 
@@ -87,6 +88,11 @@ switches, and env rules (maxMode, defaultPolicy, noDataOutflow, breakGlass).
 equivalence lines name extra commands that match a confirm or deny pattern,
 such as docker stop when docker restart is gated.
 
+dangerousCommands separates the suggested catalog from rules that actually
+block this host. The catalog is inactive until policy dangerous set enables
+it and selects rules. The default scope is prod only. A readonly ceiling can
+still deny a catalog command when that command is outside the allow-list.
+
 Agents should run this before a change instead of discovering a gate by
 exiting 253.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -102,22 +108,22 @@ exiting 253.`,
 				BreakGlassTTL string `json:"breakGlassMaxTtl,omitempty"`
 			}
 			type view struct {
-				Host         string             `json:"host"`
-				Group        string             `json:"group"`
-				Env          string             `json:"env"`
-				Mode         string             `json:"mode"`
-				ModeClamped  bool               `json:"modeClamped"`
-				Allow        []string           `json:"allow,omitempty"`
-				AllowAll     bool               `json:"allowUniversal"`
-				AllowEmpty   bool               `json:"allowEmpty"`
-				Deny         []string           `json:"deny,omitempty"`
-				Confirm      []string           `json:"confirm,omitempty"`
-				Equivalence  []string           `json:"equivalence,omitempty"`
-				Capabilities guard.Capabilities `json:"capabilities"`
-				Protected    []string           `json:"protectedPaths,omitempty"`
-				EnvRules     envRules           `json:"envRules"`
-				Warnings     []string           `json:"warnings,omitempty"`
-				BuiltinDeny  []string           `json:"builtinDeny"`
+				Host         string                `json:"host"`
+				Group        string                `json:"group"`
+				Env          string                `json:"env"`
+				Mode         string                `json:"mode"`
+				ModeClamped  bool                  `json:"modeClamped"`
+				Allow        []string              `json:"allow,omitempty"`
+				AllowAll     bool                  `json:"allowUniversal"`
+				AllowEmpty   bool                  `json:"allowEmpty"`
+				Deny         []string              `json:"deny,omitempty"`
+				Confirm      []string              `json:"confirm,omitempty"`
+				Equivalence  []string              `json:"equivalence,omitempty"`
+				Capabilities guard.Capabilities    `json:"capabilities"`
+				Protected    []string              `json:"protectedPaths,omitempty"`
+				EnvRules     envRules              `json:"envRules"`
+				Warnings     []string              `json:"warnings,omitempty"`
+				Dangerous    guard.DangerousReport `json:"dangerousCommands"`
 			}
 			views := make([]view, 0, len(hosts))
 			for _, h := range hosts {
@@ -141,14 +147,7 @@ exiting 253.`,
 					Allow: eff.Allow, AllowAll: eff.AllowAll, AllowEmpty: eff.AllowEmpty,
 					Deny: eff.Deny, Confirm: eff.Confirm, Equivalence: notes, Capabilities: eff.Caps(),
 					Protected: eff.Protected, EnvRules: rules, Warnings: eff.Warnings,
-					BuiltinDeny: []string{
-						"rm -rf of filesystem root",
-						"mkfs",
-						"dd onto a disk device",
-						"redirect onto a disk device",
-						"chmod/chown of filesystem root",
-						"fork bomb",
-					},
+					Dangerous: guard.DescribeDangerous(cfg, h.EnvName),
 				})
 			}
 			if a.JSON {
@@ -173,11 +172,11 @@ exiting 253.`,
 					fmt.Fprintf(a.Out, "allow %s\n", strings.Join(v.Allow, ", "))
 				}
 				if len(v.Deny) == 0 {
-					fmt.Fprintln(a.Out, "deny (none beyond built-in)")
+					fmt.Fprintln(a.Out, "deny (none)")
 				} else {
 					fmt.Fprintf(a.Out, "deny %s\n", strings.Join(v.Deny, ", "))
 				}
-				fmt.Fprintf(a.Out, "builtin-deny %s\n", strings.Join(v.BuiltinDeny, ", "))
+				writeDangerous(a.Out, v.Dangerous)
 				if len(v.Confirm) == 0 {
 					fmt.Fprintln(a.Out, "confirm (none)")
 				} else {
@@ -214,15 +213,16 @@ func (a *App) policyExplain() *cobra.Command {
 				return err
 			}
 			type view struct {
-				Host         string          `json:"host"`
-				Group        string          `json:"group"`
-				Env          string          `json:"env"`
-				Command      string          `json:"command"`
-				Allowed      bool            `json:"allowed"`
-				NeedsConfirm bool            `json:"needsConfirm"`
-				Mode         string          `json:"mode"`
-				Commands     []string        `json:"commands,omitempty"`
-				Findings     []guard.Finding `json:"findings,omitempty"`
+				Host         string                `json:"host"`
+				Group        string                `json:"group"`
+				Env          string                `json:"env"`
+				Command      string                `json:"command"`
+				Allowed      bool                  `json:"allowed"`
+				NeedsConfirm bool                  `json:"needsConfirm"`
+				Mode         string                `json:"mode"`
+				Commands     []string              `json:"commands,omitempty"`
+				Findings     []guard.Finding       `json:"findings,omitempty"`
+				Dangerous    guard.DangerousReport `json:"dangerousCommands"`
 			}
 			views := make([]view, 0, len(hosts))
 			denied := false
@@ -239,6 +239,7 @@ func (a *App) policyExplain() *cobra.Command {
 					Host: h.Alias, Group: h.Group, Env: h.EnvName, Command: command,
 					Allowed: dec.Allowed, NeedsConfirm: dec.NeedsConfirm, Mode: dec.Mode,
 					Commands: dec.Commands, Findings: dec.Findings,
+					Dangerous: guard.DescribeDangerous(cfg, h.EnvName),
 				})
 			}
 			if a.JSON {
@@ -257,6 +258,7 @@ func (a *App) policyExplain() *cobra.Command {
 						result = "CONFIRM"
 					}
 					fmt.Fprintf(a.Out, "host %s  group %s  env %s  mode %s\n", v.Host, v.Group, v.Env, v.Mode)
+					fmt.Fprintf(a.Out, "dangerous enabled=%t enforced-here=%t\n", v.Dangerous.Enabled, v.Dangerous.EnforcedHere)
 					fmt.Fprintf(a.Out, "command: %s\n", v.Command)
 					fmt.Fprintf(a.Out, "result: %s\n", result)
 					if len(v.Commands) > 0 {

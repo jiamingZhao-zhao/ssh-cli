@@ -143,6 +143,7 @@ Also available: jump hosts, remote-to-remote relay, configuration import/export,
 
 - **Policies govern operations through the tool.** Human interactive terminals in standard/admin mode do not check each typed command. Readonly environments refuse unrestricted terminals; file writes still check capabilities and paths.
 - **Production is readonly by default.** The built-in `prod` ceiling is readonly. An unattended agent or `--yes` cannot satisfy required human confirmation.
+- **The dangerous-command catalog does not block anything until configured.** Fresh installs only suggest the list. `policy dangerous set --enable` plus a selected rule turns enforcement on, and the default scope is `prod` alone. Other environments stay unrestricted unless named with `--env`. Readonly ceilings, human confirmation, protected paths, and audit stay in place.
 - **A lost reply does not mean nothing happened.** Verify the remote state before retrying an uncertain write, deletion or transfer.
 - **Credentials belong in the execution environment.** Passwords use encrypted storage. Host-key checks and policy signatures have distinct roles; neither this skill nor local audit records sandbox a malicious local process.
 

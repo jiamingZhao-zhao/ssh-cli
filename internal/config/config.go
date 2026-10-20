@@ -310,6 +310,9 @@ type Config struct {
 	Groups   map[string]*Group  `yaml:"groups,omitempty"`
 	Tasks    map[string]any     `yaml:"tasks,omitempty"`
 	Session  *SessionDefaults   `yaml:"session,omitempty"`
+	// Dangerous is the opt-in dangerous-command catalog. Nil means the catalog
+	// is present as a suggestion and is not enforced.
+	Dangerous *DangerousCommands `yaml:"dangerousCommands,omitempty" json:"dangerousCommands,omitempty"`
 	// PolicySigned is set once a master key has been used to write policy.mac.
 	// Load then refuses a missing sidecar instead of treating the file as unsigned.
 	PolicySigned bool `yaml:"policySigned,omitempty"`
@@ -425,6 +428,7 @@ func (c *Config) prepare() error {
 		c.Version = 1
 	}
 	c.ensureBuiltinEnvs()
+	c.normalizeDangerous()
 	return c.Validate()
 }
 
@@ -503,6 +507,9 @@ func (c *Config) Validate() error {
 		return fmt.Errorf("nil config")
 	}
 	if err := c.validateSession(); err != nil {
+		return err
+	}
+	if err := c.validateDangerous(); err != nil {
 		return err
 	}
 	for name, env := range c.Envs {

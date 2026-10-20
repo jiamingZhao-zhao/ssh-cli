@@ -4,40 +4,45 @@ import (
 	"path"
 	"regexp"
 	"strings"
+
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 )
 
 // diskPath matches whole-disk device nodes that must never be written.
 var diskPath = regexp.MustCompile(`(?i)^/dev/(sd[a-z]|nvme[0-9]|mmcblk[0-9]|hd[a-z]|vd[a-z]|xvd[a-z]|disk)`)
 
-func builtinDeny(args []Arg) string {
+// catalogHit classifies one argv as a suggested dangerous-command rule.
+// A hit is not a denial by itself. Decide enforces it only when that rule is
+// selected and the host environment is in the configured scope.
+// The command basename is what matches, so /bin/rm cannot skip a selected rule.
+func catalogHit(args []Arg) (id, detail string) {
 	if len(args) == 0 || !args[0].Static {
-		return ""
+		return "", ""
 	}
-	// Deny matches the command basename so /bin/rm cannot skip a hard deny.
 	name := path.Base(args[0].Value)
 	switch name {
 	case "redirect":
 		if len(args) >= 2 && args[1].Static && diskPath.MatchString(args[1].Value) {
-			return "redirect onto disk device " + args[1].Value
+			return config.DangerRedirectDisk, "redirect onto disk device " + args[1].Value
 		}
-		return ""
+		return "", ""
 	case "rm":
 		if destructiveRM(args) {
-			return "rm of filesystem root"
+			return config.DangerRMRoot, "rm of filesystem root"
 		}
 	case "chmod", "chown":
 		if operandIsRoot(args) {
-			return name + " of filesystem root"
+			return config.DangerChmodRoot, name + " of filesystem root"
 		}
 	default:
 		if name == "mkfs" || strings.HasPrefix(name, "mkfs.") {
-			return "mkfs"
+			return config.DangerMkfs, "mkfs"
 		}
 		if name == "dd" && ddToDisk(args) {
-			return "dd onto a disk device"
+			return config.DangerDDDisk, "dd onto a disk device"
 		}
 	}
-	return ""
+	return "", ""
 }
 
 func destructiveRM(args []Arg) bool {
@@ -135,14 +140,15 @@ func ddToDisk(args []Arg) bool {
 	return false
 }
 
-func rawCatastrophe(src string) string {
+func rawCatastrophe(src string) (id, detail string) {
 	compact := strings.ReplaceAll(src, " ", "")
 	if strings.Contains(compact, ":(){") && strings.Contains(compact, ":|:") {
-		return "fork bomb"
+		return config.DangerForkBomb, "fork bomb"
 	}
-	return ""
+	return "", ""
 }
 
 func isForkBomb(src string) bool {
-	return rawCatastrophe(src) != ""
+	id, _ := rawCatastrophe(src)
+	return id != ""
 }

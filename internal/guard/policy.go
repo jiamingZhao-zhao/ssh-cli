@@ -45,6 +45,7 @@ type Effective struct {
 	Protected  []string    `json:"protectedPaths,omitempty"`
 	NoDataOut  bool        `json:"-"`
 	Warnings   []string    `json:"warnings,omitempty"`
+	danger     dangerState
 	layers     []layer
 	// fallback is an extra allow-list used when readonly mode had no configured
 	// allow-list, including a prod batch forced down to readonly.
@@ -194,6 +195,7 @@ func Resolve(cfg *config.Config, h config.ResolvedHost, forceReadonly bool) (Eff
 		Protected:  paths,
 		NoDataOut:  h.Env.NoDataOutflow,
 		Warnings:   warnings,
+		danger:     loadDanger(cfg, h.EnvName),
 		layers:     layers,
 		fallback:   fallback,
 	}
@@ -422,16 +424,40 @@ func ExecOutflow(noDataOut, allow bool) (suppress, needsConfirm bool) {
 }
 
 // Decide checks a shell command string against eff.
-func Decide(eff Effective, command string) Decision {
-	dec := Decision{Mode: string(eff.Mode), Allowed: true}
-	if why := rawCatastrophe(command); why != "" {
-		dec.Allowed = false
-		dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
-		return dec
+// Catalog matches are findings of kind "catalog" until the user enables and
+// selects them for this environment. An active selection is kind "deny".
+func Decide(eff Effective, command string) (dec Decision) {
+	var notes []Finding
+	seenNote := map[string]bool{}
+	noteID := func(id string) {
+		if id == "" || eff.danger.rules[id] || seenNote[id] {
+			return
+		}
+		seenNote[id] = true
+		notes = append(notes, eff.dangerNote(id))
+	}
+	defer func() {
+		if len(notes) > 0 {
+			dec.Findings = append(dec.Findings, notes...)
+		}
+		if !dec.Allowed {
+			dec.NeedsConfirm = false
+		}
+	}()
+
+	dec = Decision{Mode: string(eff.Mode), Allowed: true}
+	if id, detail := rawCatastrophe(command); id != "" {
+		if eff.danger.rules[id] {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "dangerous", Kind: "deny", Detail: "catalog " + id + ": " + detail})
+			return dec
+		}
+		noteID(id)
 	}
 	pr, err := parseScript(command)
 	if err != nil {
-		return unparseable(eff, err)
+		dec = unparseable(eff, err)
+		return dec
 	}
 	for _, c := range pr.commands {
 		dec.Commands = append(dec.Commands, renderArgs(c.args))
@@ -465,11 +491,11 @@ func Decide(eff Effective, command string) Decision {
 		}
 	}
 	for _, c := range pr.commands {
+		if blocked := applyDangerousCommand(&dec, &notes, seenNote, eff, c.args); blocked {
+			continue
+		}
 		if isRedirect(c) {
-			if why := builtinDeny(c.args); why != "" {
-				dec.Allowed = false
-				dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
-			} else if eff.Mode == config.ModeReadonly {
+			if eff.Mode == config.ModeReadonly {
 				dec.Allowed = false
 				dec.Findings = append(dec.Findings, Finding{Layer: "mode", Kind: "deny", Detail: "readonly mode refuses write redirects"})
 			}
@@ -486,11 +512,6 @@ func Decide(eff Effective, command string) Decision {
 				finding.Kind = "confirm"
 				dec.Findings = append(dec.Findings, finding)
 			}
-			continue
-		}
-		if why := builtinDeny(c.args); why != "" {
-			dec.Allowed = false
-			dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
 			continue
 		}
 		if why := semanticDeny(eff.Mode, c.args); why != "" {
@@ -532,10 +553,43 @@ func Decide(eff Effective, command string) Decision {
 			}
 		}
 	}
-	if !dec.Allowed {
-		dec.NeedsConfirm = false
-	}
 	return dec
+}
+
+// applyDangerousCommand records an active catalog or extra-pattern denial.
+// Inactive matches are noted and do not block. blocked means the caller should
+// not also apply mode or allow-list findings for this command.
+func applyDangerousCommand(dec *Decision, notes *[]Finding, seenNote map[string]bool, eff Effective, args []Arg) bool {
+	noteID := func(id string) {
+		if id == "" || eff.danger.rules[id] || seenNote[id] {
+			return
+		}
+		seenNote[id] = true
+		*notes = append(*notes, eff.dangerNote(id))
+	}
+	if id, detail := catalogHit(args); id != "" {
+		if eff.danger.rules[id] {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "dangerous", Kind: "deny", Detail: "catalog " + id + ": " + detail})
+			return true
+		}
+		noteID(id)
+	}
+	if pat, ok := matchAny(eff.danger.activeExtra, args); ok {
+		dec.Allowed = false
+		dec.Findings = append(dec.Findings, Finding{Layer: "dangerous", Kind: "deny", Detail: "matches dangerous pattern " + quote(pat)})
+		return true
+	}
+	if !eff.danger.enforcedHere {
+		if pat, ok := matchAny(eff.danger.savedExtra, args); ok {
+			key := "extra\x00" + pat
+			if !seenNote[key] {
+				seenNote[key] = true
+				*notes = append(*notes, eff.extraNote(pat))
+			}
+		}
+	}
+	return false
 }
 
 func isRedirect(c command) bool {

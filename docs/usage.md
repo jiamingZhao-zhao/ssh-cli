@@ -83,6 +83,8 @@ ssh-cli download -H main /var/log/app.log ./app.log
 
 ssh-cli policy show -H main
 ssh-cli policy explain -H main -- "systemctl restart nginx"
+ssh-cli policy dangerous
+ssh-cli policy dangerous set --enable --rule rm-root
 ```
 
 `//root/...` 会还原成 `/root/...`，用来避开 Git Bash 对绝对路径的改写。Git Bash 还可能在程序看到参数之前，把 `/etc/nginx` 改写成 `D:/soft/git/Git/etc/nginx` 这种带盘符的路径。`exec`、`upload`、`download` 和 `ls` 发现这种形状会在 stderr 警告，并在 `--json` 里加上 `warnings`；命令不会改写该参数。处理办法是写成 `//etc/nginx`，或在这一条命令前加上 `MSYS_NO_PATHCONV=1`。PowerShell 和 cmd 没有这层转换。
@@ -100,7 +102,7 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 
 ## 先看策略，再执行
 
-`ssh-cli policy show -H main` 只读本机 `hosts.yaml`，不连接、不执行。它列出确认门槛（`confirm`）、受保护路径、能力开关，以及环境规则：`maxMode`、`defaultPolicy`、`noDataOutflow`、`breakGlass`。`--json` 的 `envRules` 和 `equivalence` 是给 Agent 用的。有 `equivalence` 行时，表示某条 confirm/deny 还会挡住等价操作，例如配置了 `docker restart` 时，`docker stop`、`docker start`、`docker kill` 同样要确认。`docker container restart` 与 `docker restart` 相同。`systemctl restart` 和 `apps.sh restart` 同样覆盖 `stop` 和 `start`。只配置了 `docker stop` 时，会连带 `restart` 和 `kill`，不会连带单独的 `start`。
+`ssh-cli policy show -H main` 只读本机 `hosts.yaml`，不连接、不执行。它列出确认门槛（`confirm`）、受保护路径、能力开关，以及环境规则：`maxMode`、`defaultPolicy`、`noDataOutflow`、`breakGlass`。`dangerousCommands` 把建议清单和当前环境真正生效的规则分开：`catalog` 始终在，`enforcedHere` / `active` 才是会拦截的部分。`policy explain` 里 kind 为 `catalog` 的行表示命中了建议规则但没有拦截。`--json` 的 `envRules` 和 `equivalence` 是给 Agent 用的。有 `equivalence` 行时，表示某条 confirm/deny 还会挡住等价操作，例如配置了 `docker restart` 时，`docker stop`、`docker start`、`docker kill` 同样要确认。`docker container restart` 与 `docker restart` 相同。`systemctl restart` 和 `apps.sh restart` 同样覆盖 `stop` 和 `start`。只配置了 `docker stop` 时，会连带 `restart` 和 `kill`，不会连带单独的 `start`。
 
 `./script.sh`、`/path/file.sh`、`sh script.sh`、`source script.sh` 和 `. script.sh` 都是看不到正文的脚本，standard 需要确认，readonly 拒绝。把脚本正文贴进 `sh -c` 会按里面的每条命令检查，不能用来绕过其中已经被拦住的命令。没有 `.sh` 后缀、也没有用 `sh` / `source` 拉起的可执行文件（例如 `./deploy`）不在这组规则里。`docker compose` 也不在这组规则里。
 
@@ -108,11 +110,11 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 
 `--timeout` 同时约束两段时间，彼此分开计时：SSH 建连，以及连上之后的命令。没写 `--timeout` 时建连仍是 20 秒。写了更短的时间（例如 `3s`、`8s`）时，连不上的主机会在这段时间内失败，而不会固定等到大约 20 秒。比 20 秒更长的 `--timeout` 只加长命令本身，建连仍在 20 秒内结束。`status`、`service`、`keys` 的 `--timeout` 同样限制建连。
 
-内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。`policy add` / `policy edit` / `policy remove` 和本机 UI 写同一份 `hosts.yaml`。`policy sign` 用主密钥写 `policy.mac`。签名覆盖策略，也覆盖每台主机的地址、端口、用户和认证方式。还没签过名、也没有 `policy.mac` 时，仍按旧配置加载。签过名之后 `hosts.yaml` 里会有 `policySigned: true`，这时删掉 `policy.mac` 会拒绝加载，要用 `policy unsign` 才回到未签名。旧的 v1 `policy.mac` 不含连接信息，需要重新 `policy sign`。有文件但不符则拒绝加载。HMAC 不代替人工确认。
+内置命名策略 `readonly`、`standard`、`admin` 可直接引用，也可以在 `hosts.yaml` 里用同名条目覆盖。`policy add` / `policy edit` / `policy remove` 和本机 UI 写同一份 `hosts.yaml`。`policy sign` 用主密钥写 `policy.mac`。签名覆盖策略、危险命令清单的启用和选中项，也覆盖每台主机的地址、端口、用户和认证方式。还没签过名、也没有 `policy.mac` 时，仍按旧配置加载。签过名之后 `hosts.yaml` 里会有 `policySigned: true`，这时删掉 `policy.mac` 会拒绝加载，要用 `policy unsign` 才回到未签名。旧的 v1 `policy.mac` 不含连接信息，需要重新 `policy sign`。有文件但不符则拒绝加载。HMAC 不代替人工确认。
 
 ## 权限怎么算
 
-一台主机的有效权限是各层允许集合的交集，再减去各层拒绝的并集（含不可关闭的内置硬拒绝）：
+一台主机的有效权限是各层允许集合的交集，再减去各层拒绝的并集。危险命令清单是建议列表，默认不参与这个并集：
 
 - 某一层没写 `allow`，这一层是全集，不把别的层交空。
 - 模式 `readonly ⊂ standard ⊂ admin`。环境的 `maxMode` 是天花板，分组写成 `admin` 也不会超过它。
@@ -121,6 +123,10 @@ ssh-cli policy explain -H main -- "systemctl restart nginx"
 - 命令用 `mvdan.cc/sh` 解析，`;`、`&&`、管道、`$( )`、`sudo`、`bash -c`、`xargs`、`nohup`、`timeout`、`nice`、`stdbuf` 都会展开后再检查。`flock`、`ionice`、`chrt`、`taskset`、`setsid`、`watch` 以及带 `-exec` 的 `find` 展不开：只读拒绝，标准和 admin 需要确认。
 - 多台主机先整体预检，有一台被拒绝就整批取消；`--skip-denied` 改为跳过被拒绝的主机。`exec --parallel N` 同时跑 N 台（1 到 4，默认 1）。大于 1 时最多 16 台，和本机页面的批量执行一样。包含 `prod` 且多于一台时仍整批只读。
 - 一次选择跨了多个环境，必须加 `--allow-cross-env`。选择里包含 `prod` 且多于一台时，整批强制只读。
+
+危险命令清单（删掉文件系统根、`mkfs`、把 `dd` 或重定向写到磁盘设备、对根目录 `chmod`/`chown`、fork bomb）开箱只作为建议。`policy dangerous` 能看到每一条是建议、已选中，还是正在本机环境生效。不执行 `policy dangerous set --enable` 并选中规则（`--rule`、`--all` 或额外的 `--deny`）之前，这些命令不会因为这份清单被拒绝。没写 `--env` 时，生效范围默认只有 `prod`。`dev`、`test`、`preprod` 以及其他环境要写进 `--env` 才会套用。关掉开关会留下已保存的列表，但不再拦截；缩小范围需要在交互终端输入 `dangerous`。
+
+这份清单不代替别的限制。`prod` 的 `maxMode` / `defaultPolicy` 仍是 readonly，不在只读白名单里的命令（包括上面那些）还是会被天花板拒绝。`confirm`、受保护路径、能力开关和审计照旧。内置 `standard` 策略里的 `docker system prune -a` 仍是命名策略的 deny，不是这份默认关闭的清单。`journalctl` 的修改参数、`ss -K` 和分页器的 shell 逃逸仍按模式收紧，admin 不收紧。
 
 主机必须属于且只属于一个分组，环境从分组继承，主机上不能写 `env`。`tags` 只用于 `-t` 选择，分组没有 `tags` 字段。
 
@@ -215,7 +221,7 @@ ssh-cli history -H main --lines 50 --json
 
 ## 审计
 
-每次 `exec`、`upload`、`download` 都会在配置目录追加一条 JSONL，命令行和本机 UI 都写。文件变更（`file_change`）、列目录（`list`）、历史（`history`）和概况（`metrics`，含该行详情）同样追加。策略预检拒绝（内置危险命令、确认类命令、能力开关）、超时、认证失败、连接失败，以及远程非零退出都会留下。不记录密码、私钥或明文密钥；命令里的 `password=...` 一类片段会打成 `[redacted]`。历史正文不写入摘要。
+每次 `exec`、`upload`、`download` 都会在配置目录追加一条 JSONL，命令行和本机 UI 都写。文件变更（`file_change`）、列目录（`list`）、历史（`history`）和概况（`metrics`，含该行详情）同样追加。策略预检拒绝（已启用的危险命令、确认类命令、能力开关）、超时、认证失败、连接失败，以及远程非零退出都会留下。不记录密码、私钥或明文密钥；命令里的 `password=...` 一类片段会打成 `[redacted]`。历史正文不写入摘要。
 
 记录字段：`time`（本地时区的 RFC3339；本机页面显示为 `yyyy-MM-dd HH:mm:ss`）、`op`（`exec` / `upload` / `download` / `file_change` / `list` / `history` / `metrics` / `relay` / `policy_check` / `session` / `terminal` / `config_change` 等）、主机别名、分组、环境、命令或 `src`/`dst`、`duration_ms`、`exit_code`、截断到 8KiB 的 `result_summary`、`status`（`ok` / `denied` / `timeout` / `auth` / `connect` / `error`）、`high_risk`、`denied_by_policy`、`reason`、`actor`、`source`（`cli` 或 `ui`）。`actor` 取环境变量 `SSH_CLI_ACTOR`，否则是 `cli`；本机 UI 写 `ui`。`source` 由进程填写，请求里自报的来源不算数。交互终端只记开关和字节数，不记按键内容。
 
@@ -249,7 +255,7 @@ ssh-cli ui --addr 127.0.0.1:7788
 - **主机**和**主机详情**：勾选多台后可以批量执行，一次最多 16 台，并行最多 4。包含 `prod` 且多于一台时，整批按只读策略检查。详情页给出分组、环境、标签、有效策略、当前会话和这台主机最近的审计。
 - **分组**：新建、修改环境、命名策略、行内 allow/deny/confirm 和受保护路径。有主机的分组不能删，和 `group remove` 一样。
 - **标签**：标签只在主机上，给 `ssh-cli -t` 选择用，分组没有 `tags` 字段。可以把一个标签加到该分组下的每台主机，或从全组去掉。
-- **危险命令**：用表单编辑 allow / deny / confirm，不手改 JSON。内置环境只读；自定义环境可以改 `maxMode` 和 `defaultPolicy`。某一层不写 allow 就是全集，写成空列表则会把这一层交空。内置硬拒绝不能关。HMAC 仍由 `policy sign` 维护。
+- **危险命令**：用表单编辑 allow / deny / confirm，不手改 JSON。内置环境只读；自定义环境可以改 `maxMode` 和 `defaultPolicy`。某一层不写 allow 就是全集，写成空列表则会把这一层交空。危险命令清单默认不拦截，启用后默认只作用于生产环境，用 `policy dangerous` 配置。HMAC 仍由 `policy sign` 维护，签名覆盖这份清单。
 - **审计**：按操作、来源（`cli` / `ui`）、主机、分组、环境、状态和时间筛选，表头可以再过滤当前页，失败行用危险色和警告色。可以导出全部匹配的 CSV，不再在 2000 条处截断。手动清理只删 30 天前的记录；可选自动保留策略见 [0.7.26 版本说明](releases/v0.7.26.md)。
 - **会话**：列出状态、空闲倒计时和最长寿命，可以打开或关闭。这些网页会话活在 UI 进程里；可选 CLI exec 复用由显式启动的 daemon 持有。
 - **跨机拷贝**和**运维**：跨机拷贝对应命令行 `relay`，把远端文件经本机转到另一台并核对校验和。密码只通过主机表单 POST 进加密存储，不会回显，也不会写入审计。运维页分步导出、导入、查看 HMAC、清理审计。配置包不含明文。

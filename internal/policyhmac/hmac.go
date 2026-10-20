@@ -196,10 +196,18 @@ func checksum(domain string, master, msg []byte) []byte {
 }
 
 type canon struct {
-	Audit    *config.AuditSettings  `json:"audit,omitempty"`
-	Policies map[string]policyCanon `json:"policies,omitempty"`
-	Envs     map[string]envCanon    `json:"envs,omitempty"`
-	Groups   map[string]groupCanon  `json:"groups,omitempty"`
+	Audit     *config.AuditSettings  `json:"audit,omitempty"`
+	Dangerous *dangerousCanon        `json:"dangerousCommands,omitempty"`
+	Policies  map[string]policyCanon `json:"policies,omitempty"`
+	Envs      map[string]envCanon    `json:"envs,omitempty"`
+	Groups    map[string]groupCanon  `json:"groups,omitempty"`
+}
+
+type dangerousCanon struct {
+	Enabled bool     `json:"enabled,omitempty"`
+	Envs    []string `json:"envs,omitempty"`
+	Rules   []string `json:"rules,omitempty"`
+	Deny    []string `json:"deny,omitempty"`
 }
 
 type policyCanon struct {
@@ -248,6 +256,7 @@ func canonical(cfg *config.Config) []byte {
 	c := canon{}
 	if cfg != nil {
 		c.Audit = cfg.Audit
+		c.Dangerous = dangerousCanonOf(cfg.Dangerous)
 		for name, p := range cfg.Policies {
 			if p == nil {
 				continue
@@ -303,6 +312,18 @@ func canonical(cfg *config.Config) []byte {
 		return []byte("{}")
 	}
 	return b
+}
+
+func dangerousCanonOf(d *config.DangerousCommands) *dangerousCanon {
+	if d == nil || (!d.Enabled && len(d.Envs) == 0 && len(d.Rules) == 0 && len(d.Deny) == 0) {
+		return nil
+	}
+	return &dangerousCanon{
+		Enabled: d.Enabled,
+		Envs:    nilEmpty(d.Envs),
+		Rules:   nilEmpty(d.Rules),
+		Deny:    nilEmpty(d.Deny),
+	}
 }
 
 func hostAuth(h *config.Host) string {

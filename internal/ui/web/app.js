@@ -791,7 +791,7 @@ function sshui() {
       if (low.indexOf("jump chain longer") >= 0) return "跳板一层套一层，最多 8 台。改短一点再保存。";
       if (low.indexOf("invalid via") >= 0) return "跳板没选对。从列表里选一台已经保存的主机。";
       if (/denied|policy|builtin/.test(low) || m.indexOf("拒绝") >= 0 || m.indexOf("拦截") >= 0) {
-        return m + "。打开主机详情看命中的规则。内置硬拒绝不能在页面里关闭。";
+        return m + "。打开主机详情看命中的规则。危险命令清单默认不拦截，要启用并选中后才生效。";
       }
       if (/auth|permission denied|认证/.test(low)) {
         return m + "。认证失败。在主机表单里更新密码或私钥路径后再连。密码不会出现在审计里。";

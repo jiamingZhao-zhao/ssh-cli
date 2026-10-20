@@ -84,7 +84,7 @@ Codex 桌面客户端可从 Skill 选择器选择；具体提及符号以当前�
 使用 ssh-cli skill，先列出已登记主机，再检查 demo 的磁盘和内存，只读。
 ```
 
-调用时先跑 `ssh-cli policy show -H <别名> --json`（只读，不连接），用 `confirm`、`protectedPaths`、`equivalence` 和 `envRules` 看确认门槛，不要靠退出码 253 试探。多参数 `exec` 会保留引号，例如 `exec -H demo -- curl -d '{"k":"v"}' http://127.0.0.1/api`；一个参数仍是远端 shell 脚本。Git Bash 可能把 `/etc/nginx` 改写成 `D:/.../etc/nginx`，看到警告后改用 `//etc/nginx` 或 `MSYS_NO_PATHCONV=1`。`docker restart` 的确认也覆盖 `stop`、`start` 和 `kill`，不要拆成 stop 再 start 来绕过。详情在 `SKILL.md` 和[使用参考](usage.md)。
+调用时先跑 `ssh-cli policy show -H <别名> --json`（只读，不连接），用 `confirm`、`protectedPaths`、`equivalence`、`envRules` 和 `dangerousCommands` 看确认门槛。`dangerousCommands.catalog` 只是建议列表，`enforcedHere` 为 false 时不要把它当成已经生效的拒绝。不要靠退出码 253 试探。多参数 `exec` 会保留引号，例如 `exec -H demo -- curl -d '{"k":"v"}' http://127.0.0.1/api`；一个参数仍是远端 shell 脚本。Git Bash 可能把 `/etc/nginx` 改写成 `D:/.../etc/nginx`，看到警告后改用 `//etc/nginx` 或 `MSYS_NO_PATHCONV=1`。`docker restart` 的确认也覆盖 `stop`、`start` 和 `kill`，不要拆成 stop 再 start 来绕过。详情在 `SKILL.md` 和[使用参考](usage.md)。
 
 之后可以试这些明确的请求：
 
