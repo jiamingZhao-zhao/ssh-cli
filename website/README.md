@@ -17,7 +17,7 @@ python -m http.server 7331 --bind 127.0.0.1 --directory website
 ## 内容与实现
 
 - `index.html`：中文默认内容、语义结构、安装和安全边界；没有 JavaScript 时仍可阅读主要介绍并打开文档链接。
-- `app.js`：中英文文案、11 个菜单的用途、操作步骤、Agent 场景、安装命令、复制反馈与功能搜索。
+- `app.js`：中英文文案、11 个菜单的用途、操作步骤、Agent 场景、安装命令、复制反馈与功能／命令搜索。命令索引仅在首次打开搜索时加载，完整帮助数据只在命令参考页加载。
 - 策略交互示例：选择 test / prod、三条命令以及三种危险规则范围，联动显示 ALLOW / CONFIRM / DENY、原因、有效模式、退出码与 JSON。18 个结果来自 v0.7.31 的真实 CLI 本地解释，不由浏览器模拟引擎。检查命令本身可复制，但不会自动执行。
 - `policy-examples.js`：只包含用文档地址和临时配置生成的输出节选，不含个人配置或凭据。示例额外配置的重启确认规则已明确标注；页面 CSP 禁止 API 请求。
 - `tokens.css` / `styles.css`：浅色 Cobalt 工具风格；使用本机字体回退，不下载字体。支持键盘焦点、减少动态效果与窄屏排版。
@@ -38,6 +38,28 @@ python -m http.server 7331 --bind 127.0.0.1 --directory website
 特别核对 `internal/cli/policy.go`、`internal/guard/dangerous.go`、`internal/cli/relay_cmd.go`、`internal/cli/config_cmd.go`、`internal/cli/ui_cmd.go` 和根目录 `SKILL.md`。危险命令默认未启用，prod 只读上限、人工 TTY 确认与本地审计的信任边界均单独说明。
 
 页面位于 Go embed 目录之外，不改变 CLI 二进制或现有工作台资源，也没有增加 Go/npm 依赖。
+
+## 命令参考
+
+打开 `commands.html`。覆盖 v0.7.31 的 **72 个帮助入口**，包括命令组、子命令与 Shell 补全；不计入 Shell 内部的 `__complete` 协议入口。
+
+- 按中文用途、命令名、别名或参数搜索，也可组合功能分类和操作影响筛选。列表每页 8 条，只显示当前所选命令的详情。
+- 详情先给用途、语法、示例和适用限制；本地参数、实际继承的通用参数与 CLI 原始帮助默认折叠。原文保留类型、默认值和可重复标记。
+- 通过子命令和上级链接继续浏览。复制命令不会执行；复制链接包含语言、搜索、筛选和当前命令，例如 `commands.html?lang=zh&q=session#session-open`。
+- 需要人工 TTY 的操作、只在当前进程存在的会话接口均单独标识。`session open/close` 不提供独立 CLI 调用；`policy edit` 原始帮助中的旧 HMAC 表述由补充说明更正。
+- 桌面并排浏览，窄屏先收起结果列表，搜索时展开，选择后回到详情。支持 `/`、Ctrl / ⌘ K、方向键与 Enter。
+- 首页导航、模块说明与全站搜索提供入口。首页搜索只显示部分匹配，完整参考页可分页查看全部结果。页面关闭 JavaScript 时提供 CLI 帮助和使用参考的替代入口。
+
+内容分为三部分：`command-data.js` 是完整生成数据，`command-index.js` 是首页用的精简索引，`command-notes.json` 是中英文用途、示例和限制补充。生成器要求每个真实命令都有补充说明，发现增删时停止生成，避免漏项。
+
+以该版本构建的 CLI 生成或核对：
+
+```sh
+python website/tools/command-reference.py --cli /path/to/ssh-cli
+python website/tools/command-reference.py --cli /path/to/ssh-cli --check
+```
+
+脚本仅调用 `version` 与隔离临时配置下的 `--help`，不执行文档示例、不连接服务器。更新版本时需同时核对生成脚本中的版本／提交、补充说明、页面版本链接和功能边界。命令行的帮助是参数来源，示例与适用条件仍需结合实现人工审核。
 
 ## 复核策略示例
 

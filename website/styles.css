@@ -214,6 +214,11 @@ kbd { border: var(--rule); padding-inline: var(--space-2xs); border-radius: var(
 .search-result span:last-child { margin-left: auto; color: var(--color-muted); font-size: 0.6875rem; }
 .search-result:focus-visible { outline-offset: -2px; }
 .search-hint, .search-empty { font-size: 0.75rem; color: var(--color-muted); padding-top: var(--space-md); }
+.command-search-result { display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: var(--space-md); }
+.command-search-result code { white-space: normal; overflow-wrap: anywhere; font-size: 0.75rem; }
+.command-search-result small { grid-row: 2; white-space: normal; color: var(--color-muted); font-size: 0.6875rem; }
+.command-search-result span:last-child { grid-column: 2; grid-row: 1; }
+.search-reference-link { display: inline-flex; align-items: center; min-height: 2.75rem; margin-top: var(--space-sm); font-size: 0.75rem; color: var(--color-accent); }
 .no-js .policy-lab, .no-js .scenario-tabs, .no-js .install-tabs, .no-js .search-trigger, .no-js .language-button, .no-js .copy-button, .no-js .feature-mobile, .no-js .feature-mobile-label, .no-js .feature-instructions { display: none; }
 @media (hover: hover) {
   .button:hover { transform: translateY(-1px); }

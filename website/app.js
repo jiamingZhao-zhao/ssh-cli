@@ -5,7 +5,7 @@
   const repo = 'https://github.com/jiamingZhao-zhao/ssh-cli';
   const text = {
     zh: {
-      skip: '跳到内容', mainNav: '主导航', navWorkbench: '功能导览', navAgent: '给 Agent 用', searchOpen: '查找功能', search: '查找功能', start: '开始使用',
+      skip: '跳到内容', mainNav: '主导航', navWorkbench: '功能导览', navAgent: '给 Agent 用', navCommands: '命令参考', searchOpen: '搜索功能与命令', search: '搜索', start: '开始使用',
       release: '单文件 SSH 运维工具', heroLine1: 'SSH 客户端', heroLine2: '与日常运维工具',
       heroLead: '网页终端、文件传输、主机管理和命令行。人在工作台操作，脚本和 Agent 通过 CLI 调用，使用相同的主机与策略配置。',
       heroStart: '安装 ssh-cli', heroTour: '浏览功能', heroFootnote: '本地运行 · 开源 · 无需 Python / Node.js / Go 运行环境',
@@ -14,7 +14,7 @@
       proofOutcomeBody: '响应丢了，不代表没执行。先核验状态，再决定下一步。', proofLink: '选择主机和命令，查看策略判断',
       platforms: '支持的平台', platformLabel: '一个可执行文件', download: '下载发布包 ↗',
       workbenchTitle: '工作台功能', workbenchLead: '点击左侧菜单查看用途、具体操作和注意事项。优先介绍终端、主机、监控和传输，再看配置、策略与维护。',
-      railTitle: '你的 SSH 工作台', featureModules: '功能模块', railFootnote: '同一份配置。网页、CLI 与 Agent 共用。', featureProof: '用现有命令完成 · 示例，不会自动执行', agentAngle: 'Agent 使用价值', featureDocs: '查看对应使用说明',
+      railTitle: '你的 SSH 工作台', featureModules: '功能模块', railFootnote: '同一份配置。网页、CLI 与 Agent 共用。', featureProof: '用现有命令完成 · 示例，不会自动执行', agentAngle: 'Agent 使用价值', featureDocs: '查看命令说明',
       agentEyebrow: 'CLI / JSON / Skill', agentTitle: 'Agent 调用示例',
       agentLead: '下面是三种常见任务的调用顺序。重点是选准主机、执行前读策略，以及响应异常后先核验状态。',
       scenarioTabs: 'Agent 场景', scenarioRead: '只读排查', scenarioChange: '变更前检查', scenarioUnknown: '响应丢失后', scenarioCode: '可以交给 Agent 的调用顺序',
@@ -29,8 +29,8 @@
       installTitle: '安装与接入', installLead: '把仓库链接交给能读取仓库、执行本地命令的 Agent。它会准备 CLI 和 Skill，验证完成后，展示路径、版本与最短用法。',
       installNote: 'CLI 是 Skill 的硬性依赖。主机与凭据仍由你在 Agent 实际运行的环境中配置；安装不会自动连接服务器。', skillGuide: '查看各 Agent 安装说明',
       installMethods: '安装方式', installAgent: '交给 Agent', copy: '复制链接', installDetails: '安装细节 ↗', releaseNotes: '版本记录', source: '查看源码 ↗',
-      footerLine: 'SSH 终端、文件管理与命令行运维。', searchTitle: '查找功能或使用场景', searchPlaceholder: '试试：文件、策略、Agent…',
-      searchHint: '↑ ↓ 选择 · Enter 打开 · Esc 关闭', close: '关闭', manualCopy: '手动复制', emptySearch: '没有匹配的功能。试试“文件”“主机”或“策略”。',
+      footerLine: 'SSH 终端、文件管理与命令行运维。', searchTitle: '搜索功能与命令', searchPlaceholder: '如：文件、exec、--agent-key',
+      searchHint: '↑ ↓ 选择 · Enter 打开 · Esc 关闭', close: '关闭', manualCopy: '手动复制', emptySearch: '没有匹配项。试试命令名、参数或功能名称。', searchCommands: '命令', searchAll: '打开完整命令参考', searchLoading: '正在读取命令索引…', searchFailed: '命令索引未加载，可直接打开命令参考。',
       copied: '已复制', copying: '复制中…', copyCommand: '复制命令', copyError: '无法访问剪贴板，请在下方选中内容手动复制。', copySuccess: '已复制，可以交给 Agent 或粘贴到终端。',
       navLab: '策略示例', featureSelect: '选择功能', featureSteps: '具体操作步骤', labTitle: '执行前的策略检查',
       labLead: '选一台示例主机和一条命令，查看允许、拒绝或需要人工确认的原因。切换规则范围，可比较测试与生产的差异。',
@@ -45,7 +45,7 @@
       groups: ['日常高频', '目标与操作边界', '记录与维护'], title: 'ssh-cli · SSH 客户端与日常运维工具'
     },
     en: {
-      skip: 'Skip to content', mainNav: 'Main navigation', navWorkbench: 'Explore', navAgent: 'For agents', searchOpen: 'Find a feature', search: 'Find a feature', start: 'Get started',
+      skip: 'Skip to content', mainNav: 'Main navigation', navWorkbench: 'Explore', navAgent: 'For agents', navCommands: 'Commands', searchOpen: 'Search features and commands', search: 'Search', start: 'Get started',
       release: 'SSH operations', heroLine1: 'SSH client', heroLine2: 'and operations tools',
       heroLead: 'A web terminal, file transfers, host management and a CLI. Use the workspace directly, or call the same configured hosts and policies from scripts and agents.',
       heroStart: 'Install ssh-cli', heroTour: 'Explore features', heroFootnote: 'Local · Open source · No Python, Node.js or Go runtime required',
@@ -54,7 +54,7 @@
       proofOutcomeBody: 'A lost response does not mean nothing ran. Verify state before taking the next step.', proofLink: 'Inspect a command',
       platforms: 'Supported platforms', platformLabel: 'One executable', download: 'Download a release ↗',
       workbenchTitle: 'Workspace features', workbenchLead: 'Select a menu for its purpose, steps and limitations. Start with terminals, hosts, monitoring and transfers, then explore configuration and maintenance.',
-      railTitle: 'Your SSH workspace', featureModules: 'Feature modules', railFootnote: 'One configuration for the UI, CLI and agent.', featureProof: 'Existing commands · examples only, never executed here', agentAngle: 'What an agent gains', featureDocs: 'Read the usage reference',
+      railTitle: 'Your SSH workspace', featureModules: 'Feature modules', railFootnote: 'One configuration for the UI, CLI and agent.', featureProof: 'Existing commands · examples only, never executed here', agentAngle: 'What an agent gains', featureDocs: 'Open command reference',
       agentEyebrow: 'CLI / JSON / Skill', agentTitle: 'Agent command examples',
       agentLead: 'Three common workflows: choose the right host, inspect policies before a change, and verify state after an abnormal response.',
       scenarioTabs: 'Agent scenarios', scenarioRead: 'Read-only checks', scenarioChange: 'Before changes', scenarioUnknown: 'Lost responses', scenarioCode: 'A sequence an agent can follow',
@@ -69,8 +69,8 @@
       installTitle: 'Installation', installLead: 'Give the repository link to an agent that can read repositories and run local commands. It prepares the CLI and skill, verifies setup, then reports paths, versions and a short usage guide.',
       installNote: 'The CLI is mandatory for the skill. Configure hosts and credentials in the agent’s execution environment. Installation does not connect to servers.', skillGuide: 'Read the agent setup guide',
       installMethods: 'Installation methods', installAgent: 'With an agent', copy: 'Copy link', installDetails: 'Install details ↗', releaseNotes: 'Release notes', source: 'View source ↗',
-      footerLine: 'SSH terminals, file management and command-line operations.', searchTitle: 'Find a feature or use case', searchPlaceholder: 'Try files, policies or agents…',
-      searchHint: '↑ ↓ select · Enter open · Esc close', close: 'Close', manualCopy: 'Copy manually', emptySearch: 'No matching feature. Try files, hosts or policies.',
+      footerLine: 'SSH terminals, file management and command-line operations.', searchTitle: 'Search features and commands', searchPlaceholder: 'Try files, exec or --agent-key',
+      searchHint: '↑ ↓ select · Enter open · Esc close', close: 'Close', manualCopy: 'Copy manually', emptySearch: 'No matches. Try a command name, flag or feature.', searchCommands: 'Command', searchAll: 'Open full command reference', searchLoading: 'Loading command index…', searchFailed: 'Command index unavailable. Open the command reference directly.',
       copied: 'Copied', copying: 'Copying…', copyCommand: 'Copy command', copyError: 'Clipboard unavailable. Select the text below and copy it manually.', copySuccess: 'Copied. Send it to your agent or paste it into your terminal.',
       navLab: 'Policy examples', featureSelect: 'Choose a feature', featureSteps: 'How to use it', labTitle: 'Inspect a command',
       labLead: 'Choose a sample host and command to see why it is allowed, denied or requires confirmation. Change rule scope to compare test and production behavior.',
@@ -169,7 +169,11 @@
   let searchReturnFocus = null;
   let copyGeneration = 0;
   let labGeneration = 0;
+  let commandIndexState = 'idle';
   try { if (localStorage.getItem('ssh-cli-site-language') === 'en') language = 'en'; } catch { /* Storage can be unavailable in private/file contexts. */ }
+  const languageQuery = new URL(location.href).searchParams.get('lang');
+  if (languageQuery === 'zh' || languageQuery === 'en') language = languageQuery;
+  function commandLink(id = '', query = '') { return 'commands.html?lang=' + language + (query ? '&q=' + encodeURIComponent(query) : '') + (id ? '#' + encodeURIComponent(id) : ''); }
 
   function setText(id, value) { $(id).textContent = value; }
   function makeIcon(path) {
@@ -220,7 +224,8 @@
       strong.textContent = title; p.textContent = description; copy.append(strong, p); row.append(copy); return row;
     }));
     $('feature-steps').replaceChildren(...featureSteps[id][language].map(step => { const li = document.createElement('li'); li.textContent = step; return li; }));
-    $('feature-docs').href = repo + '/blob/main/' + (language === 'zh' ? 'docs/usage.md' : 'README.en.md');
+    const command = { terminal:'ui', hosts:'host', home:'status', relay:'relay', envs:'env', policy:'policy-show', groups:'group', tags:'host-list', audit:'audit-list', bundle:'config', settings:'ui' };
+    $('feature-docs').href = commandLink(command[id] || 'root');
   }
   function selectScenario(id) {
     const scenario = scenarios[id]; if (!scenario) return;
@@ -251,6 +256,7 @@
     setText('language', language === 'zh' ? 'EN' : '中文');
     $('language').setAttribute('aria-label', language === 'zh' ? 'Switch to English' : '切换到中文');
     $('skill-guide').href = repo + '/blob/main/docs/skills' + (language === 'en' ? '.en' : '') + '.md';
+    document.querySelectorAll('[data-command-reference]').forEach(link => { link.href = commandLink(); });
     renderFeatureTabs(); selectFeature(currentFeature); selectScenario(currentScenario); selectInstall(currentInstall); renderSearch(); renderLab();
   }
   function renderLab() {
@@ -278,6 +284,7 @@
     $('copy-lab').dataset.state = 'default'; $('copy-lab').disabled = false; $('lab-manual-copy').hidden = true;
   }
   function renderSearch() {
+    const focusedId = document.activeElement?.dataset.searchId;
     const query = $('feature-search').value.trim().toLocaleLowerCase();
     const matches = features.filter(feature => {
       const content = feature[language];
@@ -286,18 +293,42 @@
     const root = $('search-results'); root.replaceChildren();
     matches.forEach(feature => {
       const button = document.createElement('button'); button.className = 'search-result'; button.type = 'button';
+      button.dataset.searchId = 'feature-' + feature.id;
       const label = document.createElement('span'); label.textContent = feature[language].nav;
       const group = document.createElement('span'); group.textContent = text[language].groups[feature.group];
       button.append(makeIcon(feature.icon), label, group);
-      button.addEventListener('click', () => { closeSearch(false); selectFeature(feature.id); $('workbench').scrollIntoView(); $('tab-' + feature.id).focus({ preventScroll: true }); });
+      button.addEventListener('click', () => { closeSearch(false); selectFeature(feature.id); $('workbench').scrollIntoView(); (matchMedia('(max-width: 39.99rem)').matches ? $('feature-mobile') : $('tab-' + feature.id)).focus({ preventScroll: true }); });
       root.append(button);
     });
-    if (!matches.length) { const empty = document.createElement('p'); empty.className = 'search-empty'; empty.setAttribute('role', 'status'); empty.textContent = text[language].emptySearch; root.append(empty); }
+    const tokens = query.normalize('NFKC').split(/\s+/).filter(Boolean);
+    const commands = (window.SSH_CLI_COMMAND_INDEX?.commands || []).filter(command => tokens.length ? tokens.every(token => [command.path, command.title, command.summary, command.searchFlags].join(' ').normalize('NFKC').toLocaleLowerCase().includes(token)) : ['exec','upload','host-list','policy-show'].includes(command.id)).slice(0, 8);
+    commands.forEach(command => {
+      const button = document.createElement('button'); button.className = 'search-result command-search-result'; button.type = 'button';
+      button.dataset.searchId = 'command-' + command.id;
+      const code = document.createElement('code'); code.textContent = command.path;
+      const purpose = document.createElement('small'); purpose.textContent = language === 'zh' ? command.title : command.summary;
+      const kind = document.createElement('span'); kind.textContent = text[language].searchCommands;
+      button.append(code, purpose, kind); button.addEventListener('click', () => { location.href = commandLink(command.id); }); root.append(button);
+    });
+    const pending = commandIndexState === 'idle' || commandIndexState === 'loading';
+    if (!matches.length && !commands.length && !pending && commandIndexState !== 'error') { const empty = document.createElement('p'); empty.className = 'search-empty'; empty.setAttribute('role', 'status'); empty.textContent = text[language].emptySearch; root.append(empty); }
+    if (pending || commandIndexState === 'error') { const state = document.createElement('p'); state.className = 'search-empty'; state.setAttribute('role','status'); state.textContent = text[language][pending ? 'searchLoading' : 'searchFailed']; root.append(state); }
+    const all = document.createElement('a'); all.className = 'search-reference-link'; all.href = commandLink('', query); all.textContent = text[language].searchAll + ' ↗'; root.append(all);
+    if (focusedId && $('search-dialog').open) [...root.querySelectorAll('button')].find(button => button.dataset.searchId === focusedId)?.focus({preventScroll:true});
+  }
+  function loadCommandIndex() {
+    if (commandIndexState !== 'idle') return;
+    commandIndexState = 'loading';
+    const script = document.createElement('script'); script.src = 'command-index.js';
+    script.onload = () => { commandIndexState = window.SSH_CLI_COMMAND_INDEX?.commands?.length ? 'ready' : 'error'; renderSearch(); };
+    script.onerror = () => { commandIndexState = 'error'; renderSearch(); };
+    document.head.append(script);
   }
   function openSearch() {
     if ($('search-dialog').open) return;
     searchReturnFocus = document.activeElement; $('feature-search').value = ''; renderSearch();
     $('search-dialog').showModal(); $('feature-search').focus();
+    loadCommandIndex();
   }
   function closeSearch(restore = true) { $('search-dialog').close(); if (restore && searchReturnFocus instanceof HTMLElement) searchReturnFocus.focus({ preventScroll: true }); }
   function tabKeys(event, selector, attribute, select, vertical = false) {

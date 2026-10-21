@@ -6,7 +6,7 @@
 
 [简体中文](README.md) · [Download](https://github.com/jiamingZhao-zhao/ssh-cli/releases) · [Connect your agent](docs/skills.en.md) · [Detailed reference (中文)](docs/usage.md)
 
-[Product landing page source and local preview](website/README.md): explore all 11 workspace modules, agent workflows and their actual boundaries, with Chinese and English content.
+[Product landing page source and local preview](website/README.md): explore all 11 workspace modules. The [command reference](website/README.md#命令参考) adds searchable commands, flags, examples and availability notes. Both pages support Chinese and English.
 
 [![CI](https://github.com/jiamingZhao-zhao/ssh-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jiamingZhao-zhao/ssh-cli/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jiamingZhao-zhao/ssh-cli)](https://github.com/jiamingZhao-zhao/ssh-cli/releases)

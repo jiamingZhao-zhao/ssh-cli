@@ -24,10 +24,10 @@
         <a href="#workbench" data-i18n="navWorkbench">功能导览</a>
         <a href="#lab" data-i18n="navLab">策略示例</a>
         <a href="#agent" data-i18n="navAgent">给 Agent 用</a>
-        <a href="https://github.com/jiamingZhao-zhao/ssh-cli" class="source-link">GitHub <span aria-hidden="true">↗</span></a>
+        <a href="commands.html" data-command-reference data-i18n="navCommands">命令参考</a>
       </nav>
       <div class="header-actions">
-        <button class="search-trigger" id="search-open" type="button" aria-label="查找功能" data-i18n-aria="searchOpen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span data-i18n="search">查找功能</span><kbd>⌘ K</kbd></button>
+        <button class="search-trigger" id="search-open" type="button" aria-label="搜索功能与命令" data-i18n-aria="searchOpen"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><path d="m16 16 4 4"/></svg><span data-i18n="search">搜索</span><kbd>⌘ K</kbd></button>
         <button class="language-button" id="language" type="button" aria-label="Switch to English">EN</button>
         <a class="button primary header-cta" href="#install" data-i18n="start">开始使用</a>
       </div>
@@ -73,7 +73,7 @@ ssh-cli upload -H demo ./app.jar /tmp/app.jar --json</code></pre></div>
           <details class="feature-instructions"><summary data-i18n="featureSteps">具体操作步骤</summary><ol id="feature-steps"></ol></details>
           <div class="agent-note"><span class="note-symbol" aria-hidden="true">↳</span><div><strong data-i18n="agentAngle">Agent 使用价值</strong><p id="feature-agent">人在终端里处理问题，Agent 用结构化命令做检查；共同使用明确的主机别名与配置。</p></div></div>
           <p class="feature-boundary" id="feature-boundary"></p>
-          <a id="feature-docs" class="text-link" href="https://github.com/jiamingZhao-zhao/ssh-cli/blob/main/docs/usage.md"><span data-i18n="featureDocs">查看对应使用说明</span><span aria-hidden="true">↗</span></a>
+          <a id="feature-docs" class="text-link" href="commands.html#ui"><span data-i18n="featureDocs">查看命令说明</span><span aria-hidden="true">↗</span></a>
         </article>
       </div>
       <noscript><p class="no-script">启用 JavaScript 可浏览全部 11 个模块；完整功能也可查看<a href="https://github.com/jiamingZhao-zhao/ssh-cli/blob/main/docs/usage.md">使用参考</a>。Enable JavaScript for the interactive tour, or read the linked reference.</p></noscript>
@@ -115,8 +115,8 @@ ssh-cli status -H demo --json</code></pre><div class="scenario-result" id="scena
       <div class="install-box"><div class="install-tabs" role="tablist" aria-label="安装方式" data-i18n-aria="installMethods"><button id="install-agent" data-install="agent" role="tab" aria-selected="true" aria-controls="install-panel" data-i18n="installAgent">交给 Agent</button><button id="install-unix" data-install="unix" role="tab" aria-selected="false" aria-controls="install-panel" tabindex="-1">Linux / macOS</button><button id="install-windows" data-install="windows" role="tab" aria-selected="false" aria-controls="install-panel" tabindex="-1">Windows</button></div><div id="install-panel" role="tabpanel" tabindex="0" aria-labelledby="install-agent"><p class="install-instruction" id="install-instruction">把这个链接发给你的 Agent，并让它安装。</p><div class="install-code"><pre><code id="install-command">https://github.com/jiamingZhao-zhao/ssh-cli</code></pre><button type="button" class="copy-button" id="copy-install" data-i18n="copy">复制链接</button></div><p id="copy-status" class="copy-status" role="status" aria-live="polite"></p><textarea id="manual-copy" class="manual-copy" readonly hidden aria-label="手动复制" data-i18n-aria="manualCopy"></textarea><p class="install-verification" id="install-verification">先检查 CLI → 缺失时安装并校验 → 安装 Skill → 汇报结果</p></div><div class="install-footer"><code>ssh-cli version</code><a href="https://github.com/jiamingZhao-zhao/ssh-cli/blob/main/INSTALL.md" data-i18n="installDetails">安装细节 ↗</a></div></div>
     </section>
   </main>
-  <footer class="footer container"><a href="#" class="wordmark">ssh-cli<span class="footer-version">v0.7.31</span></a><p data-i18n="footerLine">SSH 终端、文件管理与命令行运维。</p><div><a href="https://github.com/jiamingZhao-zhao/ssh-cli/releases/tag/v0.7.31" data-i18n="releaseNotes">版本记录</a><a href="https://github.com/jiamingZhao-zhao/ssh-cli" data-i18n="source">查看源码 ↗</a></div></footer>
+  <footer class="footer container"><a href="#" class="wordmark">ssh-cli<span class="footer-version">v0.7.31</span></a><p data-i18n="footerLine">SSH 终端、文件管理与命令行运维。</p><div><a href="commands.html" data-command-reference data-i18n="navCommands">命令参考</a><a href="https://github.com/jiamingZhao-zhao/ssh-cli/releases/tag/v0.7.31" data-i18n="releaseNotes">版本记录</a><a href="https://github.com/jiamingZhao-zhao/ssh-cli" data-i18n="source">查看源码 ↗</a></div></footer>
 
-  <dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title"><div class="search-dialog-heading"><label id="search-title" for="feature-search" data-i18n="searchTitle">查找功能或使用场景</label><button type="button" id="search-close" aria-label="关闭" data-i18n-aria="close">Esc</button></div><input id="feature-search" type="search" autocomplete="off" placeholder="试试：文件、策略、Agent…" data-i18n-placeholder="searchPlaceholder"><div id="search-results" class="search-results"></div><p class="search-hint" data-i18n="searchHint">↑ ↓ 选择 · Enter 打开 · Esc 关闭</p></dialog>
+  <dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title"><div class="search-dialog-heading"><label id="search-title" for="feature-search" data-i18n="searchTitle">搜索功能与命令</label><button type="button" id="search-close" aria-label="关闭" data-i18n-aria="close">Esc</button></div><input id="feature-search" type="search" autocomplete="off" placeholder="如：文件、exec、--agent-key" data-i18n-placeholder="searchPlaceholder"><div id="search-results" class="search-results"></div><p class="search-hint" data-i18n="searchHint">↑ ↓ 选择 · Enter 打开 · Esc 关闭</p></dialog>
 </body>
 </html>
