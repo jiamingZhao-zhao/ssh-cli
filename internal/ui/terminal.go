@@ -63,9 +63,8 @@ func (s *service) terminalOpen(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	// Browser headers prove this is the localhost page. They are not a person,
-	// and they do not skip env/group/host policy. Readonly, including prod,
-	// cannot enforce its allow-list on a free shell.
+	// Opening the web terminal does not apply command-mode restrictions, including
+	// readonly. Keep the separate noDataOutflow gate and browser session checks.
 	if !s.allowTerminal(w, h, eff, time.Now()) {
 		return
 	}
@@ -121,9 +120,10 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 	s.bridgeTerminal(r, ws, h, ticket.cols, ticket.rows, r.URL.Query().Get("outputAck") == "1")
 }
 
-// terminalBrowser is the proof that this request came from the localhost page,
-// not from the CLI or an agent HTTP client. A forged source header or JSON field
-// is not consulted. Loopback is required even when the rest of the API is remote.
+// terminalBrowser checks the localhost page's session and request context.
+// This is not proof that a human, rather than software, is driving the page.
+// A source header or JSON field is not consulted. Loopback is required even
+// when the rest of the API is remote.
 //
 // kind fetch (the ticket POST) still requires same-origin Fetch Metadata and the
 // CSRF token. kind websocket does not re-check Sec-Fetch-Site, Dest, or Mode.
@@ -135,8 +135,8 @@ func (s *service) terminalWS(w http.ResponseWriter, r *http.Request) {
 // It is not a policy bypass. File changes, upload, and download always run
 // capability checks, and those calls are audited with source=ui. Read-only
 // probes skip per-command text policy only through workspaceProbeExempt.
-// An interactive PTY is refused when the effective mode is readonly. Headers
-// cannot authorize that shell.
+// Interactive PTYs run independently of command mode, including readonly,
+// but remain blocked by noDataOutflow.
 func (s *service) workspaceHuman(r *http.Request) bool {
 	return s.terminalBrowser(r, "fetch")
 }

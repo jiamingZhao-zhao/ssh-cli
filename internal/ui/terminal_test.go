@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/sshtest"
 )
 
@@ -75,17 +76,18 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 	}
 	mustOK("/api/groups", `{"name":"app","env":"prod"}`)
 	mustOK("/api/hosts", `{"alias":"box","group":"app","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
-	mustOK("/api/groups", `{"name":"lab","env":"dev"}`)
-	mustOK("/api/hosts", `{"alias":"lab","group":"lab","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
+	mustOK("/api/envs", `{"name":"locked","label":"locked","maxMode":"readonly","defaultPolicy":"readonly","noDataOutflow":true}`)
+	mustOK("/api/groups", `{"name":"locked","env":"locked"}`)
+	mustOK("/api/hosts", `{"alias":"locked","group":"locked","host":"`+host+`","port":`+port+`,"user":"tester","password":"ui-secret"}`)
 
-	forged := post("/api/terminal/open", `{"alias":"lab","source":"ui","cols":80,"rows":24}`, false)
+	forged := post("/api/terminal/open", `{"alias":"box","source":"ui","cols":80,"rows":24}`, false)
 	forgedBody, _ := io.ReadAll(forged.Body)
 	forged.Body.Close()
 	if forged.StatusCode != http.StatusForbidden {
 		t.Fatalf("forged open %d %s", forged.StatusCode, forgedBody)
 	}
 
-	noCookie, err := http.NewRequest(http.MethodPost, web.URL+"/api/terminal/open", strings.NewReader(`{"alias":"lab","source":"ui"}`))
+	noCookie, err := http.NewRequest(http.MethodPost, web.URL+"/api/terminal/open", strings.NewReader(`{"alias":"box","source":"ui"}`))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -107,14 +109,41 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 		t.Fatalf("ui exec should still deny echo on prod: %d %s", denied.StatusCode, deniedBody)
 	}
 
-	prodTerm := post("/api/terminal/open", `{"alias":"box","cols":80,"rows":24,"source":"ui"}`, true)
-	prodBody, _ := io.ReadAll(prodTerm.Body)
-	prodTerm.Body.Close()
-	if prodTerm.StatusCode != http.StatusForbidden || !strings.Contains(string(prodBody), "unrestricted terminal") {
-		t.Fatalf("forged browser headers opened a prod pty: %d %s", prodTerm.StatusCode, prodBody)
+	locked := post("/api/terminal/open", `{"alias":"locked","cols":80,"rows":24}`, true)
+	lockedBody, _ := io.ReadAll(locked.Body)
+	locked.Body.Close()
+	if locked.StatusCode != http.StatusForbidden || !strings.Contains(string(lockedBody), "noDataOutflow") {
+		t.Fatalf("terminal bypassed noDataOutflow: %d %s", locked.StatusCode, lockedBody)
 	}
 
-	opened := post("/api/terminal/open", `{"alias":"lab","cols":80,"rows":24,"source":"cli"}`, true)
+	catalogResponse, err := client.Get(web.URL + "/api/catalog")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var catalog struct {
+		Hosts []struct {
+			Alias           string `json:"alias"`
+			TerminalAllowed bool   `json:"terminalAllowed"`
+			TerminalReason  string `json:"terminalReason"`
+		} `json:"hosts"`
+	}
+	err = json.NewDecoder(catalogResponse.Body).Decode(&catalog)
+	catalogResponse.Body.Close()
+	if err != nil || catalogResponse.StatusCode != http.StatusOK || len(catalog.Hosts) != 2 {
+		t.Fatalf("terminal catalog: status=%d err=%v hosts=%+v", catalogResponse.StatusCode, err, catalog.Hosts)
+	}
+	for _, h := range catalog.Hosts {
+		if h.Alias == "box" && (!h.TerminalAllowed || h.TerminalReason != "") {
+			t.Fatalf("readonly host blocked by catalog: %+v", h)
+		}
+		if h.Alias == "locked" && (h.TerminalAllowed || !strings.Contains(h.TerminalReason, "noDataOutflow")) {
+			t.Fatalf("outflow restriction absent from catalog: %+v", h)
+		}
+	}
+
+	// prod remains readonly for controlled execution, but permits an unrestricted
+	// terminal after the same browser session and one-time ticket checks.
+	opened := post("/api/terminal/open", `{"alias":"box","cols":80,"rows":24,"source":"cli"}`, true)
 	openBody, _ := io.ReadAll(opened.Body)
 	opened.Body.Close()
 	if opened.StatusCode != http.StatusOK {
@@ -182,11 +211,11 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 			sawDeny = true
 			continue
 		}
-		if rec.Op == audit.OpPolicyCheck && rec.Command == "pty" && rec.Host == "box" && rec.Source == audit.SourceUI && rec.DeniedByPolicy {
+		if rec.Op == audit.OpPolicyCheck && rec.Command == "pty" && rec.Host == "locked" && rec.Source == audit.SourceUI && rec.DeniedByPolicy {
 			sawPTY = true
 			continue
 		}
-		if rec.Op != audit.OpTerminal || rec.Host != "lab" || rec.Source != audit.SourceUI || rec.Actor != "ui" {
+		if rec.Op != audit.OpTerminal || rec.Host != "box" || rec.Source != audit.SourceUI || rec.Actor != "ui" {
 			continue
 		}
 		if rec.Command != "pty" {
@@ -207,6 +236,35 @@ func TestTerminalSkipsPolicyAndRejectsForgery(t *testing.T) {
 	}
 	if !sawOpen || !sawClose || !sawDeny || !sawPTY {
 		t.Fatalf("audit flags open=%v close=%v deny=%v pty=%v %#v", sawOpen, sawClose, sawDeny, sawPTY, recs)
+	}
+
+	// A ticket admitted while output was allowed must not bypass a later
+	// noDataOutflow change when it is redeemed for a WebSocket.
+	pending := post("/api/terminal/open", `{"alias":"box"}`, true)
+	err = json.NewDecoder(pending.Body).Decode(&ticket)
+	pending.Body.Close()
+	if pending.StatusCode != http.StatusOK || err != nil || ticket.Ticket == "" {
+		t.Fatalf("pending ticket: status=%d err=%v", pending.StatusCode, err)
+	}
+	if err := config.Update(dir, func(cfg *config.Config) error {
+		cfg.Envs["prod"].NoDataOutflow = true
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	request, err := http.NewRequest(http.MethodGet, web.URL+"/api/terminal/ws?ticket="+ticket.Ticket, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	request.Header = browserSocket(web.URL, cookie)
+	blocked, err := client.Do(request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blockedBody, _ := io.ReadAll(blocked.Body)
+	blocked.Body.Close()
+	if blocked.StatusCode != http.StatusForbidden || !strings.Contains(string(blockedBody), "noDataOutflow") {
+		t.Fatalf("ticket bypassed updated outflow restriction: %d %s", blocked.StatusCode, blockedBody)
 	}
 }
 
