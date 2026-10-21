@@ -1,12 +1,12 @@
 # ssh-cli
 
-### Your everyday SSH work. One workspace.
+### An SSH command-line tool for agents.
 
-**A terminal and file browser for people. JSON for scripts. Clear operating boundaries for AI agents.**
+**Common commands for your agent to select hosts, check rules and read results. A web workspace when a person needs to take over.**
 
 [简体中文](README.md) · [Download](https://github.com/jiamingZhao-zhao/ssh-cli/releases) · [Connect your agent](docs/skills.en.md) · [Detailed reference (中文)](docs/usage.md)
 
-[Product landing page source and local preview](website/README.md): explore all 11 workspace modules. The [command reference](website/README.md#命令参考) adds searchable commands, flags, examples and availability notes. Both pages support Chinese and English.
+[Product overview and local preview](website/README.md): compare direct SSH calls with ssh-cli for agent tasks, then explore the human workspace. The [command reference](website/README.md#命令参考) covers commands, flags, examples and availability notes. Both pages support Chinese and English.
 
 [![CI](https://github.com/jiamingZhao-zhao/ssh-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jiamingZhao-zhao/ssh-cli/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jiamingZhao-zhao/ssh-cli)](https://github.com/jiamingZhao-zhao/ssh-cli/releases)

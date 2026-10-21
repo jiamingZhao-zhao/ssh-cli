@@ -25,7 +25,24 @@ python -m http.server 7331 --bind 127.0.0.1 --directory website
 - JavaScript 未启用时保留主要介绍、命令与文档入口，隐藏无法工作的交互控件。
 - 剪贴板被浏览器禁止时显示可选中的原文，不假报复制成功。语言偏好存储不可用时仍可切换。
 
-## 功能来源与优先级
+## Agent 对比与内容依据
+
+首页顺序为 **Agent CLI → 调用对比 → 策略示例 → 人工工作台 → 边界与安装**。CLI 是主要入口，UI 用于人工查看与接手。
+
+原有 Agent 场景区改为 6 个可切换对比：看结果、先检查、选机器、传参数、传文件、断线后。桌面左右并排，窄屏上下排列并使用场景选择器；不额外铺开 6 段长内容。按客户任务解释两边怎么用、能得到什么结果、还有什么限制，只提供使用文档入口，不在产品页展示源码或实现依据。以下依据供维护者核对文案。
+
+| 对比项 | 依据 | 不能据此承诺 |
+| --- | --- | --- |
+| 结果格式 | `internal/cli/exec.go` 的 `execResult` | stdout 自动变成业务对象；completed 等于成功 |
+| 策略预检 | `internal/cli/policy.go`、`internal/guard/` | 可以约束绕过 CLI 的直连；取代服务端权限 |
+| 目标范围 | `internal/cli/run.go`、`internal/guard/batch.go` | 批量操作是分布式事务；登记信息必然正确 |
+| 参数传递 | `internal/cli/exec_quote_test.go`、`docs/usage.md` | 不再需要本地引号；远端没有 shell |
+| 上传处理 | `internal/cli/transfer_cmd.go`、`internal/transfer/` | 默认备份；目录整体事务；摘要代表部署成功 |
+| 响应中断 | `internal/cli/outcome_test.go` | 能证明未执行；自动安全重试或回滚 |
+
+直接 SSH 的基准是已配置别名与认证的 OpenSSH，不把缺配置或错误引号当作对照。别名、私钥、SSH agent、跳板和 ControlMaster / ControlPersist 都是 OpenSSH 已有能力，不能当成独有优势。调用方也可用脚本、配置和服务器权限补齐流程。对照依据见 [ssh(1)](https://man.openbsd.org/ssh) 与 [ssh_config(5)](https://man.openbsd.org/ssh_config)。示例按 POSIX shell 书写，两边各自配置；页面不执行示例，没有性能倍数或虚构实测结果。
+
+## 工作台功能来源与优先级
 
 菜单以 `internal/ui/web/index.html` 为准。这里按产品讲解顺序组织，不修改工作台原来的菜单顺序。
 

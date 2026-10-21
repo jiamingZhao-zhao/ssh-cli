@@ -1,12 +1,12 @@
 # ssh-cli
 
-### 把 SSH 日常操作，收进一个工作台。
+### 给 Agent 用的 SSH 命令行工具。
 
-**人用终端和文件面板，脚本读 JSON，AI 按明确的操作边界办事。**
+**Agent 用统一命令选机器、检查规则和读取结果；需要人工接手时，打开网页工作台。**
 
 [English](README.en.md) · [下载安装](https://github.com/jiamingZhao-zhao/ssh-cli/releases) · [接入 AI Agent](docs/skills.md) · [使用参考](docs/usage.md)
 
-[产品落地页源码与本地预览](website/README.md)：浏览工作台的 11 个模块；[命令参考](website/README.md#命令参考)可搜索全部命令入口，按需查看参数、示例和使用限制。支持中英文切换。
+[产品介绍与本地预览](website/README.md)：对比 Agent 直接调用 SSH 和使用 ssh-cli 的实际差别，再了解人工工作台；[命令参考](website/README.md#命令参考)可搜索命令、参数、示例和使用限制。支持中英文切换。
 
 [![CI](https://github.com/jiamingZhao-zhao/ssh-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jiamingZhao-zhao/ssh-cli/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jiamingZhao-zhao/ssh-cli)](https://github.com/jiamingZhao-zhao/ssh-cli/releases)

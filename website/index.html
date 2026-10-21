@@ -4,11 +4,11 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
-  <meta name="description" content="ssh-cli：SSH 终端、文件传输、主机管理与命令行运维工具。浏览 11 个工作台模块，交互查看真实策略判断，了解脚本和 Agent 的接入方式。">
+  <meta name="description" content="面向 Agent 的 SSH 命令行工具：对比直接调用 SSH 与 ssh-cli 的执行结果、策略检查、目标选择、参数和上传处理，附本机网页工作台。">
   <meta name="theme-color" content="#f9fafc">
   <meta property="og:title" content="ssh-cli · SSH 客户端与日常运维工具">
   <meta property="og:description" content="从终端和文件，到执行前的策略检查。把日常 SSH 操作放进同一个本地工作台。">
-  <title>ssh-cli · SSH 客户端与日常运维工具</title>
+  <title>ssh-cli · 面向 Agent 的 SSH 命令行工具</title>
   <link rel="icon" type="image/svg+xml" href="favicon.svg">
   <link rel="stylesheet" href="tokens.css">
   <link rel="stylesheet" href="styles.css">
@@ -21,9 +21,9 @@
     <div class="container topbar-inner">
       <a class="wordmark" href="#" aria-label="ssh-cli"><span class="brand-mark" aria-hidden="true">&gt;_</span>ssh-cli</a>
       <nav class="topnav" aria-label="主导航" data-i18n-aria="mainNav">
-        <a href="#workbench" data-i18n="navWorkbench">功能导览</a>
+        <a href="#agent" data-i18n="navAgent">Agent 对比</a>
         <a href="#lab" data-i18n="navLab">策略示例</a>
-        <a href="#agent" data-i18n="navAgent">给 Agent 用</a>
+        <a href="#workbench" data-i18n="navWorkbench">网页工作台</a>
         <a href="commands.html" data-command-reference data-i18n="navCommands">命令参考</a>
       </nav>
       <div class="header-actions">
@@ -37,29 +37,67 @@
   <main id="main">
     <section class="hero container" aria-labelledby="hero-title">
       <div class="hero-copy">
-        <a class="release-link" href="https://github.com/jiamingZhao-zhao/ssh-cli/releases/tag/v0.7.31"><span class="release-dot" aria-hidden="true"></span>v0.7.31 <span class="release-separator">/</span><span data-i18n="release">单文件 SSH 运维工具</span><span aria-hidden="true">↗</span></a>
-        <h1 id="hero-title"><span data-i18n="heroLine1">SSH 客户端</span><br><span data-i18n="heroLine2">与日常运维工具</span></h1>
-        <p class="hero-lead" data-i18n="heroLead">网页终端、文件传输、主机管理和命令行。人在工作台操作，脚本和 Agent 通过 CLI 调用，使用相同的主机与策略配置。</p>
-        <div class="hero-actions"><a href="#install" class="button primary"><span data-i18n="heroStart">安装 ssh-cli</span><span aria-hidden="true">↗</span></a><a href="#workbench" class="text-link"><span data-i18n="heroTour">浏览功能</span><span aria-hidden="true">↓</span></a></div>
+        <a class="release-link" href="https://github.com/jiamingZhao-zhao/ssh-cli/releases/tag/v0.7.31"><span class="release-dot" aria-hidden="true"></span>v0.7.31 <span class="release-separator">/</span><span data-i18n="release">面向 Agent 的 SSH CLI</span><span aria-hidden="true">↗</span></a>
+        <h1 id="hero-title"><span data-i18n="heroLine1">给 Agent 用的</span><br><span data-i18n="heroLine2">SSH 命令行工具</span></h1>
+        <p class="hero-lead" data-i18n="heroLead">常用的选机器、规则检查、结果整理和文件上传，都有现成命令。Agent 用同一套方式处理不同机器；你需要查看或接手时，打开本机网页工作台。</p>
+        <div class="hero-actions"><a href="#install" class="button primary"><span data-i18n="heroStart">安装 CLI</span><span aria-hidden="true">↗</span></a><a href="#agent" class="text-link"><span data-i18n="heroTour">看调用对比</span><span aria-hidden="true">↓</span></a></div>
         <p class="hero-footnote" data-i18n="heroFootnote">本地运行 · 开源 · 无需 Python / Node.js / Go 运行环境</p>
       </div>
       <div class="hero-proof">
-        <div class="proof-heading"><span class="small-label" data-i18n="proofTitle">命令行用法</span><span class="example-label" data-i18n="example">示例 · 不连接服务器</span></div>
-        <div class="proof-request"><span class="prompt-mark" aria-hidden="true">›</span><p data-i18n="proofRequest">查看主机、检查策略、执行只读命令</p></div>
+        <div class="proof-heading"><span class="small-label" data-i18n="proofTitle">Agent 的调用顺序</span><span class="example-label" data-i18n="example">示例 · 不连接服务器</span></div>
+        <div class="proof-request"><span class="prompt-mark" aria-hidden="true">›</span><p data-i18n="proofRequest">认准机器 → 检查规则 → 执行并读取结果</p></div>
         <ol class="proof-steps">
-          <li><span class="step-marker" aria-hidden="true">✓</span><div><strong data-i18n="proofHost">查看主机</strong><code>ssh-cli host list --json</code></div><span class="step-note" data-i18n="explicitAlias">明确别名</span></li>
-          <li><span class="step-marker" aria-hidden="true">✓</span><div><strong data-i18n="proofPolicy">检查策略</strong><code>ssh-cli policy show -H demo --json</code></div><span class="step-note">readonly</span></li>
-          <li><span class="step-marker" aria-hidden="true">→</span><div><strong data-i18n="proofExecute">读取磁盘</strong><code>ssh-cli exec -H demo --json -- df -h</code></div></li>
+          <li><span class="step-marker" aria-hidden="true">1</span><div><strong data-i18n="proofHost">先看有哪些机器</strong><code>ssh-cli host list --json</code></div><span class="step-note" data-i18n="explicitAlias">明确别名</span></li>
+          <li><span class="step-marker" aria-hidden="true">2</span><div><strong data-i18n="proofPolicy">检查这台能做什么</strong><code>ssh-cli policy show -H demo --json</code></div><span class="step-note" data-i18n="proofPolicyHint">权限与确认</span></li>
+          <li><span class="step-marker" aria-hidden="true">3</span><div><strong data-i18n="proofExecute">执行磁盘检查</strong><code>ssh-cli exec -H demo --json -- df -h</code></div></li>
         </ol>
-        <div class="proof-outcome"><span class="outcome-key">outcome</span><span class="outcome-value" data-i18n="proofOutcome">区分成功、失败和不确定结果</span><p data-i18n="proofOutcomeBody">响应丢了，不代表没执行。先核验状态，再决定下一步。</p></div>
+        <div class="proof-outcome"><span class="outcome-key" data-i18n="resultLabel">执行结果</span><span class="outcome-value" data-i18n="proofOutcome">知道哪台报错，哪台还不确定</span><p data-i18n="proofOutcomeBody">响应丢了，不代表没执行。先核验状态，再决定下一步。</p></div>
         <a class="proof-link" href="#lab"><span data-i18n="proofLink">选择主机和命令，查看策略判断</span><span aria-hidden="true">↗</span></a>
       </div>
     </section>
 
     <div class="compatibility container" aria-label="支持的平台" data-i18n-aria="platforms"><span data-i18n="platformLabel">一个可执行文件</span><span>Windows</span><span>macOS</span><span>Linux</span><span class="compatibility-arch">amd64 / arm64</span><a href="https://github.com/jiamingZhao-zhao/ssh-cli/releases" data-i18n="download">下载发布包 ↗</a></div>
 
+    <section class="agent-section" id="agent" aria-labelledby="agent-title">
+      <div class="container">
+        <div class="agent-intro"><div><p class="small-label" data-i18n="agentEyebrow">AGENT / CLI</p><h2 id="agent-title" data-i18n="agentTitle">同一个任务，用起来有什么不同</h2></div><p data-i18n="agentLead">让 Agent 查一组机器、传一个文件或处理断线时，看看只用 SSH 和使用 ssh-cli，分别需要怎么做。</p></div>
+        <p class="comparison-fair" data-i18n="scenarioFair">只用 SSH 也可以自己写脚本补齐。这里比较的是 ssh-cli 已经提供了哪些现成步骤。</p>
+        <label id="scenario-mobile-label" class="scenario-mobile-label" for="scenario-mobile" data-i18n="scenarioSelect">选择对比场景</label><select id="scenario-mobile" class="scenario-mobile" aria-controls="scenario-panel"><option value="read">看结果</option></select>
+        <div class="scenario-tabs" role="tablist" aria-label="调用方式对比" data-i18n-aria="scenarioTabs"><button id="scenario-read" role="tab" aria-selected="true" aria-controls="scenario-panel" data-scenario="read" data-i18n="scenarioRead">看结果</button><button id="scenario-change" role="tab" aria-selected="false" aria-controls="scenario-panel" tabindex="-1" data-scenario="change" data-i18n="scenarioChange">先检查</button><button id="scenario-targets" role="tab" aria-selected="false" aria-controls="scenario-panel" tabindex="-1" data-scenario="targets" data-i18n="scenarioTargets">选机器</button><button id="scenario-arguments" role="tab" aria-selected="false" aria-controls="scenario-panel" tabindex="-1" data-scenario="arguments" data-i18n="scenarioArguments">传参数</button><button id="scenario-upload" role="tab" aria-selected="false" aria-controls="scenario-panel" tabindex="-1" data-scenario="upload" data-i18n="scenarioUpload">传文件</button><button id="scenario-unknown" role="tab" aria-selected="false" aria-controls="scenario-panel" tabindex="-1" data-scenario="unknown" data-i18n="scenarioUnknown">断线后</button></div>
+        <div class="scenario-panel" id="scenario-panel" role="tabpanel" tabindex="0" aria-labelledby="scenario-read">
+          <div class="scenario-copy"><span id="scenario-signal" class="scenario-signal">01 / 06</span><h3 id="scenario-title">查完机器，结果能对得上号</h3><p id="scenario-description">让 Agent 查磁盘后，能把结果对应到每台机器，并区分报错和结果还不确定的情况。</p></div>
+          <div class="comparison-effect"><strong data-i18n="scenarioBenefit">用起来的效果</strong><p class="scenario-result" id="scenario-result">汇报时，主机名、环境、执行状态和命令输出都有固定位置可读。</p></div>
+          <p class="comparison-assumptions" data-i18n="scenarioAssumptions">示例按 POSIX shell 书写，请先配好别名与登录方式。页面只展示，不执行。</p>
+          <div class="comparison-columns">
+            <section class="comparison-side"><h4 data-i18n="scenarioBefore">只用 ssh / scp</h4><pre><code id="scenario-before-command">ssh demo "df -h /"</code></pre><p id="scenario-baseline">Agent 能拿到输出文字和退出状态。要统一说明哪台机器、什么环境、有没有报错，需要再整理一层。</p></section>
+            <section class="comparison-side comparison-provided"><h4 data-i18n="scenarioAfter">使用 ssh-cli</h4><pre><code id="scenario-command">ssh-cli exec -H demo --json -- df -h /</code></pre><p id="scenario-provided">加上 --json，结果就带有主机、环境和执行状态，命令输出也一并保留。Agent 可以按固定字段读取，再汇总给你。</p></section>
+          </div>
+
+          <div class="comparison-limit"><strong data-i18n="scenarioLimit">还有哪些限制</strong><p class="scenario-rule" id="scenario-rule">工具只整理外层结果，磁盘数字仍是 df 的原文。收到执行结果，不等于命令成功，更不等于整个任务完成。</p></div>
+          <div class="comparison-links"><a href="commands.html#exec" id="scenario-docs" data-i18n="scenarioDocs">查看命令参数 ↗</a></div>
+        </div>
+        <details class="comparison-notes"><summary data-i18n="comparisonNotes">对比范围与共同前提</summary><div class="agent-specifics"><div><strong data-i18n="specificIdentity">先准备登录信息</strong><p data-i18n="specificIdentityBody">先登记主机别名和登录方式。工具支持私钥、SSH agent 和跳板；这些同样是 SSH 已有的能力。</p></div><div><strong data-i18n="specificArguments">服务器权限仍要管好</strong><p data-i18n="specificArgumentsBody">本工具只能检查经过它的操作。服务器账号仍需限制权限；持有凭据的其他程序可能绕过 CLI 直接连接。</p></div><div><strong data-i18n="specificReuse">连续调用需要提前设置</strong><p data-i18n="specificReuseBody">普通调用每次直接连接。要复用连接，需先启动 daemon 并用于 exec。OpenSSH 本身也有连接复用能力。</p></div></div></details>
+      </div>
+    </section>
+
+    <section class="policy-lab container" id="lab" aria-labelledby="lab-title">
+      <div class="section-intro"><h2 id="lab-title" data-i18n="labTitle">执行前的策略检查</h2><p data-i18n="labLead">选一台示例主机和一条命令，查看允许、拒绝或需要人工确认的原因。切换规则范围，可比较测试与生产的差异。</p></div>
+      <div class="lab-controls">
+        <div><label for="lab-host" data-i18n="labHost">目标主机</label><select id="lab-host"><option value="test">demo-test · test / standard</option><option value="prod">demo-prod · prod / readonly</option></select></div>
+        <div><label for="lab-command" data-i18n="labCommand">待检查命令</label><select id="lab-command"><option value="disk">df -h /</option><option value="restart" selected>systemctl restart nginx</option><option value="format">mkfs.ext4 /dev/demo-disk</option></select></div>
+        <div><label for="lab-scope" data-i18n="labScope">危险命令目录中的 mkfs 规则</label><select id="lab-scope"><option value="off" data-i18n="labScopeOff">未启用（默认）</option><option value="prod" data-i18n="labScopeProd">启用规则 · 默认仅 prod</option><option value="both" data-i18n="labScopeBoth">启用规则 · prod 和 test</option></select></div>
+      </div>
+      <p class="lab-config-note" data-i18n="labConfigNote">示例为 test 额外配置了 systemctl restart 确认规则；prod 使用内置只读上限。格式化命令只参与本地策略解释，不会执行。</p>
+      <div class="lab-result-layout">
+        <div class="lab-explanation"><div class="lab-result-header" role="status" aria-live="polite"><span class="lab-decision" id="lab-decision">CONFIRM</span><span class="lab-exit" id="lab-exit">policy explain · exit 0</span></div><h3 id="lab-result-title">需要人工确认</h3><p id="lab-result-description">规则允许继续检查，但实际执行需要交互式确认。非交互 Agent 应在这里停下。</p><dl class="lab-facts"><div><dt data-i18n="labMode">有效模式</dt><dd id="lab-mode">standard</dd></div><div><dt data-i18n="labEnforced">危险规则在本机生效</dt><dd id="lab-enforced">false</dd></div><div><dt data-i18n="labActive">选中的生效规则</dt><dd id="lab-active">—</dd></div></dl><p class="lab-check-label" data-i18n="labCheckLabel">在自己的配置中检查同一条命令：</p><pre class="lab-check"><code id="lab-check-command"></code></pre><button type="button" id="copy-lab" class="copy-button" data-i18n="labCopy">复制检查命令</button><p id="lab-copy-status" class="copy-status" role="status"></p><textarea id="lab-manual-copy" class="manual-copy" readonly hidden aria-label="手动复制检查命令" data-i18n-aria="labManualCopy"></textarea></div>
+        <div class="lab-output"><div class="lab-output-heading"><strong data-i18n="labOutput">检查结果（JSON）</strong><span>v0.7.31</span></div><pre><code id="lab-json"></code></pre><p data-i18n="labOutputNote">这里展示的是检查结果，命令并没有被执行。页面也不会读取你的主机配置或连接服务器。</p></div>
+      </div>
+      <details class="lab-details"><summary data-i18n="labConfig">示例里的规则是什么</summary><p data-i18n="labConfigBody">测试主机额外设置了“重启需确认”，生产主机默认只读。危险命令选择 mkfs，是否启用和作用环境由上方选项决定。你自己的主机以已保存的规则为准。</p><a href="commands.html#policy-explain" id="lab-reference" class="text-link" data-i18n="labSource">查看策略检查用法 ↗</a></details>
+    </section>
+
+
     <section class="workbench-section container" id="workbench" aria-labelledby="workbench-title">
-      <div class="section-intro"><h2 id="workbench-title" data-i18n="workbenchTitle">工作台功能</h2><p data-i18n="workbenchLead">点击左侧菜单查看用途、具体操作和注意事项。优先介绍终端、主机、监控和传输，再看配置、策略与维护。</p></div>
+      <div class="section-intro"><h2 id="workbench-title" data-i18n="workbenchTitle">人工网页工作台</h2><p data-i18n="workbenchLead">需要人工查看或接手时，打开本机工作台。终端、文件、监控与配置管理使用同一份主机登记；Agent 的主要入口仍是 CLI。</p></div>
       <div class="feature-explorer">
         <div class="feature-rail"><div class="rail-heading"><span class="brand-mark small" aria-hidden="true">&gt;_</span><strong data-i18n="railTitle">你的 SSH 工作台</strong></div><label for="feature-mobile" class="feature-mobile-label" data-i18n="featureSelect">选择功能</label><select id="feature-mobile" class="feature-mobile" aria-controls="feature-panel"><option value="terminal">终端</option></select><div id="feature-tabs" role="tablist" aria-label="功能模块" data-i18n-aria="featureModules" aria-orientation="vertical"></div><p class="rail-footnote" data-i18n="railFootnote">同一份配置。网页、CLI 与 Agent 共用。</p></div>
         <article class="feature-panel" id="feature-panel" role="tabpanel" tabindex="0" aria-labelledby="tab-terminal">
@@ -79,35 +117,9 @@ ssh-cli upload -H demo ./app.jar /tmp/app.jar --json</code></pre></div>
       <noscript><p class="no-script">启用 JavaScript 可浏览全部 11 个模块；完整功能也可查看<a href="https://github.com/jiamingZhao-zhao/ssh-cli/blob/main/docs/usage.md">使用参考</a>。Enable JavaScript for the interactive tour, or read the linked reference.</p></noscript>
     </section>
 
-    <section class="policy-lab container" id="lab" aria-labelledby="lab-title">
-      <div class="section-intro"><h2 id="lab-title" data-i18n="labTitle">执行前的策略检查</h2><p data-i18n="labLead">选一台示例主机和一条命令，查看允许、拒绝或需要人工确认的原因。切换规则范围，可比较测试与生产的差异。</p></div>
-      <div class="lab-controls">
-        <div><label for="lab-host" data-i18n="labHost">目标主机</label><select id="lab-host"><option value="test">demo-test · test / standard</option><option value="prod">demo-prod · prod / readonly</option></select></div>
-        <div><label for="lab-command" data-i18n="labCommand">待检查命令</label><select id="lab-command"><option value="disk">df -h /</option><option value="restart" selected>systemctl restart nginx</option><option value="format">mkfs.ext4 /dev/demo-disk</option></select></div>
-        <div><label for="lab-scope" data-i18n="labScope">危险命令目录中的 mkfs 规则</label><select id="lab-scope"><option value="off" data-i18n="labScopeOff">未启用（默认）</option><option value="prod" data-i18n="labScopeProd">启用规则 · 默认仅 prod</option><option value="both" data-i18n="labScopeBoth">启用规则 · prod 和 test</option></select></div>
-      </div>
-      <p class="lab-config-note" data-i18n="labConfigNote">示例为 test 额外配置了 systemctl restart 确认规则；prod 使用内置只读上限。格式化命令只参与本地策略解释，不会执行。</p>
-      <div class="lab-result-layout">
-        <div class="lab-explanation"><div class="lab-result-header" role="status" aria-live="polite"><span class="lab-decision" id="lab-decision">CONFIRM</span><span class="lab-exit" id="lab-exit">policy explain · exit 0</span></div><h3 id="lab-result-title">需要人工确认</h3><p id="lab-result-description">规则允许继续检查，但实际执行需要交互式确认。非交互 Agent 应在这里停下。</p><dl class="lab-facts"><div><dt data-i18n="labMode">有效模式</dt><dd id="lab-mode">standard</dd></div><div><dt data-i18n="labEnforced">危险规则在本机生效</dt><dd id="lab-enforced">false</dd></div><div><dt data-i18n="labActive">选中的生效规则</dt><dd id="lab-active">—</dd></div></dl><p class="lab-check-label" data-i18n="labCheckLabel">在自己的配置中检查同一条命令：</p><pre class="lab-check"><code id="lab-check-command"></code></pre><button type="button" id="copy-lab" class="copy-button" data-i18n="labCopy">复制检查命令</button><p id="lab-copy-status" class="copy-status" role="status"></p><textarea id="lab-manual-copy" class="manual-copy" readonly hidden aria-label="手动复制检查命令" data-i18n-aria="labManualCopy"></textarea></div>
-        <div class="lab-output"><div class="lab-output-heading"><strong data-i18n="labOutput">policy explain 输出节选</strong><span>v0.7.31</span></div><pre><code id="lab-json"></code></pre><p data-i18n="labOutputNote">这是检查命令的退出码，不是远端执行结果。当前页面不读取你的主机配置，也不连接服务器。</p></div>
-      </div>
-      <details class="lab-details"><summary data-i18n="labConfig">查看示例配置与数据来源</summary><p data-i18n="labConfigBody">两台主机仅使用文档地址 192.0.2.10 / 192.0.2.20。分组引用 standard 模式的示例策略，confirm 包含 systemctl restart；prod 的 readonly 上限仍生效。危险目录只选择 mkfs，按上方开关调整范围。</p><a href="https://github.com/jiamingZhao-zhao/ssh-cli/blob/v0.7.31/internal/cli/policy.go" class="text-link" data-i18n="labSource">查看对应版本源码 ↗</a></details>
-    </section>
-
-    <section class="agent-section" id="agent" aria-labelledby="agent-title">
-      <div class="container">
-        <div class="agent-intro"><div><p class="small-label" data-i18n="agentEyebrow">CLI / JSON / Skill</p><h2 id="agent-title" data-i18n="agentTitle">Agent 调用示例</h2></div><p data-i18n="agentLead">下面是三种常见任务的调用顺序。重点是选准主机、执行前读策略，以及响应异常后先核验状态。</p></div>
-        <div class="scenario-tabs" role="tablist" aria-label="Agent 场景" data-i18n-aria="scenarioTabs"><button id="scenario-read" role="tab" aria-selected="true" aria-controls="scenario-panel" data-scenario="read" data-i18n="scenarioRead">只读排查</button><button id="scenario-change" role="tab" aria-selected="false" aria-controls="scenario-panel" tabindex="-1" data-scenario="change" data-i18n="scenarioChange">变更前检查</button><button id="scenario-unknown" role="tab" aria-selected="false" aria-controls="scenario-panel" tabindex="-1" data-scenario="unknown" data-i18n="scenarioUnknown">响应丢失后</button></div>
-        <div class="scenario-panel" id="scenario-panel" role="tabpanel" tabindex="0" aria-labelledby="scenario-read"><div class="scenario-copy"><span id="scenario-signal" class="scenario-signal">READ FIRST</span><h3 id="scenario-title">只读检查主机状态</h3><p id="scenario-description">显式指定 -H，减少默认主机带来的歧义；JSON 让 Agent 读取状态，而不是猜终端文本。</p><p class="scenario-rule" id="scenario-rule">此处是命令示例，不会执行远程操作。</p></div><div class="scenario-code"><div class="code-label" data-i18n="scenarioCode">可以交给 Agent 的调用顺序</div><pre><code id="scenario-command">ssh-cli host list --json
-ssh-cli policy show -H demo --json
-ssh-cli status -H demo --json</code></pre><div class="scenario-result" id="scenario-result">目标明确 → 检查权限 → 读取状态 → 汇报结果</div></div></div>
-        <div class="agent-specifics"><div><strong data-i18n="specificIdentity">SSH agent 身份</strong><p data-i18n="specificIdentityBody">SSH agent 可绑定公钥指纹；身份缺失时失败，不静默改用别的密钥。</p></div><div><strong data-i18n="specificArguments">远端参数保留</strong><p data-i18n="specificArgumentsBody">exec 保留分开的 argv，JSON 请求体与带空格参数不再靠 Agent 拼接猜测。</p></div><div><strong data-i18n="specificReuse">显式连接复用</strong><p data-i18n="specificReuseBody">显式启用 daemon 后可复用 exec 连接；普通调用不会自动启动或重试。</p></div></div>
-      </div>
-    </section>
-
     <section class="boundaries container" id="boundaries" aria-labelledby="boundaries-title">
-      <div class="section-intro"><h2 id="boundaries-title" data-i18n="boundariesTitle">默认行为与使用限制</h2><p data-i18n="boundariesLead">以下行为以 v0.7.31 为准。建议在接入脚本或 Agent 前确认，尤其是生产只读和人工确认要求。</p></div>
-      <dl class="boundary-table"><div><dt data-i18n="boundaryProd">生产环境</dt><dd><strong data-i18n="boundaryProdTitle">prod 默认上限为只读</strong><p data-i18n="boundaryProdBody">无限制交互终端在 readonly 下不可用；工具的文件操作仍检查权限和路径。</p></dd></div><div><dt data-i18n="boundaryDanger">危险命令</dt><dd><strong data-i18n="boundaryDangerTitle">目录默认不等于拦截</strong><p data-i18n="boundaryDangerBody">需要启用并选择规则才生效；启用后默认作用于 prod，也可显式指定其他环境。</p></dd></div><div><dt data-i18n="boundaryHuman">人工确认</dt><dd><strong data-i18n="boundaryHumanTitle">确认门留给真实的交互终端</strong><p data-i18n="boundaryHumanBody">非交互 Agent 不能用 --yes 绕过。standard/admin 的人工终端不逐条检查按键命令。</p></dd></div><div><dt data-i18n="boundaryAudit">本地审计</dt><dd><strong data-i18n="boundaryAuditTitle">能记录和核验，也有信任前提</strong><p data-i18n="boundaryAuditBody">本地 HMAC 无法抵抗同时掌握签名密钥和日志的人；这不是独立的远端防篡改系统。</p></dd></div></dl>
+      <div class="section-intro"><h2 id="boundaries-title" data-i18n="boundariesTitle">接入前，先了解这些默认设置</h2><p data-i18n="boundariesLead">以下以 v0.7.31 为准。重点看生产环境、人工确认和本地操作记录，避免把工具提供的检查理解为所有风险都已解决。</p></div>
+      <dl class="boundary-table"><div><dt data-i18n="boundaryProd">生产环境</dt><dd><strong data-i18n="boundaryProdTitle">生产主机默认只读</strong><p data-i18n="boundaryProdBody">无限制交互终端在 readonly 下不可用；工具的文件操作仍检查权限和路径。</p></dd></div><div><dt data-i18n="boundaryDanger">危险命令</dt><dd><strong data-i18n="boundaryDangerTitle">危险命令清单默认未开启拦截</strong><p data-i18n="boundaryDangerBody">先开启并选择规则，才会按这份清单拦截；启用后默认只在生产环境生效，可按需指定范围。</p></dd></div><div><dt data-i18n="boundaryHuman">人工确认</dt><dd><strong data-i18n="boundaryHumanTitle">需要人工确认时，非交互调用会被拒绝</strong><p data-i18n="boundaryHumanBody">确认要在真实交互终端里完成，Agent 不能用 --yes 跳过。开放给人工的终端，仍需你自己判断输入的每条命令。</p></dd></div><div><dt data-i18n="boundaryAudit">本地审计</dt><dd><strong data-i18n="boundaryAuditTitle">记录保存在本机，重要结果需另外留存</strong><p data-i18n="boundaryAuditBody">能同时修改记录和本地校验材料的人，仍可能破坏记录的可信度。重要场景需要独立保存记录，不能只依赖这一台电脑。</p></dd></div></dl>
     </section>
 
     <section class="install-section container" id="install" aria-labelledby="install-title">
@@ -115,7 +127,7 @@ ssh-cli status -H demo --json</code></pre><div class="scenario-result" id="scena
       <div class="install-box"><div class="install-tabs" role="tablist" aria-label="安装方式" data-i18n-aria="installMethods"><button id="install-agent" data-install="agent" role="tab" aria-selected="true" aria-controls="install-panel" data-i18n="installAgent">交给 Agent</button><button id="install-unix" data-install="unix" role="tab" aria-selected="false" aria-controls="install-panel" tabindex="-1">Linux / macOS</button><button id="install-windows" data-install="windows" role="tab" aria-selected="false" aria-controls="install-panel" tabindex="-1">Windows</button></div><div id="install-panel" role="tabpanel" tabindex="0" aria-labelledby="install-agent"><p class="install-instruction" id="install-instruction">把这个链接发给你的 Agent，并让它安装。</p><div class="install-code"><pre><code id="install-command">https://github.com/jiamingZhao-zhao/ssh-cli</code></pre><button type="button" class="copy-button" id="copy-install" data-i18n="copy">复制链接</button></div><p id="copy-status" class="copy-status" role="status" aria-live="polite"></p><textarea id="manual-copy" class="manual-copy" readonly hidden aria-label="手动复制" data-i18n-aria="manualCopy"></textarea><p class="install-verification" id="install-verification">先检查 CLI → 缺失时安装并校验 → 安装 Skill → 汇报结果</p></div><div class="install-footer"><code>ssh-cli version</code><a href="https://github.com/jiamingZhao-zhao/ssh-cli/blob/main/INSTALL.md" data-i18n="installDetails">安装细节 ↗</a></div></div>
     </section>
   </main>
-  <footer class="footer container"><a href="#" class="wordmark">ssh-cli<span class="footer-version">v0.7.31</span></a><p data-i18n="footerLine">SSH 终端、文件管理与命令行运维。</p><div><a href="commands.html" data-command-reference data-i18n="navCommands">命令参考</a><a href="https://github.com/jiamingZhao-zhao/ssh-cli/releases/tag/v0.7.31" data-i18n="releaseNotes">版本记录</a><a href="https://github.com/jiamingZhao-zhao/ssh-cli" data-i18n="source">查看源码 ↗</a></div></footer>
+  <footer class="footer container"><a href="#" class="wordmark">ssh-cli<span class="footer-version">v0.7.31</span></a><p data-i18n="footerLine">面向 Agent 的 SSH CLI，附本机网页工作台。</p><div><a href="commands.html" data-command-reference data-i18n="navCommands">命令参考</a><a href="https://github.com/jiamingZhao-zhao/ssh-cli/releases/tag/v0.7.31" data-i18n="releaseNotes">版本记录</a><a href="https://github.com/jiamingZhao-zhao/ssh-cli" data-i18n="source">GitHub 仓库 ↗</a></div></footer>
 
   <dialog id="search-dialog" class="search-dialog" aria-labelledby="search-title"><div class="search-dialog-heading"><label id="search-title" for="feature-search" data-i18n="searchTitle">搜索功能与命令</label><button type="button" id="search-close" aria-label="关闭" data-i18n-aria="close">Esc</button></div><input id="feature-search" type="search" autocomplete="off" placeholder="如：文件、exec、--agent-key" data-i18n-placeholder="searchPlaceholder"><div id="search-results" class="search-results"></div><p class="search-hint" data-i18n="searchHint">↑ ↓ 选择 · Enter 打开 · Esc 关闭</p></dialog>
 </body>
