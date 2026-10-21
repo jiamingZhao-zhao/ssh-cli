@@ -6,6 +6,8 @@
 
 [English](README.en.md) · [下载安装](https://github.com/jiamingZhao-zhao/ssh-cli/releases) · [接入 AI Agent](docs/skills.md) · [使用参考](docs/usage.md)
 
+[产品落地页源码与本地预览](website/README.md)：按实用性浏览工作台的 11 个模块，了解 Agent 的操作流程与实际边界；支持中英文切换。
+
 [![CI](https://github.com/jiamingZhao-zhao/ssh-cli/actions/workflows/ci.yml/badge.svg)](https://github.com/jiamingZhao-zhao/ssh-cli/actions/workflows/ci.yml)
 [![Release](https://img.shields.io/github/v/release/jiamingZhao-zhao/ssh-cli)](https://github.com/jiamingZhao-zhao/ssh-cli/releases)
 
