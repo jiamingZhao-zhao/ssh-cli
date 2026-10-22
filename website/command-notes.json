@@ -1,0 +1,468 @@
+{
+  "entries": {
+    "root": {
+      "title": "全部命令与通用参数",
+      "effect": "group",
+      "example": "ssh-cli --help",
+      "noteZh": "--version、-V 和 -version 都会显示版本。--help / -h 可用于具体子命令。内部 __complete 协议不作为用户命令展示。",
+      "noteEn": "--version, -V and -version print the version. Use --help / -h on any command. The internal __complete protocol is not a user command."
+    },
+    "exec": {
+      "title": "执行远端命令或脚本",
+      "effect": "mixed",
+      "example": "ssh-cli exec -H demo --json -- df -h /",
+      "noteZh": "命令位于 -- 后；多个 argv 会保留引号语义，单个参数仍按远端 shell 脚本处理。--script / --stdin 读取脚本，--forward-stdin 转发输入，三者不是同一种方式。写操作响应丢失时先核验，不自动重跑。",
+      "noteEn": "Arguments after -- retain argv boundaries; one argument remains a remote shell script. --script / --stdin read scripts; --forward-stdin forwards input. Verify uncertain writes before retrying."
+    },
+    "upload": {
+      "title": "上传文件或目录",
+      "effect": "remote-write",
+      "example": "ssh-cli upload -H demo ./app.jar /tmp/app.jar --backup --json",
+      "noteZh": "默认可替换已有文件；--backup 先生成 .ssh-cli.bak，--confirm-overwrite 要求交互确认。目录按文件分别提交，不是整体事务。",
+      "noteEn": "Existing files are replaced by default. --backup preserves a .ssh-cli.bak; --confirm-overwrite requires a TTY. Directory transfers commit files individually."
+    },
+    "download": {
+      "title": "下载远端文件或目录",
+      "effect": "transfer",
+      "example": "ssh-cli download -H demo /var/log/app.log ./app.log --json",
+      "noteZh": "远端数据会流向本机，受 noDataOutflow 等能力限制；本地使用暂存文件，完成后再提交目标。",
+      "noteEn": "Remote data flows to the local machine and is subject to noDataOutflow. Downloads stage locally before committing the destination."
+    },
+    "ls": {
+      "title": "列出远端目录",
+      "effect": "remote-read",
+      "example": "ssh-cli ls -H demo /var/log --json",
+      "noteZh": "通过 SFTP 列目录，不是无限制 shell。Git Bash 可能改写 / 开头路径；可使用 //var/log 或对单次调用设置 MSYS_NO_PATHCONV=1。",
+      "noteEn": "Lists through SFTP. On Git Bash, use //var/log or MSYS_NO_PATHCONV=1 if path conversion changes absolute remote paths."
+    },
+    "status": {
+      "title": "检查连接与主机健康状态",
+      "effect": "remote-read",
+      "example": "ssh-cli status -H demo --timeout 20s --json",
+      "noteZh": "会连接目标主机；缺失采样和连接失败不能当成健康状态。可用 -H、-g、-t 和 --env 选择目标。",
+      "noteEn": "Connects to the selected hosts. Missing samples or connection failures are not healthy results."
+    },
+    "service": {
+      "title": "查看或变更 systemd 服务",
+      "effect": "mixed",
+      "example": "ssh-cli service status nginx -H demo --json",
+      "noteZh": "action 支持 status、start、stop、restart、reload。状态检查与服务变更影响不同；变更前读取 policy show，并按需完成人工确认。",
+      "noteEn": "Actions include status, start, stop, restart and reload. Inspect policy before state-changing actions and complete required human confirmation."
+    },
+    "history": {
+      "title": "读取远端用户的 shell 历史",
+      "effect": "remote-read",
+      "example": "ssh-cli history -H demo --lines 30 --json",
+      "noteZh": "历史可能涉及敏感内容，脱敏只是启发式。noDataOutflow 下返回正文需要额外确认，不能由非交互 Agent 跳过。",
+      "noteEn": "History can contain secrets; redaction is heuristic. Returning bodies from noDataOutflow requires additional human confirmation."
+    },
+    "relay": {
+      "title": "经本机中继两台主机之间的文件",
+      "effect": "remote-write",
+      "example": "ssh-cli relay --from demo-test:/srv/app/app.jar --to demo-prod:/tmp/app.jar --json",
+      "noteZh": "用 --from / --to 选择端点，不使用 -H。通过本机进程中转并核对目标内容；不会在本地留下明文文件。跨环境与受保护路径检查仍适用。",
+      "noteEn": "Select endpoints with --from / --to, not -H. Data streams through the local process with destination verification. Environment and path restrictions still apply."
+    },
+    "ui": {
+      "title": "启动本机网页工作台",
+      "effect": "local-server",
+      "example": "ssh-cli ui",
+      "noteZh": "默认监听 127.0.0.1:7788，前台运行，Ctrl-C 停止。standard/admin 的人工终端不逐条检查按键命令；readonly 环境拒绝无限制终端。",
+      "noteEn": "Runs in the foreground at 127.0.0.1:7788 by default. Human terminals in standard/admin do not inspect every keystroke; readonly refuses unrestricted terminals."
+    },
+    "host": {
+      "title": "主机配置入口",
+      "effect": "group",
+      "example": "ssh-cli host list --json"
+    },
+    "host-add": {
+      "title": "登记主机与认证方式",
+      "effect": "local-write",
+      "example": "ssh-cli host add demo --group app-test --host 192.0.2.10 --user deploy --agent",
+      "noteZh": "需要先有分组。这里的 --host 是地址，不是全局 -H 的别名选择；--agent、--identity 和 --password-stdin 按真实凭据选择，不把口令写到参数里。",
+      "noteEn": "Create the group first. Here --host is the address, unlike global -H selection. Choose the actual authentication method; never put passwords in arguments."
+    },
+    "host-edit": {
+      "title": "修改单台主机配置",
+      "effect": "local-write",
+      "example": "ssh-cli host edit demo --tag app --tag nginx",
+      "noteZh": "--tag 替换标签列表；清空使用 --clear-tags。变更地址、用户、认证或跳板可能使会话失效，变更目标或放宽权限可能要求确认。",
+      "noteEn": "--tag replaces the tag list; --clear-tags clears it. Target, identity and jump-host changes may invalidate sessions or require confirmation."
+    },
+    "host-list": {
+      "title": "列出已登记主机",
+      "effect": "local-read",
+      "example": "ssh-cli host list --json",
+      "noteZh": "先核对别名、分组与环境，再执行远端操作。列表不会显示秘密内容，但仍可能包含地址和用户等配置信息。",
+      "noteEn": "Verify aliases, groups and environments before operating. Secrets are not shown, but addresses and usernames can still be present."
+    },
+    "host-remove": {
+      "title": "删除主机登记",
+      "effect": "local-write",
+      "example": "ssh-cli host remove demo",
+      "noteZh": "这是删除本地登记，不是删除远端服务器。删除后重新加入相同凭据指向不同目标，不能用于绕过确认。",
+      "noteEn": "Removes a local registration, not the remote server. Reusing credentials for a different target does not bypass confirmation."
+    },
+    "group": {
+      "title": "业务分组配置入口",
+      "effect": "group",
+      "example": "ssh-cli group list --json"
+    },
+    "group-add": {
+      "title": "新增业务分组",
+      "effect": "local-write",
+      "example": "ssh-cli group add app-test --env test --label 测试应用",
+      "noteZh": "分组必须且只能属于一个环境，可引用命名策略和设置受保护路径。",
+      "noteEn": "Each group belongs to exactly one environment and can reference a named policy and protected paths."
+    },
+    "group-edit": {
+      "title": "修改分组显示名、策略或路径",
+      "effect": "local-write",
+      "example": "ssh-cli group edit app-test --label 应用测试组",
+      "noteZh": "未传入的字段保留。环境归属变更使用 group set-env。",
+      "noteEn": "Unspecified fields stay unchanged. Change the environment with group set-env."
+    },
+    "group-list": {
+      "title": "查看分组及环境归属",
+      "effect": "local-read",
+      "example": "ssh-cli group list --json"
+    },
+    "group-remove": {
+      "title": "删除空分组",
+      "effect": "local-write",
+      "example": "ssh-cli group remove old-test",
+      "noteZh": "只能删除没有主机的分组，避免连同主机配置一起静默丢失。",
+      "noteEn": "Only empty groups can be removed."
+    },
+    "group-set-env": {
+      "title": "变更分组的环境归属",
+      "effect": "local-write",
+      "example": "ssh-cli group set-env app-test preprod",
+      "noteZh": "改变环境会影响权限上限；离开 prod 或放宽权限等情况可能要求交互确认。不要把它当作临时绕过策略的方法。",
+      "noteEn": "Environment changes affect ceilings. Leaving prod or widening permissions can require interactive confirmation; this is not a bypass."
+    },
+    "env": {
+      "title": "环境标签配置入口",
+      "effect": "group",
+      "example": "ssh-cli env list --json"
+    },
+    "env-add": {
+      "title": "新增自定义环境",
+      "effect": "local-write",
+      "example": "ssh-cli env add sandbox --label 沙箱 --max-mode standard",
+      "noteZh": "可设置权限上限、默认策略与数据流出限制。内置 dev/test/preprod/prod 与自定义标签的编辑限制不同。",
+      "noteEn": "Configure a mode ceiling, default policy and data restrictions. Builtin and custom labels have different edit restrictions."
+    },
+    "env-edit": {
+      "title": "修改自定义环境配置",
+      "effect": "local-write",
+      "example": "ssh-cli env edit sandbox --label 集成沙箱",
+      "noteZh": "内置环境的锁定字段不能任意修改；放宽限制可能需要确认。",
+      "noteEn": "Builtin environment fields are locked. Widening restrictions can require confirmation."
+    },
+    "env-list": {
+      "title": "列出环境与权限上限",
+      "effect": "local-read",
+      "example": "ssh-cli env list --json"
+    },
+    "env-remove": {
+      "title": "删除未使用的自定义环境",
+      "effect": "local-write",
+      "example": "ssh-cli env remove sandbox",
+      "noteZh": "不能删除仍被分组引用的标签；内置标签不可删除。",
+      "noteEn": "An environment used by a group cannot be removed. Builtin labels cannot be deleted."
+    },
+    "policy": {
+      "title": "策略查看与维护入口",
+      "effect": "group",
+      "example": "ssh-cli policy show -H demo --json"
+    },
+    "policy-show": {
+      "title": "查看目标主机的最终有效策略",
+      "effect": "local-read",
+      "example": "ssh-cli policy show -H demo --json",
+      "noteZh": "只读本地配置，不连接。读取 confirm、protectedPaths、envRules 和 dangerousCommands.active/enforcedHere，区分建议目录与真正的拦截。",
+      "noteEn": "Reads local configuration without connecting. Inspect confirm, protectedPaths, envRules and dangerousCommands.active/enforcedHere."
+    },
+    "policy-explain": {
+      "title": "解释具体命令是否允许执行",
+      "effect": "local-read",
+      "example": "ssh-cli policy explain -H demo --json -- systemctl restart nginx",
+      "noteZh": "不执行远端命令。allowed 为 false 时检查退出 253；needsConfirm 为 true 时解释仍可退出 0，实际执行另需人工确认。",
+      "noteEn": "Does not execute remotely. Denials exit 253. needsConfirm can still return 0 for inspection; actual execution requires human confirmation."
+    },
+    "policy-list": {
+      "title": "列出命名策略与内置策略",
+      "effect": "local-read",
+      "example": "ssh-cli policy list --json"
+    },
+    "policy-add": {
+      "title": "新增命名策略",
+      "effect": "local-write",
+      "example": "ssh-cli policy add app-read --mode readonly --allow df --allow uptime",
+      "noteZh": "allow/deny/confirm 按命令参数前缀匹配，不是 shell 通配符；不要用 --allow * 表示全部允许。",
+      "noteEn": "allow/deny/confirm use command argument prefixes, not shell globs. --allow * does not mean allow everything."
+    },
+    "policy-edit": {
+      "title": "按字段更新命名策略",
+      "effect": "local-write",
+      "example": "ssh-cli policy edit app-read --confirm systemctl",
+      "noteZh": "未指定的字段保留。该版本原始帮助中“HMAC signing is not implemented”是过期文案；policy sign / unsign 已存在，完整性边界以它们的说明为准。",
+      "noteEn": "Unspecified fields are preserved. This version's raw help contains an outdated HMAC statement; policy sign / unsign are implemented. See their documentation for the actual boundaries."
+    },
+    "policy-remove": {
+      "title": "删除本地命名策略",
+      "effect": "local-write",
+      "example": "ssh-cli policy remove old-app",
+      "noteZh": "被引用的策略需要先处理引用；不要通过删除配置来绕过限制。",
+      "noteEn": "Resolve references before removal; deleting configuration is not a way around restrictions."
+    },
+    "policy-sign": {
+      "title": "为策略与主机身份写入 HMAC 签名",
+      "effect": "local-write",
+      "example": "ssh-cli policy sign",
+      "noteZh": "签名涵盖策略、危险规则选择及主机目标/认证。建立已签名标记后，缺失或不匹配的 sidecar 会拒绝加载；本地签名不抵抗持有签名密钥的攻击者。",
+      "noteEn": "Covers policy, selected dangerous rules and host targets/authentication. After signing, missing or mismatched sidecars fail loading. It cannot defeat an attacker holding the local key."
+    },
+    "policy-unsign": {
+      "title": "移除策略签名并恢复未签名状态",
+      "effect": "local-write",
+      "example": "ssh-cli policy unsign",
+      "noteZh": "会改变完整性保护状态，不能用于掩盖校验失败。",
+      "noteEn": "Changes integrity protection state. Do not use it to conceal verification failures."
+    },
+    "policy-dangerous": {
+      "title": "查看危险命令建议目录与启用状态",
+      "effect": "local-read",
+      "example": "ssh-cli policy dangerous --json",
+      "noteZh": "新配置默认关闭。目录存在或命中 catalog 不代表拦截；启用后还需选择规则。",
+      "noteEn": "Off in fresh configurations. Catalog membership alone is not enforcement; enable and select rules."
+    },
+    "policy-dangerous-set": {
+      "title": "选择危险命令规则与生效环境",
+      "effect": "local-write",
+      "example": "ssh-cli policy dangerous set --enable --rule mkfs --env prod",
+      "noteZh": "--enable 单独使用仍不拦截；需 --rule、--all 或额外 --deny。缺省范围仅 prod；关闭或缩小拦截需要确认短语 dangerous。",
+      "noteEn": "--enable alone blocks nothing. Select rules, --all or extra --deny. The default scope is prod; shrinking enforcement requires the dangerous confirmation phrase."
+    },
+    "audit": {
+      "title": "本地审计入口",
+      "effect": "group",
+      "example": "ssh-cli audit list --json"
+    },
+    "audit-list": {
+      "title": "筛选和分页查询审计记录",
+      "effect": "local-read",
+      "example": "ssh-cli audit list --host demo --status error --page-size 20 --json",
+      "noteZh": "--host 在这里是记录过滤；可组合时间、来源、操作与结果过滤，不会重新执行记录中的命令。",
+      "noteEn": "Host selection filters records here. Time, source, operation and status filters do not replay commands."
+    },
+    "audit-show": {
+      "title": "按记录 ID 查看一条审计",
+      "effect": "local-read",
+      "example": "ssh-cli audit show RECORD_ID --json"
+    },
+    "audit-tail": {
+      "title": "读取最新审计或持续跟随",
+      "effect": "local-read",
+      "example": "ssh-cli audit tail --lines 20 --json",
+      "noteZh": "--follow 会持续等待新记录，直到停止；适合观察，不代表远端命令的实时终端。",
+      "noteEn": "--follow waits for new records until stopped; it is not a live remote terminal."
+    },
+    "audit-stats": {
+      "title": "统计审计文件数量与大小",
+      "effect": "local-read",
+      "example": "ssh-cli audit stats --json"
+    },
+    "audit-configure": {
+      "title": "设置审计保留与写入前置检查",
+      "effect": "human",
+      "example": "ssh-cli audit configure --retention-days 90 --require-writable",
+      "noteZh": "需要交互式 TTY 人工确认。修改本地审计策略；require-writable 会在审计不可写时阻止相关操作开始。",
+      "noteEn": "Requires interactive TTY confirmation. Changes local audit settings. require-writable stops relevant operations before dispatch when audit is unavailable."
+    },
+    "audit-protect": {
+      "title": "以当前日志建立完整性保护基线",
+      "effect": "human",
+      "example": "ssh-cli audit protect --json",
+      "noteZh": "需要交互式 TTY 人工确认。这是把当前记录作为基线，不会证明建立基线以前没有被修改。需要时把检查点保存到独立可信位置。",
+      "noteEn": "Requires interactive TTY confirmation. Trusts current logs as the baseline; it does not prove their prior history. Keep an independent checkpoint when needed."
+    },
+    "audit-verify": {
+      "title": "核验审计链与签名检查点",
+      "effect": "local-read",
+      "example": "ssh-cli audit verify --json",
+      "noteZh": "需先建立保护基线。失败时保留证据，不重新签名来隐藏异常。",
+      "noteEn": "Requires a protection baseline. Preserve failures rather than re-signing altered records."
+    },
+    "audit-cleanup": {
+      "title": "清理 30 天以前的审计",
+      "effect": "local-write",
+      "example": "ssh-cli audit cleanup --json",
+      "noteZh": "会删除旧记录；30 天以内拒绝清理。不能回滚远端已经发生的操作。",
+      "noteEn": "Deletes older records and refuses cleanup within 30 days. Does not roll back remote operations."
+    },
+    "config": {
+      "title": "无明文凭据的配置迁移入口",
+      "effect": "group",
+      "example": "ssh-cli config export --help"
+    },
+    "config-export": {
+      "title": "导出主机、环境、策略和密钥引用",
+      "effect": "local-output",
+      "example": "ssh-cli config export",
+      "noteZh": "默认输出 YAML；--output 可写文件。不会包含明文密码、secret bytes 或 master key，但主机地址和密钥路径仍是配置信息。",
+      "noteEn": "Prints YAML by default; --output writes a file. No plaintext passwords or master key, but addresses and key paths remain configuration data."
+    },
+    "config-import": {
+      "title": "用配置包替换本机主机与策略",
+      "effect": "local-write",
+      "example": "ssh-cli config import ./hosts-bundle.yaml",
+      "noteZh": "不是简单追加：会替换配置，不修改 secrets.json。目标变化、离开生产或放宽权限按规则确认；凭据需另行准备。",
+      "noteEn": "Replaces configuration rather than appending; secrets.json is unchanged. Target or permission changes can require confirmation. Prepare credentials separately."
+    },
+    "import": {
+      "title": "外部主机清单导入入口",
+      "effect": "group",
+      "example": "ssh-cli import ssh-ops ./inventory.yaml --dry-run"
+    },
+    "import-ssh-ops": {
+      "title": "导入 ssh-ops 风格 YAML / JSON 清单",
+      "effect": "local-write",
+      "example": "ssh-cli import ssh-ops ./inventory.yaml --dry-run",
+      "noteZh": "建议先用 --dry-run 查看计划，再决定是否写入。导入文件与输出都应按凭据配置处理，不在聊天里粘贴密码。",
+      "noteEn": "Preview with --dry-run before writing. Treat inventories and output as credential-related configuration; do not paste passwords into chat."
+    },
+    "keys": {
+      "title": "读取远端 authorized_keys",
+      "effect": "remote-read",
+      "example": "ssh-cli keys -H demo --json",
+      "noteZh": "读取公钥与指纹，不返回私钥。本地服务端信任记录使用 keys known 子命令。",
+      "noteEn": "Reads public keys and fingerprints, not private keys. Use keys known for local server trust records."
+    },
+    "keys-known": {
+      "title": "本地 known_hosts 信任记录入口",
+      "effect": "group",
+      "example": "ssh-cli keys known list --json"
+    },
+    "keys-known-list": {
+      "title": "查看已信任服务端的指纹",
+      "effect": "local-read",
+      "example": "ssh-cli keys known list --json"
+    },
+    "keys-known-remove": {
+      "title": "移除指定服务端的信任记录",
+      "effect": "local-write",
+      "example": "ssh-cli keys known remove '[demo.example]:2222'",
+      "noteZh": "marker 应以列表实际值为准。删除后下一次连接会重新首次信任，不等于验证了新密钥；不要把它当作密钥冲突的自动修复。",
+      "noteEn": "Use the actual stored marker. Removal permits TOFU on the next connection; it does not verify the replacement key or automatically fix a mismatch."
+    },
+    "session": {
+      "title": "单进程持久 shell 入口",
+      "effect": "group",
+      "example": "ssh-cli session run -H demo --command uptime --command 'df -h /'",
+      "noteZh": "进程结束会关闭会话。不同 CLI 进程与网页 UI 不是同一个会话池。",
+      "noteEn": "Sessions close with their process. Separate CLI processes and the web UI do not share this pool."
+    },
+    "session-run": {
+      "title": "在一个 shell 内顺序执行多条命令",
+      "effect": "mixed",
+      "example": "ssh-cli session run -H demo --command uptime --command 'df -h /'",
+      "noteZh": "可重复 --command，共用一个 shell，执行完关闭。空闲默认 5m、最长默认 60m；最大时限不会回滚已发生的变更。",
+      "noteEn": "Repeat --command to share one shell, closed afterward. Defaults: 5m idle and 60m maximum lifetime. Deadlines do not undo changes."
+    },
+    "session-list": {
+      "title": "查看当前进程的会话列表",
+      "effect": "local-read",
+      "example": "ssh-cli session list",
+      "noteZh": "独立执行通常没有会话，不能查看 ssh-cli ui 的会话。需要连续执行时用 session run。",
+      "noteEn": "A separate invocation normally has no sessions and cannot inspect UI sessions. Use session run for sequential commands."
+    },
+    "session-open": {
+      "title": "会话打开接口（独立调用不可用）",
+      "effect": "process-only",
+      "example": "ssh-cli session open --help",
+      "noteZh": "v0.7.31 的独立 CLI 调用会返回 250，提示需要长运行进程。实际使用 session run 或网页 UI，不把这个入口当作后台连接服务。",
+      "noteEn": "Standalone invocation exits 250 in v0.7.31. Use session run or the web UI; this entry does not start a background connection service."
+    },
+    "session-close": {
+      "title": "会话关闭接口（独立调用不可用）",
+      "effect": "process-only",
+      "example": "ssh-cli session close --help",
+      "noteZh": "v0.7.31 的独立 CLI 调用会返回 250，不能跨进程关闭 UI 会话。使用对应长运行进程或网页中的关闭操作。",
+      "noteEn": "Standalone invocation exits 250 and cannot close UI sessions across processes. Close within the owning process or UI."
+    },
+    "daemon": {
+      "title": "可选的本机 exec 连接复用入口",
+      "effect": "group",
+      "example": "ssh-cli daemon serve --help"
+    },
+    "daemon-serve": {
+      "title": "前台启动本机连接复用服务",
+      "effect": "local-server",
+      "example": "ssh-cli daemon serve",
+      "noteZh": "需显式启动，再用 exec --daemon。不会自动启动、失败回退或重试；不接受需要确认的命令、stdin 脚本或文件传输。",
+      "noteEn": "Start explicitly, then use exec --daemon. No auto-start, fallback or retry; confirmation-required commands, stdin scripts and transfers are unsupported."
+    },
+    "elevate": {
+      "title": "人工确认的单命令破窗操作",
+      "effect": "human",
+      "example": "ssh-cli elevate demo-prod --ttl 5m --reason 'approved maintenance' -- systemctl restart nginx",
+      "noteZh": "仅人工 TTY，默认未配置启用；Agent 不应代为调用或开启。限定单主机、单命令和 TTL，不提供变更回滚，也不保证停止远端后台进程。",
+      "noteEn": "Human TTY only, disabled until configured. Agents must not invoke or enable it unattended. One host/command with TTL; no rollback or guarantee of stopping detached processes."
+    },
+    "elevate-configure": {
+      "title": "人工配置环境破窗开关与最长 TTL",
+      "effect": "human",
+      "example": "ssh-cli elevate configure prod --max-ttl 15m",
+      "noteZh": "需要输入 break-glass:<env> 确认短语。修改权限入口不属于普通 Agent 运维授权。",
+      "noteEn": "Requires the break-glass:<env> phrase. Configuring this permission path is not ordinary unattended agent authorization."
+    },
+    "update": {
+      "title": "检查或安装 GitHub 发布包",
+      "effect": "local-update",
+      "example": "ssh-cli update --check",
+      "noteZh": "--check 只查询。实际 update 会替换本地二进制；非 TTY 下可直接安装，因此先确认调用意图。默认要求校验和，不自动后台更新。",
+      "noteEn": "--check only queries. update replaces the local binary and may install noninteractively. Checksums are required by default; no background updates."
+    },
+    "version": {
+      "title": "显示当前版本、提交和构建信息",
+      "effect": "local-read",
+      "example": "ssh-cli version --json"
+    },
+    "help": {
+      "title": "查看指定命令的帮助",
+      "effect": "local-read",
+      "example": "ssh-cli help exec"
+    },
+    "completion": {
+      "title": "Shell 补全脚本入口",
+      "effect": "group",
+      "example": "ssh-cli completion --help",
+      "noteZh": "该入口被根帮助隐藏，但确实可用。生成脚本后由用户按各 shell 的方式加载；网页不会代为修改 shell 配置。",
+      "noteEn": "Hidden from root help but available. Load generated scripts using the shell's documented setup; this page does not modify shell profiles."
+    },
+    "completion-bash": {
+      "title": "生成 Bash 补全脚本",
+      "effect": "local-output",
+      "example": "ssh-cli completion bash",
+      "noteZh": "默认只输出脚本。保存文件或 source 会改变后续 shell 体验，应按当前 shell 配置。",
+      "noteEn": "Prints a script. Saving or sourcing it is a separate shell setup step."
+    },
+    "completion-fish": {
+      "title": "生成 Fish 补全脚本",
+      "effect": "local-output",
+      "example": "ssh-cli completion fish"
+    },
+    "completion-powershell": {
+      "title": "生成 PowerShell 补全脚本",
+      "effect": "local-output",
+      "example": "ssh-cli completion powershell"
+    },
+    "completion-zsh": {
+      "title": "生成 Zsh 补全脚本",
+      "effect": "local-output",
+      "example": "ssh-cli completion zsh"
+    }
+  }
+}

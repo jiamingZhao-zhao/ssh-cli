@@ -1,0 +1,11 @@
+[
+  {
+    "date": "2026-10-21",
+    "macrostructure": "Workbench",
+    "theme": "Cobalt",
+    "enrichment": "interactive command examples",
+    "nav": "N13",
+    "footer": "Ft2",
+    "brief": "ssh-cli v0.7.31：Agent CLI 优先，六种任务的实际调用对比，随后介绍策略示例与人工工作台"
+  }
+]

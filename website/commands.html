@@ -1,0 +1,52 @@
+<!doctype html>
+<html lang="zh-CN" class="no-js">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta name="description" content="ssh-cli 命令参考：搜索命令、参数和用途，按功能筛选，查看语法、示例、操作影响与 v0.7.31 原始帮助。">
+  <title>命令参考 · ssh-cli</title>
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="tokens.css">
+  <link rel="stylesheet" href="styles.css">
+  <link rel="stylesheet" href="commands.css">
+  <script src="command-data.js" defer></script>
+  <script src="commands.js" defer></script>
+</head>
+<body class="reference-page">
+  <a class="skip-link" href="#command-detail" data-copy="skip">跳到命令详情</a>
+  <header class="topbar"><div class="container topbar-inner">
+    <a class="wordmark" href="index.html"><span class="brand-mark" aria-hidden="true">&gt;_</span>ssh-cli</a>
+    <nav class="reference-nav" aria-label="主导航" data-label="nav"><a href="index.html" data-copy="home">产品介绍</a><a href="commands.html" aria-current="page" data-copy="reference">命令参考</a><a href="index.html#install" data-copy="install">安装</a></nav>
+    <div class="header-actions"><span class="reference-version">v0.7.31</span><button type="button" id="language" class="language-button" aria-label="Switch to English">EN</button><a href="https://github.com/jiamingZhao-zhao/ssh-cli" class="reference-source">GitHub ↗</a></div>
+  </div></header>
+  <main class="container reference-main" id="main">
+    <div class="reference-heading"><div><h1 data-copy="title">命令参考</h1><p data-copy="intro">按命令名、用途或参数查找。先看示例和操作影响，再按需展开参数与原始帮助。</p></div><p class="reference-provenance"><span id="command-total">72</span><span data-copy="entries">个入口，含命令组与 Shell 补全</span><a href="https://github.com/jiamingZhao-zhao/ssh-cli/releases/tag/v0.7.31" data-copy="source">此版本更新记录 ↗</a></p></div>
+    <div class="reference-layout">
+      <aside class="reference-sidebar" aria-label="查找命令" data-label="browse">
+        <div class="reference-search"><label for="command-query" data-copy="searchLabel">搜索命令或参数</label><div class="query-field"><input type="search" id="command-query" autocomplete="off" spellcheck="false" placeholder="如：上传、exec、--agent-key" data-placeholder="searchPlaceholder"><button type="button" id="clear-query" aria-label="清空搜索" data-label="clear">×</button></div></div>
+        <div class="reference-filters"><div><label for="command-category" data-copy="category">功能分类</label><select id="command-category"></select></div><div><label for="command-effect" data-copy="effect">操作影响</label><select id="command-effect"></select></div></div>
+        <div class="reference-shortcuts"><span data-copy="common">常用</span><button type="button" data-command="exec">exec</button><button type="button" data-command="upload">upload</button><button type="button" data-command="policy-show">policy show</button></div>
+        <details class="command-results-disclosure" id="command-results-disclosure" open><summary><span data-copy="choose">选择命令</span><span id="command-match-count" role="status" aria-live="polite"></span></summary><div id="command-results" class="command-results"></div><div class="command-pager"><button type="button" id="previous-page" data-copy="previous">上一页</button><span id="page-state"></span><button type="button" id="next-page" data-copy="next">下一页</button></div></details>
+        <p class="reference-search-hint" data-copy="searchHint">/ 或 Ctrl / ⌘ K 搜索；↑ ↓ 选择，Enter 打开。</p>
+      </aside>
+      <article class="command-detail" id="command-detail" aria-labelledby="command-title" tabindex="-1">
+        <p class="command-breadcrumb"><a href="#root" id="command-parent" data-copy="allCommands">全部命令</a><span id="command-category-label"></span></p>
+        <div class="command-title-row"><h2 id="command-title">ssh-cli exec</h2><span class="command-impact" id="command-impact"></span></div>
+        <p class="command-purpose" id="command-purpose">执行远端命令或脚本</p>
+        <div class="command-usage"><span data-copy="syntax">语法</span><pre><code id="command-usage">ssh-cli exec [--] &lt;command&gt; [flags]</code></pre></div>
+        <div class="command-cautions" id="command-cautions"></div>
+        <section class="command-example"><div class="command-subheading"><h3 data-copy="example">调用示例</h3><button type="button" class="copy-button" id="copy-command" data-copy="copy">复制示例</button></div><pre><code id="command-example">ssh-cli exec -H demo --json -- df -h /</code></pre><p class="copy-status" id="command-copy-status" role="status"></p><textarea id="command-copy-manual" class="manual-copy" readonly hidden aria-label="手动复制示例" data-label="manualCopy"></textarea><p class="example-caption" data-copy="exampleNote">只复制，不自动执行。demo、文件路径和配置名称需替换为你实际登记的值。</p></section>
+        <section id="command-children-section" class="command-children-section"><h3 data-copy="subcommands">子命令</h3><div id="command-children" class="command-children"></div></section>
+        <details class="reference-disclosure" id="local-flags-disclosure"><summary><span data-copy="parameters">本命令参数</span><span id="local-flag-count"></span></summary><p class="parameter-note" data-copy="parameterNote">类型与说明直接来自该版本 --help；默认值和可重复选项保留在原文中。</p><div id="command-flags" class="flag-list"></div></details>
+        <details class="reference-disclosure"><summary><span data-copy="globalParameters">可用的通用参数</span><span id="global-flag-count"></span></summary><p class="parameter-note" data-copy="globalNote">只列出此命令实际继承的参数；本地同名参数优先。--json、--daemon 等仍受具体命令支持范围限制。</p><div id="command-global-flags" class="flag-list"></div></details>
+        <details class="reference-disclosure"><summary data-copy="rawHelp">CLI 原始帮助（英文）</summary><pre class="raw-command-help" id="command-raw-help" tabindex="0"></pre></details>
+        <p class="command-help-invocation"><span data-copy="installedHelp">查看你当前安装版本的帮助：</span><code id="command-help-call">ssh-cli exec --help</code></p>
+        <div class="command-detail-footer"><button type="button" class="copy-button" id="copy-command-link" data-copy="copyLink">复制此命令链接</button><p class="copy-status" id="command-link-status" role="status"></p><textarea id="command-link-manual" class="manual-copy" readonly hidden aria-label="手动复制命令链接" data-label="manualLink"></textarea></div>
+      </article>
+    </div>
+    <noscript><p class="no-script">命令搜索需要 JavaScript。也可在本地运行 <code>ssh-cli --help</code> 或阅读<a href="https://github.com/jiamingZhao-zhao/ssh-cli/blob/main/docs/usage.md">完整使用参考</a>。Search needs JavaScript; use CLI --help or the linked reference.</p></noscript>
+  </main>
+  <footer class="footer container"><a class="wordmark" href="index.html">ssh-cli<span class="footer-version">v0.7.31</span></a><p data-copy="footer">命令与参数来自实际 CLI；中文用途与注意事项另行整理。</p><div><a href="index.html" data-copy="home">产品介绍</a><a href="https://github.com/jiamingZhao-zhao/ssh-cli/blob/main/docs/usage.md" data-copy="usage">使用参考 ↗</a></div></footer>
+</body>
+</html>
