@@ -107,11 +107,11 @@ func nonInteractiveYesOK(cmd *cobra.Command) bool {
 var openConfirmTTY = defaultOpenConfirmTTY
 
 func defaultOpenConfirmTTY() (io.ReadWriteCloser, error) {
-	return os.OpenFile(devTTY(), os.O_RDWR, 0)
+	return openTTY()
 }
 
 // confirmRelease gates an install. An interactive TTY must type the release
-// version unless --yes is set. No TTY (Windows cmd, PowerShell, agent shells)
+// version unless --yes is set. No TTY (for example a detached agent shell)
 // means the caller already asked to update, so the install proceeds and --yes
 // is a no-op.
 func confirmRelease(latest string, yes bool) error {

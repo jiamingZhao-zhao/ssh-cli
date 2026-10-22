@@ -95,6 +95,15 @@ func (a *App) plan(cfg *config.Config, hosts []config.ResolvedHost, meta auditMe
 				continue
 			}
 			msg := fmt.Sprintf("host %s requires confirmation on an interactive TTY", p.host.Alias)
+			var reasons []string
+			for _, finding := range p.dec.Findings {
+				if finding.Kind == "confirm" {
+					reasons = append(reasons, finding.Layer+": "+finding.Detail)
+				}
+			}
+			if len(reasons) > 0 {
+				msg += ": " + strings.Join(reasons, "; ")
+			}
 			a.logDenial(meta, p.host, &p.dec, msg)
 			if confirmErr == nil {
 				confirmErr = exitcode.New(exitcode.Denied, "%s", msg)

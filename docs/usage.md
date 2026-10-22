@@ -104,7 +104,11 @@ ssh-cli policy dangerous set --enable --rule rm-root
 
 `ssh-cli policy show -H main` 只读本机 `hosts.yaml`，不连接、不执行。它列出确认门槛（`confirm`）、受保护路径、能力开关，以及环境规则：`maxMode`、`defaultPolicy`、`noDataOutflow`、`breakGlass`。`dangerousCommands` 把建议清单和当前环境真正生效的规则分开：`catalog` 始终在，`enforcedHere` / `active` 才是会拦截的部分。`policy explain` 里 kind 为 `catalog` 的行表示命中了建议规则但没有拦截。`--json` 的 `envRules` 和 `equivalence` 是给 Agent 用的。有 `equivalence` 行时，表示某条 confirm/deny 还会挡住等价操作，例如配置了 `docker restart` 时，`docker stop`、`docker start`、`docker kill` 同样要确认。`docker container restart` 与 `docker restart` 相同。`systemctl restart` 和 `apps.sh restart` 同样覆盖 `stop` 和 `start`。只配置了 `docker stop` 时，会连带 `restart` 和 `kill`，不会连带单独的 `start`。
 
-`./script.sh`、`/path/file.sh`、`sh script.sh`、`source script.sh` 和 `. script.sh` 都是看不到正文的脚本，standard 需要确认，readonly 拒绝。把脚本正文贴进 `sh -c` 会按里面的每条命令检查，不能用来绕过其中已经被拦住的命令。没有 `.sh` 后缀、也没有用 `sh` / `source` 拉起的可执行文件（例如 `./deploy`）不在这组规则里。`docker compose` 也不在这组规则里。
+`bash /data/web/dc/wms.sh restart`、`./script.sh`、`sh script.sh`、`source script.sh` 和 `. script.sh` 的路径、参数都是明确字面量时，standard / admin 按普通命令检查，不再仅因脚本正文不可见而要求确认；显式配置的 allow、deny、confirm 仍然生效，readonly 仍拒绝运行这类脚本。工具检查的是调用参数，不读取或验证远端脚本正文，脚本内部操作不会逐条检查。脚本路径、参数包含变量或调用方式无法解析时，standard 仍要求确认。`sh -c '正文'` 仍会展开正文逐条检查。
+
+`dev`、`test` 是环境，`standard`、`admin` 是执行模式，两者不是固定绑定。内置 `dev` 的 maxMode 是 admin，但 defaultPolicy 仍为 standard；`test` 的 maxMode 和 defaultPolicy 都为 standard。最终取环境、分组、主机的限制交集，开发主机使用 admin 不会改变测试主机的权限。standard 仍对 `systemctl restart` 等内置规则要求确认，并拒绝 `docker system prune -a`；admin 没有这两组内置规则，但仍受显式配置的规则限制。
+
+需要跳过可交互终端中的确认时，把 `--yes` 放在 `--` 之前：`ssh-cli exec -H main --yes -- bash /opt/app/deploy.sh restart`。`--` 之后都是远端命令参数。Windows CMD、PowerShell 和 Windows Terminal 的确认和密码提示使用控制台输入、输出设备；没有附加控制台的后台调用仍不能用 `--yes` 绕过确认。
 
 `podman` 只有在策略写了 `podman` 时才套用同一套生命周期规则，不会因为写了 `docker` 就挡住 `podman`。
 

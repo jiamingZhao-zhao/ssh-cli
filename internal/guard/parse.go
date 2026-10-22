@@ -22,7 +22,8 @@ func (a Arg) String() string {
 }
 
 type command struct {
-	args []Arg
+	args       []Arg
+	scriptFile bool // A literal invocation is inspectable; the remote file body is not.
 }
 
 type parsed struct {
@@ -44,6 +45,7 @@ const (
 	unwrapOK unwrapKind = iota
 	unwrapDynamic
 	unwrapUnresolved
+	unwrapScriptFile
 )
 
 var shellNames = map[string]bool{
@@ -298,20 +300,30 @@ func (p *parsed) call(call *syntax.CallExpr) {
 		case unwrapDynamic:
 			p.noteDynamic(swhy)
 			return
+		case unwrapScriptFile:
+			p.addScriptFile(rest)
+			return
 		}
 		p.feed(script)
 		return
 	}
 	if rest[0].Static && (rest[0].Value == "source" || rest[0].Value == ".") && proc {
 		p.noteObfuscated("source of a process substitution")
-	} else if why, ok := uninspectedScript(rest); ok {
-		// A path ending in .sh, or source of a file, is the same class as
-		// `sh script.sh`: the file body is not visible, so inlining that body
-		// is checked as commands and running the file is not a bypass.
-		p.noteDynamic(why)
+	} else if _, ok := uninspectedScript(rest); ok {
+		p.addScriptFile(rest)
 		return
 	}
 	p.commands = append(p.commands, command{args: rest})
+}
+
+func (p *parsed) addScriptFile(args []Arg) {
+	for _, arg := range args {
+		if !arg.Static {
+			p.noteDynamic("shell script path or arguments are not static literals")
+			break
+		}
+	}
+	p.commands = append(p.commands, command{args: args, scriptFile: true})
 }
 
 // uninspectedScript reports commands whose body lives in a file this process
@@ -1187,7 +1199,19 @@ func shellScript(args []Arg) (script string, isShell bool, kind unwrapKind, why 
 				return "", true, unwrapDynamic, "shell invocation whose script is not a static literal"
 			}
 			return args[i+1].Value, true, unwrapOK, ""
+		case "--":
+			if i+1 < len(args) && args[i+1].Static && args[i+1].Value != "" && args[i+1].Value != "-" {
+				return "", true, unwrapScriptFile, ""
+			}
+			return "", true, unwrapDynamic, "shell invocation reads its script from stdin or a dynamic path"
+		case "-e", "-u", "-x", "-v", "-n", "-f", "-l", "--noprofile", "--norc":
+			continue
 		}
+		v := args[i].Value
+		if v != "" && v != "-" && !strings.HasPrefix(v, "-") && !strings.HasPrefix(v, "+") {
+			return "", true, unwrapScriptFile, ""
+		}
+		return "", true, unwrapDynamic, "shell invocation has unsupported options or reads its script from stdin"
 	}
 	return "", true, unwrapDynamic, "shell invocation whose script is not a static literal"
 }

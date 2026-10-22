@@ -49,12 +49,12 @@ type App struct {
 var ttyCheck = defaultTTY
 
 func defaultTTY() bool {
-	f, err := os.OpenFile(devTTY(), os.O_RDWR, 0)
+	f, err := openTTY()
 	if err != nil {
 		return false
 	}
 	defer f.Close()
-	return term.IsTerminal(int(f.Fd()))
+	return term.IsTerminal(int(f.in.Fd())) && term.IsTerminal(int(f.out.Fd()))
 }
 
 // Execute runs ssh-cli and returns a process status.
