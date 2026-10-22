@@ -23,6 +23,7 @@ let suppressRange = false;
 const promptQueue = [];
 let promptResolve = null;
 let dialogReturnFocus = null;
+let hostPickerResize = null;
 
 function operationID() {
   return Array.from(crypto.getRandomValues(new Uint8Array(16)), (n) => n.toString(16).padStart(2, "0")).join("");
@@ -423,6 +424,11 @@ function sshui() {
     theme: "light",
     density: "comfortable",
     catalog: { envs: [], groups: [], hosts: [], policies: [] },
+    catalogLoading: false,
+    hostFilter: { env: [], group: [] },
+    termFilter: { env: [], group: [], query: "" },
+    hostPickerOpen: false,
+    hostPickerLimit: 40,
     known: [],
     sessions: [],
     dash: { hosts: 0, groups: 0, envs: 0, sessions: 0, recent: [], failures: [], audit: {}, hmac: {} },
@@ -611,6 +617,10 @@ function sshui() {
       });
       window.addEventListener("resize", () => {
         if (this.view === "terminal") this.fitActive();
+        if (this.hostPickerOpen) this.positionHostPicker();
+      });
+      if (window.visualViewport) window.visualViewport.addEventListener("resize", () => {
+        if (this.hostPickerOpen) this.positionHostPicker();
       });
       document.addEventListener("visibilitychange", () => {
         if (document.hidden && this._endSplit) this._endSplit();
@@ -753,6 +763,7 @@ function sshui() {
       if (this._endSplit) this._endSplit();
       const parsed = this.readHash(name);
       const view = this.viewAlias[parsed.view] || "home";
+      if (this.hostPickerOpen && view !== "terminal") this.closeHostPicker();
       if (view === "host" && parsed.arg) this.currentHost = parsed.arg;
       this.view = view;
       this.navOpen = false;
@@ -986,12 +997,14 @@ function sshui() {
 
     async loadCatalog() {
       this.setError("hosts", "");
+      this.catalogLoading = true;
       try {
         this.catalog = await this.readJSON(await this.api("/api/catalog"));
         if (!this.catalog.hosts) this.catalog.hosts = [];
         if (!this.catalog.groups) this.catalog.groups = [];
         if (!this.catalog.envs) this.catalog.envs = [];
         if (!this.catalog.policies) this.catalog.policies = [];
+        this.reconcileHostFilters();
         this.syncTagDrafts();
         if (!this.exec.alias && this.catalog.hosts.length) this.exec.alias = this.catalog.hosts[0].alias;
         if (!this.termAlias && this.catalog.hosts.length) this.termAlias = this.catalog.hosts[0].alias;
@@ -1000,9 +1013,10 @@ function sshui() {
           this.relay.to = this.catalog.hosts[0].alias;
         }
         this.clampAll();
+        if (this.hostPickerOpen) this.$nextTick(() => this.positionHostPicker());
       } catch (err) {
         this.setError("hosts", err.message);
-      }
+      } finally { this.catalogLoading = false; }
     },
 
     async loadKnown() {
@@ -4276,10 +4290,11 @@ function sshui() {
     },
 
     anyDialog() {
-      return Object.values(this.dialog).some(Boolean);
+      return this.hostPickerOpen || Object.values(this.dialog).some(Boolean);
     },
 
     openDialog(name) {
+      if (this.hostPickerOpen) this.closeHostPicker();
       if (!this.anyDialog()) dialogReturnFocus = document.activeElement;
       this.dialog[name] = true;
       document.body.classList.add("overflow-hidden");
@@ -4296,6 +4311,10 @@ function sshui() {
     },
 
     dialogKey(ev) {
+      if (this.hostPickerOpen) {
+        if (ev.key === "Escape") { ev.preventDefault(); this.closeHostPicker(); }
+        return; // The native dialog manages its own Tab cycle.
+      }
       if (ev.key === "Escape") { ev.preventDefault(); this.closeDialogs(); return; }
       if (ev.key !== "Tab") return;
       const modal = this.activeDialog();
@@ -4347,6 +4366,7 @@ function sshui() {
     },
 
     closeDialogs() {
+      if (this.hostPickerOpen) { this.closeHostPicker(); return; }
       if (this.dialog.confirm) { this.answerPrompt(false); return; }
       Object.keys(this.dialog).forEach((key) => { this.dialog[key] = false; });
       this.restoreDialogFocus();
@@ -4354,6 +4374,154 @@ function sshui() {
 
     sortedHosts() {
       return (this.catalog.hosts || []).slice().sort((a, b) => String(a.alias).localeCompare(String(b.alias)));
+    },
+
+    hostFilterState(scope) { return scope === "terminal" ? this.termFilter : this.hostFilter; },
+
+    hostMatches(h, scope, except) {
+      const f = this.hostFilterState(scope);
+      if (except !== "env" && f.env.length && !f.env.includes(h.env)) return false;
+      if (except !== "group" && f.group.length && !f.group.includes(h.group)) return false;
+      const q = String(scope === "terminal" ? f.query : this.q.hosts).trim().toLowerCase();
+      if (!q) return true;
+      const group = this.groupByName(h.group), env = (this.catalog.envs || []).find(e => e.name === h.env);
+      return [h.alias, h.group, group && group.label, h.env, env && env.label, h.host, h.user, h.via, (h.tags || []).join(" ")].join(" ").toLowerCase().includes(q);
+    },
+
+    hostFacetOptions(scope, kind) {
+      const counts = Object.create(null), available = Object.create(null);
+      for (const h of this.catalog.hosts || []) {
+        available[h[kind]] = true;
+        if (this.hostMatches(h, scope, kind)) counts[h[kind]] = (counts[h[kind]] || 0) + 1;
+      }
+      const items = kind === "env" ? this.sortedEnvs() : this.sortedGroups();
+      const order = ["dev", "test", "preprod", "prod"];
+      if (kind === "env") items.sort((a, b) => {
+        const ai = order.indexOf(a.name), bi = order.indexOf(b.name);
+        return (ai < 0 ? 4 : ai) - (bi < 0 ? 4 : bi) || a.name.localeCompare(b.name);
+      });
+      return items.map(item => ({ value: item.name, label: item.label ? item.label + (kind === "env" && order.includes(item.name) ? "" : " · " + item.name) : item.name, title: item.label ? item.label + " · " + item.name : item.name, count: counts[item.name] || 0, available: !!available[item.name] }));
+    },
+
+    toggleHostFilter(scope, kind, value) {
+      if (kind !== "env" && kind !== "group") return;
+      const f = this.hostFilterState(scope);
+      f[kind] = !value ? [] : f[kind].includes(value) ? f[kind].filter(v => v !== value) : f[kind].concat(value);
+      if (scope === "terminal") this.hostPickerFilterChanged();
+      else { this.pickAll = false; this.resetPage("hosts"); }
+    },
+
+    clearHostFilters(scope) {
+      const f = this.hostFilterState(scope); f.env = []; f.group = [];
+      if (scope === "terminal") { f.query = ""; this.hostPickerFilterChanged(); }
+      else { this.q.hosts = ""; this.pickAll = false; this.resetPage("hosts"); }
+    },
+
+    reconcileHostFilters() {
+      for (const scope of ["hosts", "terminal"]) for (const kind of ["env", "group"]) {
+        const names = new Set((this.catalog[kind === "env" ? "envs" : "groups"] || []).map(x => x.name));
+        const f = this.hostFilterState(scope); f[kind] = f[kind].filter(value => names.has(value));
+      }
+    },
+
+    hostSelectionSummary() {
+      const selected = this.selectedAliases(), visible = new Set(this.matchHosts().map(h => h.alias));
+      const hidden = selected.filter(alias => !visible.has(alias)).length;
+      return "已选 " + selected.length + " 台" + (hidden ? "，其中 " + hidden + " 台不在当前筛选中" : "");
+    },
+
+    terminalHostCaption() {
+      const host = this.hostByAlias(this.termAlias);
+      return host ? [host.env, this.groupCaption(this.groupByName(host.group)) || host.group].join(" · ") : "按环境、分组查找";
+    },
+
+    terminalHostMatches() { return this.sortedHosts().filter(h => this.hostMatches(h, "terminal")); },
+    terminalHostChoices() { return this.terminalHostMatches().slice(0, this.hostPickerLimit); },
+
+    hostPickerFilterChanged() {
+      this.hostPickerLimit = 40;
+      if (this.hostPickerOpen) this.$nextTick(() => this.positionHostPicker());
+    },
+
+    openHostPicker() {
+      const dialog = document.getElementById("terminal-host-picker");
+      if (!dialog || typeof dialog.showModal !== "function") { this.show("hosts"); return; }
+      this.hostPickerLimit = 40; this.hostPickerOpen = true;
+      if (!dialog.open) dialog.showModal();
+      if (typeof ResizeObserver !== "undefined" && !hostPickerResize) {
+        hostPickerResize = new ResizeObserver(() => { if (this.hostPickerOpen) this.positionHostPicker(); });
+        hostPickerResize.observe(dialog);
+      }
+      this.$nextTick(() => {
+        if (!this.hostPickerOpen || !dialog.open) return;
+        this.positionHostPicker();
+        const input = document.getElementById("terminal-host-search");
+        if (input) input.focus();
+      });
+    },
+
+    closeHostPicker() {
+      const dialog = document.getElementById("terminal-host-picker");
+      if (dialog && dialog.open) dialog.close();
+      this.hostPickerClosed();
+      const trigger = document.getElementById("terminal-host-choice");
+      if (trigger && this.view === "terminal" && trigger.getClientRects().length) trigger.focus({ preventScroll: true });
+    },
+
+    hostPickerClosed() {
+      const dialog = document.getElementById("terminal-host-picker");
+      if (dialog && dialog.open) return; // Ignore an older close event after a rapid reopen.
+      this.hostPickerOpen = false;
+      if (hostPickerResize) { hostPickerResize.disconnect(); hostPickerResize = null; }
+    },
+
+    positionHostPicker() {
+      const dialog = document.getElementById("terminal-host-picker"), trigger = document.getElementById("terminal-host-choice");
+      if (!dialog || !dialog.open || !trigger) return;
+      const viewport = window.visualViewport, width = viewport ? viewport.width : window.innerWidth, height = viewport ? viewport.height : window.innerHeight;
+      const x = viewport ? viewport.offsetLeft : 0, y = viewport ? viewport.offsetTop : 0;
+      dialog.style.width = Math.max(0, Math.min(520, width - 24)) + "px";
+      dialog.style.maxHeight = Math.max(0, height - 24) + "px";
+      const anchor = trigger.getBoundingClientRect(), box = dialog.getBoundingClientRect();
+      dialog.style.left = (x + Math.max(12, Math.min(anchor.right - x - box.width, width - box.width - 12))) + "px";
+      dialog.style.top = (y + Math.max(12, Math.min(anchor.bottom - y + 6, height - box.height - 12))) + "px";
+    },
+
+    hostPickerBackdrop(ev) {
+      if (ev.target !== ev.currentTarget) return;
+      const r = ev.currentTarget.getBoundingClientRect();
+      if (ev.clientX < r.left || ev.clientX > r.right || ev.clientY < r.top || ev.clientY > r.bottom) this.closeHostPicker();
+    },
+
+    chooseTerminalHost(alias) {
+      if (!this.terminalHostMatches().some(h => h.alias === alias)) return;
+      this.termAlias = alias; this.onTermHost(); this.closeHostPicker();
+    },
+
+    moreTerminalHosts() {
+      const previous = this.hostPickerLimit; this.hostPickerLimit += 40;
+      this.$nextTick(() => {
+        this.positionHostPicker();
+        const rows = document.querySelectorAll("#terminal-host-picker .host-choice");
+        if (rows[previous]) rows[previous].focus();
+      });
+    },
+
+    hostPickerKey(ev) {
+      if (ev.isComposing || ev.keyCode === 229 || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+      const search = ev.target && ev.target.id === "terminal-host-search";
+      if (search && ev.key === "Enter") {
+        ev.preventDefault();
+        const matches = this.terminalHostMatches();
+        if (matches.length === 1) { this.chooseTerminalHost(matches[0].alias); return; }
+      } else if (!["ArrowDown", "ArrowUp", "Home", "End"].includes(ev.key) || (search && ev.key !== "ArrowDown")) return;
+      const rows = Array.from(ev.currentTarget.querySelectorAll(".host-choice"));
+      const index = rows.indexOf(ev.target);
+      if (!search && index < 0) return;
+      ev.preventDefault();
+      if (ev.key === "ArrowUp" && index === 0) { document.getElementById("terminal-host-search").focus(); return; }
+      const target = ev.key === "Home" ? 0 : ev.key === "End" ? rows.length - 1 : search ? 0 : Math.max(0, Math.min(rows.length - 1, index + (ev.key === "ArrowUp" ? -1 : 1)));
+      if (rows[target]) rows[target].focus();
     },
 
     sortedGroups() {
@@ -4369,12 +4537,7 @@ function sshui() {
     },
 
     matchHosts() {
-      const q = String(this.q.hosts || "").trim().toLowerCase();
-      return this.sortedHosts().filter((h) => {
-        if (!q) return true;
-        const blob = [h.alias, h.group, h.host, h.user, h.env, h.via || "", (h.tags || []).join(" ")].join(" ").toLowerCase();
-        return blob.indexOf(q) >= 0;
-      });
+      return this.sortedHosts().filter(h => this.hostMatches(h, "hosts"));
     },
 
     filteredHosts() {

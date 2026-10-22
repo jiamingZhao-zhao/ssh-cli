@@ -36,6 +36,108 @@ function fixture() {
   return { app, timers, sandbox };
 }
 
+function hostFilterFixture() {
+  const f = fixture();
+  f.app.catalog = {
+    envs: [{ name: 'dev', label: '开发' }, { name: 'test', label: '测试' }, { name: 'prod', label: '生产' }],
+    groups: [{ name: 'app-test', label: '应用测试' }, { name: 'app-prod', label: '应用生产' }, { name: 'infra', label: '基础设施' }],
+    hosts: [
+      { alias: 'test-a', env: 'test', group: 'app-test', host: '192.0.2.10', user: 'deploy', tags: ['web'] },
+      { alias: 'test-b', env: 'test', group: 'app-test', host: '192.0.2.11', user: 'deploy', tags: ['worker'] },
+      { alias: 'prod-a', env: 'prod', group: 'app-prod', host: '192.0.2.20', user: 'deploy', tags: ['web'] },
+      { alias: 'dev-a', env: 'dev', group: 'infra', host: '192.0.2.30', user: 'root', tags: [] }
+    ]
+  };
+  return f;
+}
+
+test('host facets combine alternatives within each row and intersect environment, group and search', () => {
+  const { app } = hostFilterFixture(); app.pages.hosts.page = 3;
+  app.toggleHostFilter('hosts', 'env', 'test');
+  app.toggleHostFilter('hosts', 'env', 'prod');
+  assert.equal(app.hostTotal(), 3); assert.equal(app.pages.hosts.page, 1);
+  app.toggleHostFilter('hosts', 'group', 'app-prod');
+  assert.deepEqual(Array.from(app.matchHosts(), h => h.alias), ['prod-a']);
+  app.q.hosts = 'WEB'; assert.equal(app.hostTotal(), 1);
+  app.q.hosts = 'worker'; assert.equal(app.hostTotal(), 0);
+  app.clearHostFilters('hosts'); app.q.hosts = '应用生产'; assert.equal(app.hostTotal(), 1);
+  app.q.hosts = '开发'; assert.equal(app.matchHosts()[0].alias, 'dev-a');
+  app.q.hosts = '192.0.2.11'; assert.equal(app.matchHosts()[0].alias, 'test-b');
+  app.clearHostFilters('hosts'); assert.equal(app.hostTotal(), 4);
+});
+
+test('facet counts respect the opposite row and hidden batch selections stay explicit', () => {
+  const { app } = hostFilterFixture(); app.selected = { 'prod-a': true, 'test-a': true };
+  app.toggleHostFilter('hosts', 'env', 'test');
+  assert.match(app.hostSelectionSummary(), /已选 2 台.*1 台不在当前筛选中/);
+  const groups = app.hostFacetOptions('hosts', 'group');
+  assert.equal(groups.find(g => g.value === 'app-test').count, 2);
+  assert.equal(groups.find(g => g.value === 'app-prod').count, 0);
+  assert.equal(groups.find(g => g.value === 'app-prod').available, true);
+  app.toggleHostFilter('hosts', 'group', 'app-prod');
+  assert.equal(app.hostTotal(), 0);
+  assert.equal(app.hostFacetOptions('hosts', 'env').find(e => e.value === 'prod').count, 1);
+  app.toggleHostFilter('hosts', 'group', 'app-prod'); assert.equal(app.hostTotal(), 2);
+  assert.equal(app.selectedAliases().length, 2);
+});
+
+test('terminal filters are independent and choosing a host does not open or switch a running terminal', () => {
+  const { app } = hostFilterFixture(); let closed = 0;
+  app.termAlias = 'prod-a'; app.tabAlias = () => 'prod-a';
+  app.syncWorkspace = () => assert.fail('changed the running workspace');
+  app.mountTerm = () => assert.fail('opened a terminal');
+  app.api = () => assert.fail('connected while selecting');
+  app.closeHostPicker = () => { closed++; };
+  app.toggleHostFilter('hosts', 'env', 'prod');
+  app.toggleHostFilter('terminal', 'env', 'test');
+  assert.equal(app.terminalHostMatches().length, 2); assert.equal(app.hostTotal(), 1);
+  app.chooseTerminalHost('prod-a'); assert.equal(closed, 0);
+  app.chooseTerminalHost('test-a'); assert.equal(app.termAlias, 'test-a'); assert.equal(closed, 1);
+  assert.equal(app.tabAlias(), 'prod-a');
+  app.chooseTerminalHost('removed'); assert.equal(app.termAlias, 'test-a');
+  app.clearHostFilters('terminal'); assert.equal(app.termAlias, 'test-a'); assert.equal(app.hostTotal(), 1);
+});
+
+test('terminal search Enter requires one match, honors IME, and preserves native text navigation', () => {
+  const { app } = hostFilterFixture(); let selected = '', focus = '';
+  app.chooseTerminalHost = alias => { selected = alias; };
+  const rows = [{ focus: () => { focus = 'first'; } }, { focus() {} }];
+  const event = { key: 'Enter', target: { id: 'terminal-host-search' }, currentTarget: { querySelectorAll: () => rows }, preventDefault() {} };
+  app.hostPickerKey(event); assert.equal(selected, ''); assert.equal(focus, 'first');
+  app.termFilter.query = 'prod-a';
+  app.hostPickerKey({ ...event, isComposing: true }); assert.equal(selected, '');
+  app.hostPickerKey({ ...event, keyCode: 229 }); assert.equal(selected, '');
+  app.hostPickerKey(event); assert.equal(selected, 'prod-a');
+  focus = ''; app.hostPickerKey({ ...event, key: 'Home' }); assert.equal(focus, '');
+});
+
+test('host choices render in bounded batches and deleted facets are removed after a catalog refresh', () => {
+  const { app, sandbox } = hostFilterFixture(); let focused = -1;
+  app.catalog.hosts = Array.from({ length: 85 }, (_, i) => ({ alias: 'h' + String(i).padStart(3, '0'), group: 'app-test', env: 'test', tags: [] }));
+  sandbox.document.querySelectorAll = () => Array.from({ length: 85 }, (_, i) => ({ focus: () => { focused = i; } }));
+  app.$nextTick = fn => fn();
+  assert.equal(app.terminalHostChoices().length, 40);
+  app.moreTerminalHosts(); assert.equal(app.terminalHostChoices().length, 80); assert.equal(focused, 40);
+  app.moreTerminalHosts(); assert.equal(app.terminalHostChoices().length, 85); assert.equal(focused, 80);
+  app.hostFilter.env = ['prod', 'removed']; app.termFilter.group = ['app-test', 'removed'];
+  app.reconcileHostFilters();
+  assert.deepEqual(Array.from(app.hostFilter.env), ['prod']); assert.deepEqual(Array.from(app.termFilter.group), ['app-test']);
+  app.clearHostFilters('terminal'); assert.equal(app.hostPickerLimit, 40);
+});
+
+test('host picker releases its resize observer and ignores a stale close event after reopening', () => {
+  const { app, sandbox } = hostFilterFixture(); let observers = 0, disconnected = 0;
+  const dialog = { open: false, showModal() { this.open = true; }, close() { this.open = false; } };
+  sandbox.document.getElementById = id => id === 'terminal-host-picker' ? dialog : null;
+  sandbox.ResizeObserver = class { constructor() { observers++; } observe() {} disconnect() { disconnected++; } };
+  app.$nextTick = () => {}; app.view = 'terminal';
+  app.openHostPicker(); app.openHostPicker(); assert.equal(observers, 1);
+  app.closeHostPicker(); assert.equal(disconnected, 1); assert.equal(app.hostPickerOpen, false);
+  app.openHostPicker(); app.hostPickerClosed();
+  assert.equal(app.hostPickerOpen, true); assert.equal(disconnected, 1);
+  app.closeHostPicker(); assert.equal(disconnected, 2); assert.equal(app.hostPickerOpen, false);
+});
+
 function connected(app) {
   app.view = 'terminal'; app.termAlias = app.explicitAlias = 'a'; app.files.alias = 'a';
   app.startMetrics = () => {};

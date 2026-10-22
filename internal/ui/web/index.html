@@ -307,9 +307,7 @@
                     </div>
                   </div>
                   <div class="btn-list ws-connect-actions">
-                    <select class="form-select w-auto" x-model="termAlias" @change="onTermHost()" :title="termAlias" aria-label="终端主机">
-                      <template x-for="h in sortedHosts()" :key="'term-' + h.alias"><option :value="h.alias" x-text="h.alias"></option></template>
-                    </select>
+                    <button id="terminal-host-choice" class="ws-host-trigger" type="button" @click="openHostPicker()" aria-haspopup="dialog" aria-controls="terminal-host-picker" :aria-expanded="hostPickerOpen" :title="'待连接主机：' + (termAlias || '未选择') + ' · ' + terminalHostCaption()"><span><strong x-text="termAlias || '选择主机'"></strong><small x-text="terminalHostCaption()"></small></span><span aria-hidden="true">⌄</span></button>
                     <button class="btn btn-primary" type="button" :disabled="termOpening || !termAlias" @click="openTerminal(termAlias)" x-text="termOpening ? '连接中…' : '打开终端'" title="交互终端按远端账号权限运行，不逐条检查命令策略；readonly 也可打开">打开终端</button>
                     <button class="btn btn-outline-secondary" type="button" :disabled="!panelAlias() || workspaceLive()" @click="openWorkspaceHost()" :title="'连接当前工作区 ' + panelAlias() + ' 的文件与监控，不创建终端'">连接文件</button>
                     <button class="btn btn-outline-secondary" type="button" :disabled="!panelAlias()" @click="closeWorkspaceHost()" :title="'断开 ' + panelAlias() + ' 的文件连接和全部终端'">断开此主机</button>
@@ -460,6 +458,12 @@
               <div class="card-body border-bottom">
                 <label class="form-label" for="host-search">搜索</label>
                 <input id="host-search" class="form-control" x-model="q.hosts" @input="resetPage('hosts')" placeholder="别名、分组、地址、标签（按 / 聚焦）" autocomplete="off">
+                <div class="host-filters" aria-label="筛选主机">
+                  <div class="host-filter-row" role="group" aria-labelledby="hosts-env-label"><span id="hosts-env-label" class="host-filter-label">环境</span><div class="host-filter-chips"><button type="button" class="host-filter-chip" :aria-pressed="!hostFilter.env.length" @click="toggleHostFilter('hosts', 'env', '')">全部</button><template x-for="e in hostFacetOptions('hosts', 'env')" :key="'host-env-' + e.value"><button type="button" class="host-filter-chip" :aria-pressed="hostFilter.env.includes(e.value)" :disabled="!e.available && !hostFilter.env.includes(e.value)" :title="e.title" @click="toggleHostFilter('hosts', 'env', e.value)"><span x-text="e.label"></span><small x-text="e.count"></small></button></template></div></div>
+                  <div class="host-filter-row" role="group" aria-labelledby="hosts-group-label"><span id="hosts-group-label" class="host-filter-label">分组</span><div class="host-filter-chips"><button type="button" class="host-filter-chip" :aria-pressed="!hostFilter.group.length" @click="toggleHostFilter('hosts', 'group', '')">全部</button><template x-for="g in hostFacetOptions('hosts', 'group')" :key="'host-group-' + g.value"><button type="button" class="host-filter-chip" :aria-pressed="hostFilter.group.includes(g.value)" :disabled="!g.available && !hostFilter.group.includes(g.value)" :title="g.title" @click="toggleHostFilter('hosts', 'group', g.value)"><span x-text="g.label"></span><small x-text="g.count"></small></button></template></div></div>
+                </div>
+                <div class="host-filter-summary"><span role="status" x-text="'匹配 ' + hostTotal() + ' / ' + catalog.hosts.length + ' 台 · 同类可多选，环境和分组一起筛选'"></span><button type="button" class="btn btn-sm btn-ghost-secondary" @click="clearHostFilters('hosts')" x-show="q.hosts || hostFilter.env.length || hostFilter.group.length">清空筛选</button></div>
+                <div class="host-filter-summary" x-show="selectedAliases().length"><span role="status" x-text="hostSelectionSummary()"></span><button type="button" class="btn btn-sm btn-ghost-secondary" @click="selected = {}; pickAll = false">清空选择</button></div>
                 <div class="alert alert-danger mt-3" role="alert" x-show="errors.hosts" x-text="errors.hosts"></div>
               </div>
               <div class="empty" x-show="catalog.hosts.length === 0">
@@ -471,8 +475,8 @@
               <div class="empty" x-show="catalog.hosts.length > 0 && hostTotal() === 0">
                 <div class="empty-ico" aria-hidden="true"></div>
                 <p class="empty-title">没有匹配的主机</p>
-                <p class="empty-subtitle text-secondary">换个关键词，或清空搜索。</p>
-                <div class="empty-action"><button class="btn btn-primary" type="button" @click="q.hosts = ''; resetPage('hosts')">清空搜索</button></div>
+                <p class="empty-subtitle text-secondary">换个关键词，或调整环境、分组筛选。</p>
+                <div class="empty-action"><button class="btn btn-primary" type="button" @click="clearHostFilters('hosts')">清空筛选</button></div>
               </div>
               <div class="table-responsive" x-show="hostTotal() > 0">
                 <table :class="tableClass()">
@@ -1253,7 +1257,7 @@
       </div>
     </div>
 
-    <div class="modal-backdrop fade show" x-show="anyDialog()" @click="closeDialogs()"></div>
+    <div class="modal-backdrop fade show" x-show="anyDialog() && !hostPickerOpen" @click="closeDialogs()"></div>
 
     <div class="modal modal-blur" tabindex="-1" role="dialog" x-show="dialog.host" :class="{ show: dialog.host, 'd-block': dialog.host }">
       <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
@@ -1561,6 +1565,21 @@
         </form>
       </div>
     </div>
+  <dialog id="terminal-host-picker" class="host-picker" aria-labelledby="terminal-host-picker-title" @close="hostPickerClosed()" @cancel.prevent="closeHostPicker()" @click="hostPickerBackdrop($event)" @keydown="hostPickerKey($event)">
+    <div class="host-picker-head"><div><h2 id="terminal-host-picker-title">选择主机</h2><p>先筛选，再选择待连接的主机</p></div><button class="host-picker-close" type="button" @click="closeHostPicker()" aria-label="关闭主机选择">×</button></div>
+    <div class="host-picker-body">
+      <label class="form-label" for="terminal-host-search">搜索主机</label><input id="terminal-host-search" class="form-control" type="search" autocomplete="off" autofocus placeholder="别名、IP、分组、标签" x-model="termFilter.query" @input="hostPickerFilterChanged()">
+      <div class="host-filters">
+        <div class="host-filter-row" role="group" aria-labelledby="terminal-env-label"><span id="terminal-env-label" class="host-filter-label">环境</span><div class="host-filter-chips"><button type="button" class="host-filter-chip" :aria-pressed="!termFilter.env.length" @click="toggleHostFilter('terminal', 'env', '')">全部</button><template x-for="e in hostFacetOptions('terminal', 'env')" :key="'terminal-env-' + e.value"><button type="button" class="host-filter-chip" :aria-pressed="termFilter.env.includes(e.value)" :disabled="!e.available && !termFilter.env.includes(e.value)" :title="e.title" @click="toggleHostFilter('terminal', 'env', e.value)"><span x-text="e.label"></span><small x-text="e.count"></small></button></template></div></div>
+        <div class="host-filter-row" role="group" aria-labelledby="terminal-group-label"><span id="terminal-group-label" class="host-filter-label">分组</span><div class="host-filter-chips"><button type="button" class="host-filter-chip" :aria-pressed="!termFilter.group.length" @click="toggleHostFilter('terminal', 'group', '')">全部</button><template x-for="g in hostFacetOptions('terminal', 'group')" :key="'terminal-group-' + g.value"><button type="button" class="host-filter-chip" :aria-pressed="termFilter.group.includes(g.value)" :disabled="!g.available && !termFilter.group.includes(g.value)" :title="g.title" @click="toggleHostFilter('terminal', 'group', g.value)"><span x-text="g.label"></span><small x-text="g.count"></small></button></template></div></div>
+      </div>
+      <div class="host-filter-summary"><span role="status" x-text="'匹配 ' + terminalHostMatches().length + ' / ' + catalog.hosts.length + ' 台 · 筛选可多选'"></span><button class="btn btn-sm btn-ghost-secondary" type="button" @click="clearHostFilters('terminal')" x-show="termFilter.query || termFilter.env.length || termFilter.group.length">清空筛选</button></div>
+      <p class="host-picker-state" role="status" x-show="catalogLoading">正在更新主机列表…</p><p class="host-picker-error" role="alert" x-show="errors.hosts" x-text="errors.hosts"></p>
+    </div>
+    <ul class="host-choice-list" aria-label="可选主机" :aria-busy="catalogLoading"><template x-for="h in terminalHostChoices()" :key="'host-choice-' + h.alias"><li><button type="button" class="host-choice" :aria-pressed="termAlias === h.alias" @click="chooseTerminalHost(h.alias)" :title="h.alias + ' · ' + h.env + ' · ' + h.user + '@' + h.host + ':' + h.port + ' · ' + (groupCaption(groupByName(h.group)) || h.group)"><span class="host-choice-info"><span class="host-choice-heading"><strong x-text="h.alias"></strong><span class="host-choice-env" x-text="h.env"></span></span><small x-text="h.user + '@' + h.host + ':' + h.port + ' · ' + (groupCaption(groupByName(h.group)) || h.group)"></small></span><span class="host-choice-mark" x-show="termAlias === h.alias">已选</span></button></li></template></ul>
+    <div class="host-picker-empty" x-show="!catalogLoading && !terminalHostMatches().length"><strong x-text="catalog.hosts.length ? '没有匹配的主机' : '还没有主机'"></strong><p x-text="catalog.hosts.length ? '试试其他关键词，或清空筛选。' : '先到主机页添加主机。'"></p><button type="button" class="btn btn-sm btn-outline-primary" x-show="catalog.hosts.length" @click="clearHostFilters('terminal')">清空筛选</button></div>
+    <div class="host-picker-foot"><span x-text="'已显示 ' + terminalHostChoices().length + ' 台'"></span><button type="button" class="btn btn-sm btn-outline-secondary" x-show="terminalHostMatches().length > hostPickerLimit" @click="moreTerminalHosts()">显示更多</button><span class="host-picker-hint">选择不会自动连接或切换已有终端</span></div>
+  </dialog>
   </div>
   <script src="/chart.umd.min.js"></script>
   <script src="/litepicker.js"></script>
