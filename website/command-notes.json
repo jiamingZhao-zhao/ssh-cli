@@ -11,8 +11,8 @@
       "title": "执行远端命令或脚本",
       "effect": "mixed",
       "example": "ssh-cli exec -H demo --json -- df -h /",
-      "noteZh": "命令位于 -- 后；多个 argv 会保留引号语义，单个参数仍按远端 shell 脚本处理。--script / --stdin 读取脚本，--forward-stdin 转发输入，三者不是同一种方式。写操作响应丢失时先核验，不自动重跑。",
-      "noteEn": "Arguments after -- retain argv boundaries; one argument remains a remote shell script. --script / --stdin read scripts; --forward-stdin forwards input. Verify uncertain writes before retrying."
+      "noteZh": "命令位于 -- 后；--yes 等 ssh-cli 参数应放在它之前。0.7.37 起，明确路径和参数的脚本文件调用在 standard/admin 下按普通规则检查，不再仅因正文不可见而要求确认；文件内部操作不会逐条检查。readonly 仍拒绝这类脚本，显式允许、拒绝和确认规则仍生效。写操作响应丢失时先核验，不自动重跑。",
+      "noteEn": "Remote arguments follow --; ssh-cli flags such as --yes belong before it. Since 0.7.37, literal script-file invocations follow normal rules in standard/admin without confirmation solely because their bodies are unavailable. File contents are not checked command by command. readonly still refuses them, and explicit allow/deny/confirm rules apply. Verify uncertain writes before retrying."
     },
     "upload": {
       "title": "上传文件或目录",
@@ -67,8 +67,8 @@
       "title": "启动本机网页工作台",
       "effect": "local-server",
       "example": "ssh-cli ui",
-      "noteZh": "默认监听 127.0.0.1:7788，前台运行，Ctrl-C 停止。standard/admin 的人工终端不逐条检查按键命令；readonly 环境拒绝无限制终端。",
-      "noteEn": "Runs in the foreground at 127.0.0.1:7788 by default. Human terminals in standard/admin do not inspect every keystroke; readonly refuses unrestricted terminals."
+      "noteZh": "默认监听 127.0.0.1:7788，前台运行，Ctrl-C 停止。readonly、standard、admin 均可打开交互终端，按远端账号权限运行，不逐条检查命令；noDataOutflow 仍禁止终端。CLI 执行和文件操作仍受各自策略约束。",
+      "noteEn": "Runs in the foreground at 127.0.0.1:7788. Interactive terminals are available in readonly, standard and admin with remote account privileges, without per-command policy checks. noDataOutflow still refuses them. CLI execution and file operations retain their policy checks."
     },
     "host": {
       "title": "主机配置入口",
@@ -79,22 +79,22 @@
       "title": "登记主机与认证方式",
       "effect": "local-write",
       "example": "ssh-cli host add demo --group app-test --host 192.0.2.10 --user deploy --agent",
-      "noteZh": "需要先有分组。这里的 --host 是地址，不是全局 -H 的别名选择；--agent、--identity 和 --password-stdin 按真实凭据选择，不把口令写到参数里。",
-      "noteEn": "Create the group first. Here --host is the address, unlike global -H selection. Choose the actual authentication method; never put passwords in arguments."
+      "noteZh": "先建立分组。不传 --agent / --identity 时，可在自己的交互终端隐藏输入密码；自动化登记用 --password-stdin，明文 --password 参数会被拒绝。hosts.yaml 只存密码引用，密码以 ChaCha20-Poly1305 加密写入本机 secrets.json，主密钥优先使用系统凭据库。此处 --host 是地址，日常执行用 -H 别名。",
+      "noteEn": "Create the group first. Without --agent or --identity, enter the password in your own terminal with hidden input; setup automation can use --password-stdin. Plaintext --password is rejected. hosts.yaml stores a reference; secrets.json stores ChaCha20-Poly1305 ciphertext, with the master key preferably in the OS credential store. Here --host is an address; routine execution uses -H with an alias."
     },
     "host-edit": {
       "title": "修改单台主机配置",
       "effect": "local-write",
       "example": "ssh-cli host edit demo --tag app --tag nginx",
-      "noteZh": "--tag 替换标签列表；清空使用 --clear-tags。变更地址、用户、认证或跳板可能使会话失效，变更目标或放宽权限可能要求确认。",
-      "noteEn": "--tag replaces the tag list; --clear-tags clears it. Target, identity and jump-host changes may invalidate sessions or require confirmation."
+      "noteZh": "--tag 替换标签列表，--clear-tags 清空。CLI 更新密码使用 --password-stdin，本机网页表单也可修改；密码加密保存，不通过主机列表回显。变更地址、用户、认证或跳板可能使会话失效，目标变更或放宽权限可能要求确认。",
+      "noteEn": "--tag replaces the tag list; --clear-tags clears it. CLI password changes use --password-stdin; the local web form can also update them. Passwords are encrypted and not returned in host listings. Target, identity and jump-host changes can invalidate sessions or require confirmation."
     },
     "host-list": {
       "title": "列出已登记主机",
       "effect": "local-read",
       "example": "ssh-cli host list --json",
-      "noteZh": "先核对别名、分组与环境，再执行远端操作。列表不会显示秘密内容，但仍可能包含地址和用户等配置信息。",
-      "noteEn": "Verify aliases, groups and environments before operating. Secrets are not shown, but addresses and usernames can still be present."
+      "noteZh": "用 --env 读取环境清单，再按返回的 group、tags 筛选；本命令不消费 -H、-g、-t 筛选参数。执行时明确传入核对后的别名。列表不返回已保存的密码原文，但会包含地址、用户名等信息；加密保存不是对同账号程序的凭据隔离。",
+      "noteEn": "Use --env for inventory filtering, then match returned group and tags. This command does not consume -H, -g or -t filters. Pass verified aliases explicitly when executing. Listings omit saved plaintext passwords but include addresses and usernames; encryption at rest does not isolate credentials from programs under the same account."
     },
     "host-remove": {
       "title": "删除主机登记",
@@ -144,7 +144,9 @@
     "env": {
       "title": "环境标签配置入口",
       "effect": "group",
-      "example": "ssh-cli env list --json"
+      "example": "ssh-cli env list --json",
+      "noteZh": "环境标签通过 maxMode 和 defaultPolicy 影响权限。内置 dev 上限为 admin、默认 standard；test 上限和默认都为 standard。各主机独立计算；把分组设为 admin 不能超过环境上限。",
+      "noteEn": "Environment maxMode and defaultPolicy affect access. Builtin dev has an admin ceiling but defaults to standard; test has a standard ceiling and default. Hosts are evaluated separately, and a group admin policy cannot exceed its environment ceiling."
     },
     "env-add": {
       "title": "新增自定义环境",

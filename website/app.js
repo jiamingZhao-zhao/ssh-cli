@@ -5,108 +5,126 @@
   const repo = 'https://github.com/jiamingZhao-zhao/ssh-cli';
   const text = {
     zh: {
+      navRecords: "命令审计", navPerformance: "连接复用", credentialReference: "本机密文保存、配置使用引用，思路参考 ",
+      navCredentials: '凭据安全', credentialEyebrow: '密码与凭据', credentialTitle: "凭据在本机登记，Agent 调用只写别名",
+      credentialLead: "你输入一次密码，ssh-cli 加密保存。日常调用使用主机别名，不用反复把密码贴进对话或命令。",
+      credentialBoundary: '加密保存不等于隔离 Agent。以你的系统账号运行、能访问密钥和凭据的程序，仍可能取得密码。',
+      credentialMore: '保存方式与使用边界 ↓', credentialTabs: '密码使用流程', credentialRegister: '登记一次', credentialUse: '按别名调用', credentialStorage: '怎么保存',
+      credentialConfig: '主机信息和密码引用，不保存密码原文。', credentialCipher: '加密后的密码，认证时由本机进程解密。', credentialKeyLabel: '解密用的主密钥', credentialKey: '优先使用系统凭据库；也支持环境变量和本地密钥文件。',
+      credentialDocs: '查看这一步的用法 ↗', credentialManualCopy: '手动复制示例命令', credentialInert: '流程演示：本页不接收密码，不读取你的配置，也不连接服务器。',
+      credentialDetails: '加密、密钥和日志，分别保护什么？', credentialAtRestTitle: '密码文件', credentialAtRest: '密码使用 ChaCha20-Poly1305 加密并校验完整性。配置只存引用；单独拿到配置或密码密文文件，不能直接读出密码。',
+      credentialMasterTitle: '主密钥', credentialMaster: '依次尝试系统凭据库、SSH_CLI_MASTER_KEY、本地 master.key。系统凭据库不可用而回退到文件时会提示。主密钥与密文同时泄露，仍可被解密；主密钥丢失后，已有密码也可能无法恢复。',
+      credentialRecordsTitle: '使用与记录', credentialRecords: '主机列表不返回已保存的密码原文。审计和历史会尝试脱敏，但不能识别所有秘密；不要把密码写进远端命令或聊天。需要时也可选择私钥或 SSH agent，私钥认证同样是 OpenSSH 已有能力。',
+      labScriptTitle: '明确的脚本调用允许执行', labScriptBody: 'standard 不再仅因远端脚本正文不可见而要求确认。这里只检查调用参数，脚本内部操作不会逐条检查；显式 allow、deny、confirm 仍然生效。',
       resultLabel: "执行结果", proofPolicyHint: "权限与确认",
-      scenarioBenefit: "用起来的效果",
-      scenarioTargets: "选机器",
-      scenarioArguments: "传参数",
-      scenarioUpload: "传文件",
-      scenarioBefore: "只用 ssh / scp",
-      scenarioAfter: "使用 ssh-cli",
-      scenarioAssumptions: "示例按 POSIX shell 书写，请先配好别名与登录方式。页面只展示，不执行。",
-      scenarioFair: "只用 SSH 也可以自己写脚本补齐。这里比较的是 ssh-cli 已经提供了哪些现成步骤。",
-      scenarioLimit: "还有哪些限制",
+
+      confirmDemoTitle: "需要确认时，怎么继续？",
+      confirmDemoNote: "页面演示，不连接服务器，也不向 Agent 发放许可。",
+      confirmDemoLabel: "输入 demo-test，再检查输入",
+      confirmDemoButton: "检查输入",
+      confirmDemoIdle: "真实终端里，输入匹配后才会继续当前命令。输入错误会直接退出。",
+      confirmDemoSuccess: "别名匹配。真实终端会继续执行你刚运行的这一条命令；本页不会执行。",
+      confirmDemoError: "别名不匹配。真实命令会直接退出，不会发送重启命令。",
+      confirmMore: "生产变更与确认边界",
+      confirmProduction: "生产只读不是“输入确认就放行”。确需单次变更时，管理员须事先启用该环境的 break-glass。你在自己的终端运行下面的命令，核对主机、原因和操作后，输入 elevate:demo-prod。它只运行这一条命令，15m 是最长运行时间，不是给 Agent 开放 15 分钟权限；显式禁止规则仍然生效。",
+      confirmTTY: "普通 exec 只在有交互终端时接受 --yes，且要放在 -- 之前。Windows CMD、PowerShell 和 Windows Terminal 均可使用。elevate 仍须手动输入确认。能控制交互终端的程序也可能完成输入；终端检查不是身份验证。",
+      confirmLink: "查看单次提权用法 ↗",
+      labConfirmation: "查看具体确认步骤 ↗",
       scenarioDocs: "查看命令参数 ↗",
-      scenarioSelect: "选择对比场景",
-      comparisonNotes: "对比范围与共同前提",
-      skip: '跳到内容', mainNav: '主导航', navWorkbench: "网页工作台", navAgent: "Agent 对比", navCommands: '命令参考', searchOpen: '搜索功能与命令', search: '搜索', start: '开始使用',
-      release: "面向 Agent 的 SSH CLI", heroLine1: "给 Agent 用的", heroLine2: "SSH 命令行工具",
-      heroLead: "常用的选机器、规则检查、结果整理和文件上传，都有现成命令。Agent 用同一套方式处理不同机器；你需要查看或接手时，打开本机网页工作台。",
-      heroStart: "安装 CLI", heroTour: "看调用对比", heroFootnote: '本地运行 · 开源 · 无需 Python / Node.js / Go 运行环境',
+
+      skip: '跳到内容', mainNav: '主导航', navWorkbench: "网页工作台", navAgent: "Agent 排查", navCommands: '命令参考', searchOpen: '搜索功能与命令', search: '搜索', start: '开始使用',
+      release: "面向 Agent 的 SSH CLI", heroLine1: "让 Agent 按地区和环境", heroLine2: "找对主机，再排查",
+      heroLead: "湖南、新疆、淄博；测试、生产。按分组和标签认准主机，对照双实例日志，检查操作规则，执行结果按主机留记录。",
+      heroStart: "安装 CLI", heroTour: "看一次排查流程", heroFootnote: '本地运行 · 开源 · 无需 Python / Node.js / Go 运行环境',
       proofTitle: "Agent 的调用顺序", example: '示例 · 不连接服务器', proofRequest: "认准机器 → 检查规则 → 执行并读取结果",
-      proofHost: "先看有哪些机器", explicitAlias: '明确别名', proofPolicy: "检查这台能做什么", proofExecute: "执行磁盘检查", proofOutcome: "知道哪台报错，哪台还不确定",
+      proofHost: "读取环境清单", explicitAlias: '明确别名', proofPolicy: "核对每台的有效策略", proofExecute: "读取日志，再按主机核验结果", proofOutcome: "知道哪台报错，哪台还不确定",
       proofOutcomeBody: '响应丢了，不代表没执行。先核验状态，再决定下一步。', proofLink: '选择主机和命令，查看策略判断',
       platforms: '支持的平台', platformLabel: '一个可执行文件', download: '下载发布包 ↗',
       workbenchTitle: "人工网页工作台", workbenchLead: "需要人工查看或接手时，打开本机工作台。终端、文件、监控与配置管理使用同一份主机登记；Agent 的主要入口仍是 CLI。",
       railTitle: '你的 SSH 工作台', featureModules: '功能模块', railFootnote: '同一份配置。网页、CLI 与 Agent 共用。', featureProof: '用现有命令完成 · 示例，不会自动执行', agentAngle: 'Agent 使用价值', featureDocs: '查看命令说明',
-      agentEyebrow: "AGENT / CLI", agentTitle: "同一个任务，用起来有什么不同",
-      agentLead: "让 Agent 查一组机器、传一个文件或处理断线时，看看只用 SSH 和使用 ssh-cli，分别需要怎么做。",
-      scenarioTabs: "调用方式对比", scenarioRead: "看结果", scenarioChange: "先检查", scenarioUnknown: "断线后", scenarioCode: '可以交给 Agent 的调用顺序',
-      specificIdentity: "先准备登录信息", specificIdentityBody: "先登记主机别名和登录方式。工具支持私钥、SSH agent 和跳板；这些同样是 SSH 已有的能力。",
-      specificArguments: "服务器权限仍要管好", specificArgumentsBody: "本工具只能检查经过它的操作。服务器账号仍需限制权限；持有凭据的其他程序可能绕过 CLI 直接连接。",
-      specificReuse: "连续调用需要提前设置", specificReuseBody: "普通调用每次直接连接。要复用连接，需先启动 daemon 并用于 exec。OpenSSH 本身也有连接复用能力。",
-      boundariesTitle: "接入前，先了解这些默认设置", boundariesLead: "以下以 v0.7.31 为准。重点看生产环境、人工确认和本地操作记录，避免把工具提供的检查理解为所有风险都已解决。",
-      boundaryProd: '生产环境', boundaryProdTitle: "生产主机默认只读", boundaryProdBody: '无限制交互终端在 readonly 下不可用；工具的文件操作仍检查权限和路径。',
+
+      boundariesTitle: "默认设置与使用边界", boundariesLead: "以下以 v0.7.37 为准。CLI 策略、网页交互终端和本机凭据各有边界，接入前一起看清楚。",
+      boundaryProd: '生产环境', boundaryProdTitle: "生产主机默认只读", boundaryProdBody: "CLI 执行和文件变更仍检查只读权限。网页交互终端按远端账号权限运行，终端内不逐条检查命令策略。",
       boundaryDanger: '危险命令', boundaryDangerTitle: "危险命令清单默认未开启拦截", boundaryDangerBody: "先开启并选择规则，才会按这份清单拦截；启用后默认只在生产环境生效，可按需指定范围。",
-      boundaryHuman: '人工确认', boundaryHumanTitle: "需要人工确认时，非交互调用会被拒绝", boundaryHumanBody: "确认要在真实交互终端里完成，Agent 不能用 --yes 跳过。开放给人工的终端，仍需你自己判断输入的每条命令。",
+      boundaryHuman: '人工确认', boundaryHumanTitle: "需要确认的操作，无交互终端时拒绝", boundaryHumanBody: "你在自己的终端重新运行命令，按提示输入主机别名。聊天里回复“同意”不会自动放行。普通 exec 在交互终端允许 --yes；终端检查不能证明操作者一定是真人。",
       boundaryAudit: '本地审计', boundaryAuditTitle: "记录保存在本机，重要结果需另外留存", boundaryAuditBody: "能同时修改记录和本地校验材料的人，仍可能破坏记录的可信度。重要场景需要独立保存记录，不能只依赖这一台电脑。",
       installTitle: '安装与接入', installLead: '把仓库链接交给能读取仓库、执行本地命令的 Agent。它会准备 CLI 和 Skill，验证完成后，展示路径、版本与最短用法。',
       installNote: 'CLI 是 Skill 的硬性依赖。主机与凭据仍由你在 Agent 实际运行的环境中配置；安装不会自动连接服务器。', skillGuide: '查看各 Agent 安装说明',
       installMethods: '安装方式', installAgent: '交给 Agent', copy: '复制链接', installDetails: '安装细节 ↗', releaseNotes: '版本记录', source: "GitHub 仓库 ↗",
-      footerLine: "面向 Agent 的 SSH CLI，附本机网页工作台。", searchTitle: '搜索功能与命令', searchPlaceholder: '如：文件、exec、--agent-key',
+      footerLine: "面向 Agent 的 SSH CLI，附本机网页工作台。", searchTitle: '搜索功能与命令', searchPlaceholder: "如：密码、exec、--agent-key",
       searchHint: '↑ ↓ 选择 · Enter 打开 · Esc 关闭', close: '关闭', manualCopy: '手动复制', emptySearch: '没有匹配项。试试命令名、参数或功能名称。', searchCommands: '命令', searchAll: '打开完整命令参考', searchLoading: '正在读取命令索引…', searchFailed: '命令索引未加载，可直接打开命令参考。',
       copied: '已复制', copying: '复制中…', copyCommand: '复制命令', copyError: '无法访问剪贴板，请在下方选中内容手动复制。', copySuccess: '已复制，可以交给 Agent 或粘贴到终端。',
-      navLab: '策略示例', featureSelect: '选择功能', featureSteps: '具体操作步骤', labTitle: '执行前的策略检查',
-      labLead: '选一台示例主机和一条命令，查看允许、拒绝或需要人工确认的原因。切换规则范围，可比较测试与生产的差异。',
+      navLab: '策略示例', featureSelect: '选择功能', featureSteps: '具体操作步骤', labTitle: "生产环境要拦哪些操作，先定下来",
+      labLead: "CLI 默认按生产只读上限检查。危险命令清单需显式启用和选择规则；下面可查看实际检查结果。",
       labHost: '目标主机', labCommand: '待检查命令', labScope: '危险命令目录中的 mkfs 规则', labScopeOff: '未启用（默认）', labScopeProd: '启用规则 · 默认仅 prod', labScopeBoth: '启用规则 · prod 和 test',
-      labConfigNote: '示例为 test 额外配置了 systemctl restart 确认规则；prod 使用内置只读上限。格式化命令只参与本地策略解释，不会执行。',
+      labConfigNote: "test 使用内置 standard，prod 使用 readonly。重启需要确认；明确的脚本调用可直接允许。所有结果只做策略解释，不执行命令。",
       labMode: '有效模式', labEnforced: '危险规则在此目标生效', labActive: '选中的生效规则', labCheckLabel: '在自己的配置中检查同一条命令：', labCopy: '复制检查命令', labManualCopy: '手动复制检查命令',
       labOutput: "检查结果（JSON）", labOutputNote: "这里展示的是检查结果，命令并没有被执行。页面也不会读取你的主机配置或连接服务器。",
-      labConfig: "示例里的规则是什么", labConfigBody: "测试主机额外设置了“重启需确认”，生产主机默认只读。危险命令选择 mkfs，是否启用和作用环境由上方选项决定。你自己的主机以已保存的规则为准。", labSource: "查看策略检查用法 ↗",
+      labConfig: "示例里的规则是什么", labConfigBody: "dev 的权限上限是 admin，默认策略仍为 standard；test 的上限和默认策略都是 standard，彼此不影响。示例中的脚本调用在 standard 下允许，systemctl restart 仍需确认，prod 仍按 readonly 拒绝写操作。mkfs 的危险目录规则是否启用、在哪些环境生效，由上方选项决定。", labSource: "查看策略检查用法 ↗",
       labAllowTitle: "这条命令允许执行", labAllowBody: "当前规则允许这条命令继续执行，也不需要额外确认。实际连接和执行仍可能失败。",
-      labConfirmTitle: "需要你确认后才能执行", labConfirmBody: "示例规则要求重启前由人工确认。检查命令本身不会重启服务；真正执行时，非交互 Agent 会被拒绝。",
+      labConfirmTitle: "需要你确认后才能执行", labConfirmBody: "检查不执行重启。无交互终端的调用会被拒绝；你可在自己的终端重新运行 exec，按提示输入主机别名 demo-test。聊天里回复“同意”不会恢复 Agent 的调用。",
       labDenyTitle: "当前规则不允许执行", labDenyBody: "示例规则拒绝这条命令。请先查看命中原因，再调整任务或交给有权限的人处理，不要换一种写法绕过。",
       groups: ['日常高频', '目标与操作边界', '记录与维护'], title: "ssh-cli · 面向 Agent 的 SSH 命令行工具"
     },
     en: {
+      navRecords: "Audit", navPerformance: "Reuse SSH", credentialReference: "Local ciphertext and references in config; approach informed by ",
+      navCredentials: 'Credentials', credentialEyebrow: 'PASSWORDS / CREDENTIALS', credentialTitle: "Register credentials locally. Call hosts by alias.",
+      credentialLead: "Enter the password once; ssh-cli stores it encrypted. Routine calls use a host alias instead of repeating the password in chats or commands.",
+      credentialBoundary: 'Encryption at rest does not isolate an agent. Software running as your OS account with access to the keys and credentials may still obtain the password.',
+      credentialMore: 'Storage and access limits ↓', credentialTabs: 'Password workflow', credentialRegister: 'Register', credentialUse: 'Use alias', credentialStorage: 'Storage',
+      credentialConfig: 'Host details and a password reference, without the plaintext password.', credentialCipher: 'Encrypted passwords, decrypted locally for authentication.', credentialKeyLabel: 'Master key', credentialKey: 'The OS credential store takes priority, followed by an environment key or local key file.',
+      credentialDocs: 'Read this command’s usage ↗', credentialManualCopy: 'Copy the example command manually', credentialInert: 'Workflow example only. This page does not accept passwords, read your configuration or connect to servers.',
+      credentialDetails: 'What do encryption, keys and redaction protect?', credentialAtRestTitle: 'Password file', credentialAtRest: 'Passwords use ChaCha20-Poly1305 encryption with integrity checking. The configuration stores a reference. A configuration or ciphertext file alone does not reveal the password.',
+      credentialMasterTitle: 'Master key', credentialMaster: 'Keys are checked in this order: OS credential store, SSH_CLI_MASTER_KEY, then master.key. Falling back to a local key file produces a warning. Possession of both ciphertext and its key allows decryption. Losing the key may make saved passwords unrecoverable.',
+      credentialRecordsTitle: 'Use and records', credentialRecords: 'Host listings do not return saved plaintext passwords. Audit and history redaction is heuristic and cannot catch every secret; keep passwords out of remote commands and chat. Private keys and SSH agent authentication are also supported, as they are in OpenSSH.',
+      labScriptTitle: 'This literal script invocation is allowed', labScriptBody: 'standard no longer requests confirmation just because the remote file body is unavailable. Invocation arguments are checked; commands inside the file are not. Explicit allow, deny and confirm rules still apply.',
       resultLabel: "Result", proofPolicyHint: "Rules / confirmation",
-      scenarioBenefit: "What you get",
-      scenarioTargets: "Pick hosts",
-      scenarioArguments: "Arguments",
-      scenarioUpload: "Upload",
-      scenarioBefore: "Using ssh / scp",
-      scenarioAfter: "Using ssh-cli",
-      scenarioAssumptions: "POSIX shell examples. Configure aliases and authentication first. Display only; nothing runs here.",
-      scenarioFair: "You can build these steps around SSH with your own scripts too. This compares what ssh-cli already provides.",
-      scenarioLimit: "What still needs care",
+
+      confirmDemoTitle: "How do I complete a required confirmation?",
+      confirmDemoNote: "Page demonstration only. No server connection or permission is sent to an agent.",
+      confirmDemoLabel: "Enter demo-test, then check the input",
+      confirmDemoButton: "Check input",
+      confirmDemoIdle: "In a real terminal, a match continues the current command. A mismatch exits.",
+      confirmDemoSuccess: "Alias matched. A real terminal would continue the command you just ran. This page runs nothing.",
+      confirmDemoError: "Alias did not match. The real command would exit without sending the restart request.",
+      confirmMore: "Production and confirmation limits",
+      confirmProduction: "Readonly production cannot be bypassed by typing a confirmation. An administrator must first enable break-glass for the environment. Run the command below in your own terminal, review the host, reason and command, then type elevate:demo-prod. It runs one command. 15m limits its runtime; it is not a 15-minute grant to the agent. Explicit denies still apply.",
+      confirmTTY: "Ordinary exec accepts --yes only with an interactive terminal, before --. Windows CMD, PowerShell and Windows Terminal are supported. elevate still requires typed input. Software controlling a terminal may also confirm: a terminal check is not identity verification.",
+      confirmLink: "Read single-command elevation usage ↗",
+      labConfirmation: "See the confirmation steps ↗",
       scenarioDocs: "Read command flags ↗",
-      scenarioSelect: "Choose a comparison",
-      comparisonNotes: "Comparison scope and shared assumptions",
-      skip: 'Skip to content', mainNav: 'Main navigation', navWorkbench: "Web workspace", navAgent: "Agent comparison", navCommands: 'Commands', searchOpen: 'Search features and commands', search: 'Search', start: 'Get started',
-      release: "SSH CLI for agents", heroLine1: "SSH commands", heroLine2: "for agents",
-      heroLead: "Ready-to-use commands for choosing hosts, checking rules, collecting results and uploading files. Your agent uses the same approach across hosts. Open the local web workspace when you need to inspect or take over.",
-      heroStart: "Install the CLI", heroTour: "Compare calls", heroFootnote: 'Local · Open source · No Python, Node.js or Go runtime required',
+
+      skip: 'Skip to content', mainNav: 'Main navigation', navWorkbench: "Web workspace", navAgent: "Agent workflow", navCommands: 'Commands', searchOpen: 'Search features and commands', search: 'Search', start: 'Get started',
+      release: "SSH CLI for agents", heroLine1: "Let your agent find the right hosts", heroLine2: "before investigating",
+      heroLead: "Across Hunan, Xinjiang and Zibo; test and production. Organize hosts by group and tag, compare two instances, check policy, and review results per host.",
+      heroStart: "Install CLI", heroTour: "Walk through an investigation", heroFootnote: 'Local · Open source · No Python, Node.js or Go runtime required',
       proofTitle: "An agent’s command sequence", example: 'Example · no server connection', proofRequest: "Identify the host → check its rules → execute and read the result",
-      proofHost: "See the registered hosts", explicitAlias: 'Explicit alias', proofPolicy: "Check what is allowed", proofExecute: "Run the disk check", proofOutcome: "Know which host failed or remains uncertain",
+      proofHost: "Read the environment inventory", explicitAlias: 'Explicit alias', proofPolicy: "Check each host’s effective policy", proofExecute: "Read logs; verify results per host", proofOutcome: "Know which host failed or remains uncertain",
       proofOutcomeBody: 'A lost response does not mean nothing ran. Verify state before taking the next step.', proofLink: 'Inspect a command',
       platforms: 'Supported platforms', platformLabel: 'One executable', download: 'Download a release ↗',
       workbenchTitle: "A web workspace for people", workbenchLead: "Open the local workspace when you need to inspect or take over. Terminals, files, monitoring and configuration share the same host inventory. Agents primarily use the CLI.",
       railTitle: 'Your SSH workspace', featureModules: 'Feature modules', railFootnote: 'One configuration for the UI, CLI and agent.', featureProof: 'Existing commands · examples only, never executed here', agentAngle: 'What an agent gains', featureDocs: 'Open command reference',
-      agentEyebrow: "AGENT / CLI", agentTitle: "The same task. What changes for you?",
-      agentLead: "See how your agent checks a group of hosts, uploads a file or handles a lost reply with SSH alone and with ssh-cli.",
-      scenarioTabs: "Compare calls", scenarioRead: "Results", scenarioChange: "Check first", scenarioUnknown: "Lost reply", scenarioCode: 'A sequence an agent can follow',
-      specificIdentity: "Prepare login details first", specificIdentityBody: "Register host aliases and authentication. Private keys, SSH agents and jump hosts are supported; they are existing SSH capabilities too.",
-      specificArguments: "Keep server permissions limited", specificArgumentsBody: "The tool checks operations made through it. Limit remote account permissions too; other programs holding credentials may connect outside this CLI.",
-      specificReuse: "Set up reuse before repeated calls", specificReuseBody: "Ordinary calls connect directly each time. Start the daemon explicitly to reuse exec connections. OpenSSH also offers connection reuse.",
-      boundariesTitle: "Defaults to understand before connecting", boundariesLead: "Behavior as of v0.7.31. Review production access, human confirmation and local records. These checks do not remove every operational risk.",
-      boundaryProd: 'Production', boundaryProdTitle: "Production defaults to readonly", boundaryProdBody: 'Unrestricted terminals are unavailable in readonly mode. Tool file operations still check capabilities and paths.',
+
+      boundariesTitle: "Defaults and access boundaries", boundariesLead: "Behavior as of v0.7.37. CLI policies, interactive web terminals and local credentials have different access boundaries.",
+      boundaryProd: 'Production', boundaryProdTitle: "Production defaults to readonly", boundaryProdBody: "CLI execution and file changes still check readonly permissions. Interactive web terminals run with the remote account’s privileges, without checking each command against policy.",
       boundaryDanger: 'Dangerous commands', boundaryDangerTitle: "Extra catalog blocking starts disabled", boundaryDangerBody: "Enable the catalog and select rules before it blocks commands. Its default scope is production; choose other environments explicitly.",
-      boundaryHuman: 'Human confirmation', boundaryHumanTitle: "Calls without a human terminal are refused when confirmation is needed", boundaryHumanBody: "Confirm in a real interactive terminal; --yes does not bypass this for an agent. People using unrestricted terminals remain responsible for each command they type.",
+      boundaryHuman: 'Human confirmation', boundaryHumanTitle: "Confirmation-required calls need an interactive terminal", boundaryHumanBody: "Rerun the command in your own terminal and enter the requested host alias. Saying yes in chat does not authorize it. Ordinary exec accepts --yes in an interactive terminal; this check does not prove a human is present.",
       boundaryAudit: 'Local audit', boundaryAuditTitle: "Records stay local; keep important results elsewhere too", boundaryAuditBody: "Someone able to change both records and local verification material can undermine trust in them. Important records need an independent copy, beyond this computer.",
       installTitle: 'Installation', installLead: 'Give the repository link to an agent that can read repositories and run local commands. It prepares the CLI and skill, verifies setup, then reports paths, versions and a short usage guide.',
       installNote: 'The CLI is mandatory for the skill. Configure hosts and credentials in the agent’s execution environment. Installation does not connect to servers.', skillGuide: 'Read the agent setup guide',
       installMethods: 'Installation methods', installAgent: 'With an agent', copy: 'Copy link', installDetails: 'Install details ↗', releaseNotes: 'Release notes', source: "GitHub ↗",
-      footerLine: "SSH CLI for agents, with a local web workspace.", searchTitle: 'Search features and commands', searchPlaceholder: 'Try files, exec or --agent-key',
+      footerLine: "SSH CLI for agents, with a local web workspace.", searchTitle: 'Search features and commands', searchPlaceholder: "Try password, exec or --agent-key",
       searchHint: '↑ ↓ select · Enter open · Esc close', close: 'Close', manualCopy: 'Copy manually', emptySearch: 'No matches. Try a command name, flag or feature.', searchCommands: 'Command', searchAll: 'Open full command reference', searchLoading: 'Loading command index…', searchFailed: 'Command index unavailable. Open the command reference directly.',
       copied: 'Copied', copying: 'Copying…', copyCommand: 'Copy command', copyError: 'Clipboard unavailable. Select the text below and copy it manually.', copySuccess: 'Copied. Send it to your agent or paste it into your terminal.',
-      navLab: 'Policy examples', featureSelect: 'Choose a feature', featureSteps: 'How to use it', labTitle: 'Inspect a command',
-      labLead: 'Choose a sample host and command to see why it is allowed, denied or requires confirmation. Change rule scope to compare test and production behavior.',
+      navLab: 'Policy examples', featureSelect: 'Choose a feature', featureSteps: 'How to use it', labTitle: "Define which production operations are refused",
+      labLead: "CLI calls respect production’s default readonly ceiling. Dangerous catalog rules must be explicitly enabled and selected. Inspect actual decisions below.",
       labHost: 'Target host', labCommand: 'Command to inspect', labScope: 'mkfs rule from the dangerous catalog', labScopeOff: 'Disabled (default)', labScopeProd: 'Enabled · prod only (default scope)', labScopeBoth: 'Enabled · prod and test',
-      labConfigNote: 'The example adds a systemctl restart confirmation rule for test. prod keeps its builtin readonly ceiling. Formatting commands are only inspected locally, never executed.',
+      labConfigNote: "test uses builtin standard; prod uses readonly. Restarts require confirmation; literal script-file calls can be allowed directly. These are policy explanations, not execution.",
       labMode: 'Effective mode', labEnforced: 'Dangerous rules enforced here', labActive: 'Selected active rules', labCheckLabel: 'Inspect the command against your own configuration:', labCopy: 'Copy inspection command', labManualCopy: 'Copy inspection command manually',
       labOutput: "Check result (JSON)", labOutputNote: "This is an inspection result; no command has been executed. The page does not read your host configuration or connect to a server.",
-      labConfig: "Which rules does this example use?", labConfigBody: "The test host adds confirmation for restarts; production defaults to readonly. The example selects mkfs, with its enable switch and environments chosen above. Your own hosts use their saved rules.", labSource: "Read policy-check usage ↗",
+      labConfig: "Which rules does this example use?", labConfigBody: "dev has an admin ceiling but still defaults to standard; test has a standard ceiling and default. They do not affect each other. The example script call is allowed in standard, systemctl restart still requires confirmation, and prod retains readonly write restrictions. The controls above select whether and where the mkfs catalog rule is active.", labSource: "Read policy-check usage ↗",
       labAllowTitle: "This command is allowed", labAllowBody: "The current rules allow the command without extra confirmation. Connecting and executing can still fail.",
-      labConfirmTitle: "Your confirmation is needed first", labConfirmBody: "The example requires a person to confirm restarts. Inspection itself does not restart the service; actual noninteractive execution is refused.",
+      labConfirmTitle: "Your confirmation is needed first", labConfirmBody: "Inspection does not restart anything. Calls without an interactive terminal are refused. Rerun exec in your own terminal and type demo-test at the prompt. Saying yes in chat does not resume the agent’s call.",
       labDenyTitle: "The current rules refuse this command", labDenyBody: "Read the matching reason, then change the task or hand it to an authorized person. Do not reword the command to bypass the rule.",
       groups: ['Everyday work', 'Targets & boundaries', 'Records & maintenance'], title: "ssh-cli · SSH commands for agents"
     }
@@ -117,11 +135,11 @@
   const features = [
     { id: 'terminal', group: 0, icon: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3m6 0h4"/>',
       command: 'ssh-cli ui\nssh-cli exec -H demo --json -- df -h\nssh-cli upload -H demo ./app.jar /tmp/app.jar --json',
-      zh: { nav: '终端', title: '终端、文件和主机监控', description: '多标签终端、目录树、传输队列与主机监控在一个工作区。排查、传文件、回看历史，始终围绕当前主机。', benefits: [['少切几个窗口', '终端回看搜索、字号调整、中文输入与粘贴，配合当前主机的文件和监控。'], ['传输过程看得懂', '区分传输、提交和待核验；文件区默认约占三分之一，拖动不牵动左侧概况。']], agent: '人在终端里处理问题，Agent 用 exec、ls、upload 等结构化接口做事；共享主机配置，不依赖模拟键盘敲命令。', boundary: 'standard/admin 的人工终端不逐条套用命令策略；readonly 环境拒绝无限制终端。' },
-      en: { nav: 'Terminal', title: 'Terminal, files and host monitoring', description: 'Terminal tabs, a directory tree, transfers and host metrics stay together. Investigate, move files and revisit history in the context of the current host.', benefits: [['Fewer window switches', 'Search scrollback, adjust type, paste and enter CJK text alongside files and monitoring.'], ['Understand each transfer stage', 'Separate transfer, commit and verification. Resizing the lower file panel does not move the left overview.']], agent: 'People use the terminal; agents use structured exec, ls and upload calls. They share host configuration without simulating keystrokes.', boundary: 'Human terminals in standard/admin do not inspect commands per keystroke. Readonly environments refuse unrestricted terminals.' } },
+      zh: { nav: '终端', title: '终端、文件和主机监控', description: '先按环境、分组筛选主机，再打开终端或文件连接。多标签终端、目录树、传输队列与监控围绕当前主机显示。', benefits: [['少切几个窗口', '终端回看搜索、字号调整、中文输入与粘贴，配合当前主机的文件和监控。'], ['传输过程看得懂', '区分传输、提交和待核验；文件区默认约占三分之一，拖动不牵动左侧概况。']], agent: '人在终端里处理问题，Agent 用 exec、ls、upload 等结构化接口做事；共享主机配置，不依赖模拟键盘敲命令。', boundary: '网页交互终端在 readonly、standard、admin 下均按远端账号权限运行；终端内不逐条检查命令策略。noDataOutflow 仍禁止终端。' },
+      en: { nav: 'Terminal', title: 'Terminal, files and host monitoring', description: 'Filter hosts by environment and group before opening a terminal or file connection. Terminal tabs, files, transfers and metrics stay with the current host.', benefits: [['Fewer window switches', 'Search scrollback, adjust type, paste and enter CJK text alongside files and monitoring.'], ['Understand each transfer stage', 'Separate transfer, commit and verification. Resizing the lower file panel does not move the left overview.']], agent: 'People use the terminal; agents use structured exec, ls and upload calls. They share host configuration without simulating keystrokes.', boundary: 'Interactive web terminals use remote account privileges in readonly, standard and admin, without per-command policy checks. noDataOutflow still refuses terminals.' } },
     { id: 'hosts', group: 0, icon: '<rect x="3" y="4" width="18" height="12" rx="2"/><path d="M8 20h8m-4-4v4"/>', command: 'ssh-cli host list --json\nssh-cli policy show -H demo --json',
-      zh: { nav: '主机', title: '主机地址与认证配置', description: '统一管理地址、端口、用户、认证与跳板引用。每次操作指向明确的主机别名，减少环境和机器之间的混淆。', benefits: [['凭据留在本地配置', '密码引用、私钥路径或 SSH agent 身份，不必让 Agent 在提示词里反复接触口令。'], ['选择明确的身份', '可指定 agentKey 公钥指纹；需要的密钥不存在时直接失败。']], agent: '先列清单再显式传 -H。已有目标与认证可复用，避免凭聊天记忆猜 IP、用户或私钥。', boundary: 'Skill 不会把本地密钥和配置自动同步到云端 Agent。' },
-      en: { nav: 'Hosts', title: 'Host addresses and authentication', description: 'Keep addresses, ports, users, authentication and jump-host references together. An explicit alias reduces ambiguity between machines and environments.', benefits: [['Credentials stay in configuration', 'Use password references, identity paths or SSH agent authentication instead of credentials in prompts.'], ['Choose the required identity', 'An agentKey fingerprint selects a public key. If the key is absent, authentication fails.']], agent: 'List registered hosts, then pass -H explicitly. Reuse configured targets and authentication instead of guessing an IP or key from chat history.', boundary: 'A skill does not automatically transfer local keys or configuration to cloud agents.' } },
+      zh: { nav: '主机', title: '主机地址与认证配置', description: '管理地址、端口、认证与跳板，按环境和分组标签筛选。密码加密保存在本机，日常调用使用明确的主机别名。', benefits: [['凭据留在本地配置', '密码引用、私钥路径或 SSH agent 身份，不必让 Agent 在提示词里反复接触口令。'], ['选择明确的身份', '可指定 agentKey 公钥指纹；需要的密钥不存在时直接失败。']], agent: '先列清单再显式传 -H。已有目标与认证可复用，避免凭聊天记忆猜 IP、用户或私钥。', boundary: 'Skill 不会把本地密钥和配置自动同步到云端 Agent。' },
+      en: { nav: 'Hosts', title: 'Host addresses and authentication', description: 'Manage addresses, ports, authentication and jump hosts, with environment and group filters. Passwords are encrypted locally; routine calls use explicit host aliases.', benefits: [['Credentials stay in configuration', 'Use password references, identity paths or SSH agent authentication instead of credentials in prompts.'], ['Choose the required identity', 'An agentKey fingerprint selects a public key. If the key is absent, authentication fails.']], agent: 'List registered hosts, then pass -H explicitly. Reuse configured targets and authentication instead of guessing an IP or key from chat history.', boundary: 'A skill does not automatically transfer local keys or configuration to cloud agents.' } },
     { id: 'home', group: 0, icon: '<rect x="3" y="3" width="7" height="7" rx="1"/><rect x="14" y="3" width="7" height="7" rx="1"/><rect x="3" y="14" width="7" height="7" rx="1"/><rect x="14" y="14" width="7" height="7" rx="1"/>', command: 'ssh-cli host list --json\nssh-cli status -H demo --json',
       zh: { nav: '概览', title: '配置概览与主机状态', description: '工作台概览把主机、分组、环境和操作入口放在一起；连接主机后，在终端工作区查看 CPU、内存、磁盘、进程和网络采样。', benefits: [['配置入口集中', '先知道有哪些目标和环境，再进入具体主机，减少无上下文的操作。'], ['状态有更新时间', '监控区区分缺失数据与零值；采样时间帮助判断眼前的信息是否足够新。']], agent: '使用 status --json 做健康检查，得到机器状态。网页概览负责配置总览，监控采样不等于告警平台。', boundary: 'noDataOutflow 会限制监控与进程详情；缺失值不应被当成健康或 0。' },
       en: { nav: 'Overview', title: 'Inventory and host status', description: 'The overview brings hosts, groups, environments and entry points together. After connecting, the terminal workspace shows CPU, memory, disk, processes and network samples.', benefits: [['Context before action', 'See available targets and environments before opening a host.'], ['Freshness is visible', 'The monitor separates missing data from zero, with timestamps for recent samples.']], agent: 'Use status --json for host health. The web overview is inventory context; monitoring samples are not a full alerting platform.', boundary: 'noDataOutflow restricts metrics and process details. Missing data does not mean zero or healthy.' } },
@@ -132,8 +150,8 @@
       zh: { nav: '环境', title: '环境与权限上限', description: 'dev、test、preprod、prod 把环境含义落实到权限上限与默认策略，而不只是一段容易忽略的标签。', benefits: [['prod 默认只读', '有效模式受环境上限约束，单台主机的模式不能静默越过上限。'], ['数据流出也有约束', 'noDataOutflow 可限制下载、监控和历史正文等数据返回。']], agent: 'policy show 返回 envRules。Agent 在执行前能读到 maxMode 与数据流出限制，再决定是否需要人工接手。', boundary: '环境限制只覆盖经工具处理的操作；修改环境归属也不是绕过权限的方法。' },
       en: { nav: 'Envs', title: 'Environments and permission ceilings', description: 'dev, test, preprod and prod map environment names to mode ceilings and default policies, rather than a label that is easy to overlook.', benefits: [['prod defaults to readonly', 'The effective mode is clamped by the environment ceiling. A host mode does not silently exceed it.'], ['Control data flowing out', 'noDataOutflow can restrict downloads, metrics and history bodies.']], agent: 'policy show exposes envRules, including maxMode and data restrictions, before an agent decides whether to proceed or involve a person.', boundary: 'Environment limits cover operations mediated by the tool. Changing an environment is not a way around permissions.' } },
     { id: 'policy', group: 1, icon: '<path d="m12 3 8 3v6c0 5-3.4 7.8-8 9-4.6-1.2-8-4-8-9V6l8-3Z"/><path d="m8 12 3 3 5-6"/>', command: 'ssh-cli policy show -H demo --json\nssh-cli policy explain -H demo -- "systemctl restart nginx"',
-      zh: { nav: '危险命令', title: '危险命令与执行前检查', description: '把建议目录与实际生效的拦截规则分开。查看当前主机合并后的规则、确认门和受保护路径，再解释一条具体命令。', benefits: [['看得见真正生效的规则', 'v0.7.31 的危险命令目录默认未启用；启用并选定规则后才拦截，默认范围为 prod。'], ['变更前无需试错', 'policy show 和 policy explain 只读本地配置，不连接服务器、不执行远端命令。']], agent: '先读取 confirm、protectedPaths、envRules 和 dangerousCommands.active / enforcedHere，避免用一次失败的写请求来发现限制。', boundary: '只加启用开关还不够，还要选择规则。只读上限等其他限制独立生效；目录匹配本身不等于拒绝。' },
-      en: { nav: 'Commands', title: 'Dangerous commands and policy checks', description: 'Separate the suggested catalog from active blocking rules. Inspect the host’s merged policy, confirmation gates and protected paths, then explain a specific command.', benefits: [['See what is actually enforced', 'In v0.7.31 the catalog is off by default. Enable it and select rules to enforce them; prod is the default scope.'], ['No trial write needed', 'policy show and policy explain read local configuration. They neither connect nor run a remote command.']], agent: 'Read confirm, protectedPaths, envRules and dangerousCommands.active / enforcedHere before attempting a change.', boundary: 'The enable switch alone is insufficient; select rules too. Readonly ceilings remain independent. Matching the catalog alone does not mean denial.' } },
+      zh: { nav: '危险命令', title: '危险命令与执行前检查', description: '把建议目录与实际生效的拦截规则分开。查看当前主机合并后的规则、确认门和受保护路径，再解释一条具体命令。', benefits: [['看得见真正生效的规则', 'v0.7.37 的危险命令目录默认未启用；启用并选定规则后才拦截，默认范围为 prod。'], ['变更前无需试错', 'policy show 和 policy explain 只读本地配置，不连接服务器、不执行远端命令。']], agent: '先读取 confirm、protectedPaths、envRules 和 dangerousCommands.active / enforcedHere，避免用一次失败的写请求来发现限制。', boundary: '只加启用开关还不够，还要选择规则。只读上限等其他限制独立生效；目录匹配本身不等于拒绝。' },
+      en: { nav: 'Commands', title: 'Dangerous commands and policy checks', description: 'Separate the suggested catalog from active blocking rules. Inspect the host’s merged policy, confirmation gates and protected paths, then explain a specific command.', benefits: [['See what is actually enforced', 'In v0.7.37 the catalog is off by default. Enable it and select rules to enforce them; prod is the default scope.'], ['No trial write needed', 'policy show and policy explain read local configuration. They neither connect nor run a remote command.']], agent: 'Read confirm, protectedPaths, envRules and dangerousCommands.active / enforcedHere before attempting a change.', boundary: 'The enable switch alone is insufficient; select rules too. Readonly ceilings remain independent. Matching the catalog alone does not mean denial.' } },
     { id: 'groups', group: 1, icon: '<rect x="3" y="4" width="7" height="6" rx="1"/><rect x="14" y="4" width="7" height="6" rx="1"/><rect x="3" y="14" width="7" height="6" rx="1"/><path d="M14 17h7m-3.5-3.5v7"/>', command: 'ssh-cli group list --json\nssh-cli policy show -H demo --json',
       zh: { nav: '分组', title: '业务分组与策略复用', description: '用分组组织同一业务和环境中的主机，集中管理策略引用与受保护路径，让主机配置更一致。', benefits: [['规则有组织地复用', '把共同设置放在分组，减少逐台维护时遗漏或配错。'], ['看合并后的实际结果', '配置来源可以多层，执行前仍按目标主机解析最终有效策略。']], agent: '清单先表达业务归属，再按主机读取最终策略。Agent 无需从名字猜每台机器继承了什么。', boundary: '分组不是独立权限沙箱；判断能否执行应查看目标主机的最终策略。' },
       en: { nav: 'Groups', title: 'Groups and shared policy references', description: 'Organize hosts by business and environment. Manage shared policy references and protected paths together.', benefits: [['Reuse common settings', 'Reduce drift and omissions when maintaining several hosts.'], ['Inspect the merged result', 'Settings can have multiple sources. Resolve the effective policy for the target before execution.']], agent: 'Inventory provides business context; a host policy shows the final rules. No need to infer inherited permissions from names.', boundary: 'A group is not an independent sandbox. Inspect the target’s effective policy to decide what may run.' } },
@@ -165,62 +183,30 @@
     settings: { zh: ['在设置页调整主题、紧凑表格、分页和表单默认值。', '按实际需求设置会话空闲与最长寿命，保存后检查配置。', 'Agent 的命令超时等参数仍应显式传入，不假设继承浏览器里的偏好。'], en: ['Adjust theme, compact tables, pagination and form defaults in Settings.', 'Set appropriate idle and maximum session lifetimes, save and review the configuration.', 'Agents should still pass execution parameters such as timeouts explicitly rather than assume browser preferences apply.'] }
   };
 
-  // Comparisons describe existing v0.7.31 behavior, not measured performance.
-  // Both clients' aliases/credentials are assumed configured independently.
-  const scenarios = {
-    read: {
-      signal: '01 / 06', before: 'ssh demo "df -h /"', command: 'ssh-cli exec -H demo --json -- df -h /', docs: 'exec',
-      zh: ["查完机器，结果能对得上号", "让 Agent 查磁盘后，能把结果对应到每台机器，并区分报错和结果还不确定的情况。", "工具只整理外层结果，磁盘数字仍是 df 的原文。收到执行结果，不等于命令成功，更不等于整个任务完成。", "汇报时，主机名、环境、执行状态和命令输出都有固定位置可读。"],
-      en: ["Keep results attached to the right host", "After a disk check, match each result to its host and distinguish errors from uncertain outcomes.", "The wrapper organizes results; df output is still raw text. Receiving a result does not mean the command or the whole task succeeded.", "Read the host, environment, execution status and output from known fields when reporting."],
-      baseline: { zh: "Agent 能拿到输出文字和退出状态。要统一说明哪台机器、什么环境、有没有报错，需要再整理一层。", en: "The agent gets output text and an exit code. It adds a wrapper to report the host, environment and errors consistently." },
-      provided: { zh: "加上 --json，结果就带有主机、环境和执行状态，命令输出也一并保留。Agent 可以按固定字段读取，再汇总给你。", en: "With --json, results include the host, environment and execution status alongside command output. The agent can read those fields and report them together." }
-    },
-    change: {
-      signal: '02 / 06', before: 'ssh demo "systemctl restart nginx"', command: 'ssh-cli policy show -H demo --json\nssh-cli policy explain -H demo --json -- systemctl restart nginx', docs: 'policy-explain',
-      zh: ["先问能不能做，再让 Agent 动手", "例如重启 nginx，先得到允许、禁止或需要你确认的理由。", "右侧命令只检查，不执行重启。规则要先配好；绕过 CLI 直接连服务器，不受这层本地检查约束。", "Agent 能先告诉你为什么可以做、为什么不能做，或哪里需要你确认。"],
-      en: ["Check whether a change is allowed first", "Before restarting nginx, see whether it is allowed, denied or needs your confirmation, and why.", "The commands on the right inspect only; they do not restart anything. Rules need configuring. Connections outside this CLI are outside these local checks.", "The agent can explain why it can proceed, why it must stop, or where you need to confirm."],
-      baseline: { zh: "SSH 把命令送到服务器，能否执行通常由账号权限决定。若还要按测试、生产等业务环境检查，需要自己增加规则或执行入口。", en: "SSH sends the command to the server, where account permissions govern access. Checks tied to test or production need an extra rule layer or gateway." },
-      provided: { zh: "ssh-cli 先读这台机器的规则。生产默认只读；遇到需要确认的操作，非交互 Agent 会被拒绝，不能靠 --yes 放行。", en: "ssh-cli checks the host’s rules. Production defaults to readonly. An operation needing confirmation is refused for a noninteractive agent; --yes does not bypass that gate." }
-    },
-    targets: {
-      signal: '03 / 06', before: 'for host in demo-a demo-b; do\n  ssh "$host" "df -h /"\ndone', command: 'ssh-cli host list --json\nssh-cli exec -g app-test --parallel 2 --json -- df -h /', docs: 'exec',
-      zh: ["一组机器，先一起检查再开始", "例如给测试组查磁盘，除了选机器，还要检查有没有混进其他环境。", "分组和环境要登记正确。开始前通过检查，也不能保证所有机器最后都成功；中途仍可能部分失败。并发支持 1–4，启用并发时最多 16 台。", "选机器、检查环境和汇总每台机器的结果，用同一套命令完成。"],
-      en: ["Check the whole group before starting", "For a test-group disk check, select hosts and check whether the group spans other environments.", "Inventory must be correct. Passing preflight does not guarantee every host will succeed; runtime failures can be partial. Parallelism is 1–4, with at most 16 hosts when enabled.", "Select hosts, check environments and collect per-host results through one command flow."],
-      baseline: { zh: "可以用别名循环连接。名单、业务分组、环境检查和每台机器的结果，需要由调用脚本组织。", en: "Loop over configured host aliases. The calling script organizes inventory, business groups, environment checks and results." },
-      provided: { zh: "可直接按分组或标签选机器。默认有一台不允许，就先不开始；跨环境需明确允许。选多台且包含生产环境时，这一批按只读处理。", en: "Select by group or tag. By default, one denial stops the batch before it starts. Crossing environments requires explicit permission. A multi-host batch including production is readonly." }
-    },
-    arguments: {
-      signal: '04 / 06', before: 'ssh demo "printf \'%s\' \'{\\"phase\\":\\"test run\\"}\'"', command: 'ssh-cli exec -H demo --json -- printf \'%s\' \'{"phase":"test run"}\'', docs: 'exec',
-      zh: ["带空格的内容，传过去仍是一个参数", "把这段 JSON 原样交给远端程序。两边都是有效写法，差别在引号由谁补齐。", "本地引号仍要写对；多个参数会按 POSIX shell 规则转义，单个字符串仍按脚本处理。远端依然使用 shell。", "JSON、带空格的路径和嵌套引号，不必再手动拼一遍远端命令字符串。"],
-      en: ["Keep text with spaces as one remote argument", "Pass this JSON unchanged to the remote program. Both examples work; the difference is who adds the remote quoting.", "Local quoting still matters. Multiple arguments are escaped for a POSIX shell; one string is treated as a script. The remote side still uses a shell.", "Avoid manually joining another remote command string for JSON, paths with spaces and nested quotes."],
-      baseline: { zh: "OpenSSH 会把命令和后续参数用空格连接后发送。因此，要把远端需要保留的引号一起写进字符串。", en: "OpenSSH joins the command and following arguments with spaces. The caller includes the quoting that must survive on the remote side." },
-      provided: { zh: "把参数分开传给 exec，它会补上远端需要的转义。用来检查规则的内容，和实际送往服务器的内容保持一致。", en: "Pass arguments separately to exec; it adds remote escaping. Policy checks inspect the same command string that will be sent to the server." }
-    },
-    upload: {
-      signal: '05 / 06', before: 'scp ./app.jar demo:/tmp/app.jar', command: 'ssh-cli upload -H demo ./app.jar /tmp/app.jar --backup --json', docs: 'upload',
-      zh: ["传新文件时，可以同时留住旧文件", "除了把 app.jar 传过去，还能在同一次上传中检查路径、保留备份并记录结果。", "只有加 --backup 才备份，默认会覆盖。目录里的文件逐个提交；文件摘要不能证明应用已经部署成功。", "上传入口已经包含路径检查、可选备份和操作记录，调用方可以直接使用。"],
-      en: ["Keep the old file while uploading a replacement", "Upload app.jar with path checks, an optional backup and an operation record in the same flow.", "Backups require --backup; replacement is the default. Directory files commit individually. A content hash does not prove that the application was deployed successfully.", "Use the upload entry point’s path checks, optional backups and records."],
-      baseline: { zh: "scp 能直接传文件，服务器权限照常生效。需要留备份、先暂存再替换或记录这次操作时，可以再写脚本处理。", en: "scp transfers files under server permissions. Add scripts when you also need a backup, staging before replacement or an operation record." },
-      provided: { zh: "上传前检查权限和受保护路径，先写临时文件再提交。示例里的 --backup 会保留旧文件；结果里可读取传输字节数、内容摘要和备份路径。", en: "Check upload permission and protected paths, write a temporary file, then commit it. --backup keeps the old file. Results expose byte counts, content hashes and backup paths." }
-    },
-    unknown: {
-      signal: '06 / 06', before: 'ssh demo "systemctl status nginx"\n# Review the original request and saved logs', command: 'ssh-cli audit list --host demo --json\nssh-cli service status nginx -H demo --json', docs: 'audit-list',
-      zh: ["断线了，先别把原操作再做一遍", "Agent 发起重启后没收到完整回复，重启可能已经发生。", "回看记录不能代替检查服务器。工具不能回滚，也不能保证重复执行没有副作用；是否重试仍要结合原任务判断。", "先保留“不确定”，再查记录和服务状态，不把断线直接当成“没执行”。"],
-      en: ["A lost reply is not a reason to repeat the change", "If a reply disappears after a restart request, the restart may already have happened.", "Records do not replace checking the server. The tool cannot roll back or guarantee that repetition has no side effects. Decide whether to retry in the context of the task.", "Keep the outcome uncertain, then review records and service state. A lost reply does not prove nothing ran."],
-      baseline: { zh: "需要 Agent 结合 SSH 报错和已保存的日志，再决定查状态还是重试。SSH 本身也不能回滚服务器上的变更。", en: "The agent interprets SSH errors and saved logs before choosing a state check or a retry. SSH cannot roll back changes on the server either." },
-      provided: { zh: "这类执行结果会标为“还不确定”，不声明可以安全重试。Agent 可用现成审计命令回看记录，再查服务状态；工具不会自行重放操作。", en: "Execution errors of this kind are marked uncertain, without declaring retries safe. The agent can review audit records and inspect service state. The tool does not replay the operation." }
-    }
-  };
+  // Installation does not configure host credentials or connect to servers.
   const install = {
     agent: { command: repo, zh: ['把这个链接发给你的 Agent，并让它安装。', '先检查 CLI → 缺失时安装并校验 → 安装 Skill → 汇报结果'], en: ['Send this link to your agent and ask it to install.', 'Check CLI → install and verify if missing → install skill → report'] },
     unix: { command: 'curl -fsSL https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.sh | sh', zh: ['安装当前系统与架构的 CLI 发布包。', '下载发布包并验证校验和。随后运行 ssh-cli version；主机与 Skill 可按文档继续配置。'], en: ['Install the CLI release for your operating system and architecture.', 'Downloads and verifies release checksums. Run ssh-cli version afterward, then configure hosts and skills using the guide.'] },
     windows: { command: 'irm https://raw.githubusercontent.com/jiamingZhao-zhao/ssh-cli/main/install.ps1 | iex', zh: ['在 Windows PowerShell 中安装 CLI。', '默认安装到 %LOCALAPPDATA%\\ssh-cli\\bin，验证校验和；新终端中运行 ssh-cli version。'], en: ['Install the CLI in Windows PowerShell.', 'Installs to %LOCALAPPDATA%\\ssh-cli\\bin with checksum verification. Run ssh-cli version in a new terminal.'] }
   };
+  const credentials = {
+    register: { command: 'ssh-cli host add demo-test --group app-test --host 192.0.2.10 --user deploy', docs: 'host-add',
+      zh: ['由你在本机输入密码', '先建立 app-test 分组，再在自己的终端登记主机。出现 Password: 时输入，字符不会显示；也可以在本机网页工作台添加。', 'ssh-cli 拒绝明文 --password 参数。自动化登记可用 --password-stdin，但输入来源仍由你安全提供。'],
+      en: ['Enter the password locally', 'Create the app-test group first, then register the host in your own terminal. At Password:, input is hidden. You can also register it in the local workbench.', 'Plaintext --password arguments are rejected. --password-stdin is available for setup automation; provide its input securely.'] },
+    use: { command: 'ssh-cli exec -H demo-test --json -- df -h /', docs: 'exec',
+      zh: ['Agent 调用时，用别名就够了', '调用中只有主机别名和要执行的命令。ssh-cli 在本机取出对应凭据进行 SSH 认证，不需要在每次任务里重新提供密码。', '这减少了对话和命令中的密码暴露，不代表拥有本机凭据访问权限的 Agent 无法取到密码。'],
+      en: ['Routine calls use an alias', 'The call contains a host alias and a command. ssh-cli retrieves the registered credentials locally for SSH authentication, without asking you to repeat the password for each task.', 'This reduces passwords in chats and command arguments. It does not prevent an agent with local credential access from retrieving them.'] },
+    storage: { command: 'ssh-cli host list --json', docs: 'host-list',
+      zh: ['配置存引用，密码加密保存', '主机清单可以交给 Agent 核对别名和环境，其中不会返回已保存的密码原文。密码与解密主密钥分别管理。', '列表仍可能包含地址和用户名。下面列出存储用途，不会读取你本机的实际文件。'],
+      en: ['References in config. Encrypted passwords on disk.', 'An agent can inspect host aliases and environments without saved plaintext passwords in the listing. Password ciphertext and the decryption key are managed separately.', 'Listings can still include addresses and usernames. These are storage roles, not files read from your computer.'] }
+  };
   const $ = id => document.getElementById(id);
   let language = 'zh';
   let currentFeature = 'terminal';
-  let currentScenario = 'read';
+  let confirmationState = 'default';
   let currentInstall = 'agent';
+  let currentCredential = 'use';
+  let credentialGeneration = 0;
   let searchReturnFocus = null;
   let copyGeneration = 0;
   let labGeneration = 0;
@@ -282,17 +268,25 @@
     const command = { terminal:'ui', hosts:'host', home:'status', relay:'relay', envs:'env', policy:'policy-show', groups:'group', tags:'host-list', audit:'audit-list', bundle:'config', settings:'ui' };
     $('feature-docs').href = commandLink(command[id] || 'root');
   }
-  function selectScenario(id) {
-    const scenario = scenarios[id]; if (!scenario) return;
-    currentScenario = id;
-    document.querySelectorAll('[data-scenario]').forEach(button => { const selected = button.dataset.scenario === id; button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1; });
-    const mobile = matchMedia('(max-width: 39.99rem)').matches;
-    $('scenario-panel').setAttribute('aria-labelledby', mobile ? 'scenario-title' : 'scenario-' + id);
-    $('scenario-mobile').value = id;
-    setText('scenario-signal', scenario.signal); setText('scenario-command', scenario.command);
-    setText('scenario-before-command', scenario.before); setText('scenario-baseline', scenario.baseline[language]); setText('scenario-provided', scenario.provided[language]);
-    $('scenario-docs').href = commandLink(scenario.docs);
-    ['scenario-title', 'scenario-description', 'scenario-rule', 'scenario-result'].forEach((target, index) => setText(target, scenario[language][index]));
+  function renderConfirmation() {
+    const key = confirmationState === 'success' ? 'confirmDemoSuccess' : confirmationState === 'error' ? 'confirmDemoError' : 'confirmDemoIdle';
+    if ($('confirmation-feedback').textContent !== text[language][key]) setText('confirmation-feedback', text[language][key]);
+    $('confirmation-feedback').dataset.state = confirmationState;
+    $('confirmation-check').disabled = !$('confirmation-alias').value.trim();
+    if (confirmationState === 'error') $('confirmation-alias').setAttribute('aria-invalid', 'true');
+    else $('confirmation-alias').removeAttribute('aria-invalid');
+  }
+  function selectCredential(id) {
+    const item = credentials[id]; if (!item) return;
+    currentCredential = id; credentialGeneration++;
+    document.querySelectorAll('[data-credential]').forEach(button => { const selected = button.dataset.credential === id; button.setAttribute('aria-selected', String(selected)); button.tabIndex = selected ? 0 : -1; });
+    $('credential-panel').setAttribute('aria-labelledby', 'credential-' + id);
+    setText('credential-position', String(Object.keys(credentials).indexOf(id) + 1).padStart(2, '0') + ' / 03');
+    ['credential-step-title', 'credential-step-description', 'credential-note'].forEach((target, i) => setText(target, item[language][i]));
+    setText('credential-command', item.command); $('credential-files').hidden = id !== 'storage';
+    $('credential-docs').href = commandLink(item.docs);
+    setText('copy-credential', text[language].copyCommand); setText('credential-copy-status', '');
+    $('copy-credential').disabled = false; $('copy-credential').dataset.state = 'default'; $('credential-manual-copy').hidden = true;
   }
   function selectInstall(id) {
     const method = install[id]; if (!method) return;
@@ -317,8 +311,8 @@
     $('skill-guide').href = repo + '/blob/main/docs/skills' + (language === 'en' ? '.en' : '') + '.md';
     $('lab-reference').href = commandLink('policy-explain');
     document.querySelectorAll('[data-command-reference]').forEach(link => { link.href = commandLink(); });
-    $('scenario-mobile').replaceChildren(...[...document.querySelectorAll('[data-scenario]')].map(button => {const option=document.createElement('option');option.value=button.dataset.scenario;option.textContent=button.textContent;return option;}));
-    renderFeatureTabs(); selectFeature(currentFeature); selectScenario(currentScenario); selectInstall(currentInstall); renderSearch(); renderLab();
+    renderFeatureTabs(); selectFeature(currentFeature); selectCredential(currentCredential); selectInstall(currentInstall); renderSearch(); renderLab(); renderConfirmation();
+    document.dispatchEvent(new CustomEvent("ssh-cli-language", { detail: language }));
   }
   function renderLab() {
     labGeneration++;
@@ -326,17 +320,24 @@
     const record = window.SSH_CLI_POLICY_EXAMPLES?.records[key];
     if (!record) {
       setText('lab-result-title', language === 'zh' ? '示例数据未加载' : 'Example data unavailable');
-      setText('lab-result-description', language === 'zh' ? '请重新加载页面，或打开源码中的使用说明。' : 'Reload the page or read the linked usage guide.');
+      setText('lab-result-description', language === 'zh' ? '请重新加载页面，或打开命令参考查看用法。' : 'Reload the page or read the linked usage guide.');
+      setText('lab-decision', '—'); $('lab-decision').removeAttribute('data-state');
+      for (const id of ['lab-exit', 'lab-mode', 'lab-enforced', 'lab-active', 'lab-json', 'lab-check-command']) setText(id, '—');
+      $('lab-confirmation-entry').hidden = true;
       $('copy-lab').disabled = true; return;
     }
     const result = record.explanation;
     const state = !result.allowed ? 'deny' : result.needsConfirm ? 'confirm' : 'allow';
+    $('lab-confirmation-entry').hidden = state !== 'confirm';
     const keyPrefix = 'lab' + state[0].toUpperCase() + state.slice(1);
     setText('lab-decision', state === 'deny' ? '⊘ DENY' : state === 'confirm' ? '◇ CONFIRM' : '✓ ALLOW');
     $('lab-decision').dataset.state = state;
     setText('lab-exit', 'policy explain · exit ' + record.exitCode);
     setText('lab-result-title', text[language][keyPrefix + 'Title']);
     setText('lab-result-description', text[language][keyPrefix + 'Body']);
+    if (state === 'allow' && result.command === window.SSH_CLI_POLICY_EXAMPLES.commands.script) {
+      setText('lab-result-title', text[language].labScriptTitle); setText('lab-result-description', text[language].labScriptBody);
+    }
     setText('lab-mode', result.mode); setText('lab-enforced', String(result.dangerousCommands.enforcedHere));
     setText('lab-active', result.dangerousCommands.active.join(', ') || '—');
     setText('lab-json', JSON.stringify(result, null, 2));
@@ -358,7 +359,7 @@
       const label = document.createElement('span'); label.textContent = feature[language].nav;
       const group = document.createElement('span'); group.textContent = text[language].groups[feature.group];
       button.append(makeIcon(feature.icon), label, group);
-      button.addEventListener('click', () => { closeSearch(false); selectFeature(feature.id); $('workbench').scrollIntoView(); (matchMedia('(max-width: 39.99rem)').matches ? $('feature-mobile') : $('tab-' + feature.id)).focus({ preventScroll: true }); });
+      button.addEventListener('click', () => { closeSearch(false); $('workbench-optional').open = true; selectFeature(feature.id); $('workbench').scrollIntoView(); (matchMedia('(max-width: 39.99rem)').matches ? $('feature-mobile') : $('tab-' + feature.id)).focus({ preventScroll: true }); });
       featureResults.append(button);
     });
     const tokens = query.normalize('NFKC').split(/\s+/).filter(Boolean);
@@ -372,8 +373,12 @@
       button.append(code, purpose, kind); button.addEventListener('click', () => { location.href = commandLink(command.id); }); root.append(button);
     });
     root.append(featureResults);
+    if (!query || ['密码', '凭据', '密文', '加密', 'password', 'credential', 'secret'].some(term => query.includes(term))) {
+      const button = document.createElement('button'); button.type = 'button'; button.className = 'search-result'; button.dataset.searchId = 'credential-safety';
+      button.textContent = text[language].credentialTitle; button.addEventListener('click', () => { closeSearch(false); document.dispatchEvent(new CustomEvent('ssh-cli-flow', { detail: 'credentials' })); $('credential-' + currentCredential).focus({ preventScroll: true }); }); root.append(button);
+    }
     const pending = commandIndexState === 'idle' || commandIndexState === 'loading';
-    if (!matches.length && !commands.length && !pending && commandIndexState !== 'error') { const empty = document.createElement('p'); empty.className = 'search-empty'; empty.setAttribute('role', 'status'); empty.textContent = text[language].emptySearch; root.append(empty); }
+    if (!root.querySelector('.search-result') && !pending && commandIndexState !== 'error') { const empty = document.createElement('p'); empty.className = 'search-empty'; empty.setAttribute('role', 'status'); empty.textContent = text[language].emptySearch; root.append(empty); }
     if (pending || commandIndexState === 'error') { const state = document.createElement('p'); state.className = 'search-empty'; state.setAttribute('role','status'); state.textContent = text[language][pending ? 'searchLoading' : 'searchFailed']; root.append(state); }
     const all = document.createElement('a'); all.className = 'search-reference-link'; all.href = commandLink('', query); all.textContent = text[language].searchAll + ' ↗'; root.append(all);
     if (focusedId && $('search-dialog').open) [...root.querySelectorAll('button')].find(button => button.dataset.searchId === focusedId)?.focus({preventScroll:true});
@@ -408,11 +413,32 @@
   }
   $('feature-tabs').addEventListener('keydown', event => tabKeys(event, '[role="tab"]', 'id', selectFeature, true));
   $('feature-mobile').addEventListener('change', () => selectFeature($('feature-mobile').value));
-  $('scenario-mobile').addEventListener('change', () => selectScenario($('scenario-mobile').value));
-  matchMedia('(max-width: 39.99rem)').addEventListener('change', () => selectScenario(currentScenario));
-  document.querySelector('.scenario-tabs').addEventListener('keydown', event => tabKeys(event, '[role="tab"]', 'data-scenario', selectScenario));
+  $('confirmation-alias').addEventListener('input', () => { confirmationState = 'default'; renderConfirmation(); });
+  $('confirmation-form').addEventListener('submit', event => {
+    event.preventDefault();
+    // Inert explanation of confirmTyped's trimmed, exact alias match. No authorization is issued.
+    confirmationState = $('confirmation-alias').value.trim() === 'demo-test' ? 'success' : 'error';
+    renderConfirmation();
+  });
+  $('lab-confirmation-link').addEventListener('click', event => { event.preventDefault(); $('confirm-guide').open = true; $('confirmation-alias').focus({ preventScroll: true }); $('confirm-guide').scrollIntoView({ block: 'nearest' }); });
   document.querySelector('.install-tabs').addEventListener('keydown', event => tabKeys(event, '[role="tab"]', 'data-install', selectInstall));
-  document.querySelectorAll('[data-scenario]').forEach(button => button.addEventListener('click', () => selectScenario(button.dataset.scenario)));
+  document.querySelector('.credential-tabs').addEventListener('keydown', event => tabKeys(event, '[role="tab"]', 'data-credential', selectCredential));
+  document.querySelectorAll('[data-credential]').forEach(button => button.addEventListener('click', () => selectCredential(button.dataset.credential)));
+  document.addEventListener('ssh-cli-flow-change', () => { selectCredential(currentCredential); renderLab(); });
+  document.querySelector('[data-open-credential-details]').addEventListener('click', () => { $('credential-details').open = true; });
+  $('copy-credential').addEventListener('click', async () => {
+    const generation = ++credentialGeneration, command = credentials[currentCredential].command;
+    $('copy-credential').disabled = true; $('copy-credential').dataset.state = 'loading'; setText('copy-credential', text[language].copying);
+    try {
+      await navigator.clipboard.writeText(command);
+      if (generation !== credentialGeneration) return;
+      setText('copy-credential', text[language].copied); setText('credential-copy-status', text[language].copySuccess); $('copy-credential').dataset.state = 'success';
+    } catch {
+      if (generation !== credentialGeneration) return;
+      setText('copy-credential', text[language].copyCommand); setText('credential-copy-status', text[language].copyError); $('copy-credential').dataset.state = 'error';
+      $('credential-manual-copy').hidden = false; $('credential-manual-copy').value = command; $('credential-manual-copy').focus({ preventScroll: true }); $('credential-manual-copy').select();
+    } finally { if (generation === credentialGeneration) $('copy-credential').disabled = false; }
+  });
   document.querySelectorAll('[data-install]').forEach(button => button.addEventListener('click', () => selectInstall(button.dataset.install)));
   $('language').addEventListener('click', () => { language = language === 'zh' ? 'en' : 'zh'; try { localStorage.setItem('ssh-cli-site-language', language); } catch { /* Preference persistence is optional. */ } renderLanguage(); });
   $('copy-install').addEventListener('click', async () => {
