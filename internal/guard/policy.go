@@ -491,6 +491,11 @@ func Decide(eff Effective, command string) (dec Decision) {
 		}
 	}
 	for _, c := range pr.commands {
+		if c.scriptFile && eff.Mode == config.ModeReadonly {
+			dec.Allowed = false
+			dec.Findings = append(dec.Findings, Finding{Layer: "mode", Kind: "deny", Detail: "readonly mode refuses remote script files whose contents are not inspected"})
+			continue
+		}
 		if blocked := applyDangerousCommand(&dec, &notes, seenNote, eff, c.args); blocked {
 			continue
 		}

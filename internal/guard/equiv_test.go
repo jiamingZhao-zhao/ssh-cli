@@ -26,11 +26,6 @@ func TestLifecycleEquivalence(t *testing.T) {
 		"apps.sh stop",
 		"apps.sh start",
 		"sh -c 'docker stop nginx && docker start nginx'",
-		"sh ./restart.sh",
-		"./restart.sh",
-		"/opt/app/restart.sh --force",
-		"source ./restart.sh",
-		". /opt/app/restart.sh",
 	} {
 		d := Decide(std, cmd)
 		if !d.Allowed || !d.NeedsConfirm {

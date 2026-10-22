@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strings"
 
 	"golang.org/x/term"
@@ -40,7 +39,7 @@ func (a *App) supplyPhrase(expect string) (string, error) {
 	if !ttyCheck() {
 		return "", exitcode.New(exitcode.Denied, "type %q to confirm; non-interactive callers are refused", expect)
 	}
-	f, err := os.OpenFile(devTTY(), os.O_RDWR, 0)
+	f, err := openTTY()
 	if err != nil {
 		return "", exitcode.New(exitcode.Denied, "confirmation requires an interactive TTY")
 	}
@@ -61,7 +60,7 @@ func confirmOutflow(yes bool) error {
 	if !ttyCheck() {
 		return exitcode.New(exitcode.Denied, "type %q to confirm; non-interactive callers are refused", guard.OutflowPhrase)
 	}
-	f, err := os.OpenFile(devTTY(), os.O_RDWR, 0)
+	f, err := openTTY()
 	if err != nil {
 		return exitcode.New(exitcode.Denied, "type %q to confirm; confirmation requires an interactive TTY", guard.OutflowPhrase)
 	}
@@ -79,7 +78,7 @@ func confirmAlias(alias string, yes bool) error {
 	if !ttyCheck() {
 		return exitcode.New(exitcode.Denied, "host %s requires confirmation; non-interactive callers are refused", alias)
 	}
-	f, err := os.OpenFile(devTTY(), os.O_RDWR, 0)
+	f, err := openTTY()
 	if err != nil {
 		return exitcode.New(exitcode.Denied, "host %s requires confirmation on an interactive TTY", alias)
 	}
@@ -118,7 +117,7 @@ func readPassword(in io.Reader, errw io.Writer, fromStdin bool) (string, error) 
 	if !ttyCheck() {
 		return "", exitcode.New(exitcode.Usage, "password prompt requires a TTY; use --password-stdin")
 	}
-	f, err := os.OpenFile(devTTY(), os.O_RDWR, 0)
+	f, err := openTTY()
 	if err != nil {
 		return "", exitcode.New(exitcode.Usage, "password prompt requires a TTY; use --password-stdin")
 	}
