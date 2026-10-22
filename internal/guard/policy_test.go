@@ -702,11 +702,30 @@ func TestFileChangeProtectedSourceAndChildren(t *testing.T) {
 		t.Fatalf("readonly rename: %+v", d)
 	}
 	term := DecideTerminal(ro)
-	if term.Allowed {
+	if !term.Allowed || term.NeedsConfirm {
 		t.Fatalf("readonly terminal: %+v", term)
 	}
 	if d := DecideTerminal(eff); !d.Allowed || d.NeedsConfirm {
 		t.Fatalf("standard terminal: %+v", d)
+	}
+}
+
+func TestTerminalModeIndependentAndOutflowRestricted(t *testing.T) {
+	for _, mode := range []config.Mode{config.ModeReadonly, config.ModeStandard, config.ModeAdmin} {
+		t.Run(string(mode), func(t *testing.T) {
+			eff := Effective{Mode: mode, AllowEmpty: true, Deny: []string{"*"}, Confirm: []string{"*"}}
+			if d := DecideTerminal(eff); !d.Allowed || d.NeedsConfirm || d.Mode != string(mode) {
+				t.Fatalf("command rules blocked terminal: %+v", d)
+			}
+			if d := Decide(eff, "echo still-denied"); d.Allowed {
+				t.Fatalf("terminal admission relaxed command policy: %+v", d)
+			}
+			eff.NoDataOut = true
+			d := DecideTerminal(eff)
+			if d.Allowed || d.NeedsConfirm || len(d.Findings) != 1 || d.Findings[0].Layer != "env" || !strings.Contains(d.Findings[0].Detail, "noDataOutflow") {
+				t.Fatalf("terminal bypassed outflow restriction: %+v", d)
+			}
+		})
 	}
 }
 

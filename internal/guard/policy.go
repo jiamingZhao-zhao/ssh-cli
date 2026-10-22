@@ -668,20 +668,15 @@ func DecideService(eff Effective, action string) Decision {
 }
 
 // DecideTerminal reports whether an interactive PTY may be opened.
-// Readonly mode, including prod, cannot enforce its allow-list on a free
-// shell, so the PTY is refused. The decision does not read request headers.
+// The web terminal is an unrestricted shell using the remote account's rights;
+// command modes and allow/deny/confirm rules apply to controlled execution only.
+// noDataOutflow still forbids a PTY because its output cannot be suppressed.
 func DecideTerminal(eff Effective) Decision {
 	dec := Decision{Mode: string(eff.Mode), Allowed: true}
 	if eff.NoDataOut {
 		dec.Allowed = false
 		dec.Findings = append(dec.Findings, Finding{
 			Layer: "env", Kind: "deny", Detail: "noDataOutflow refuses an unrestricted terminal",
-		})
-	}
-	if eff.Mode == config.ModeReadonly {
-		dec.Allowed = false
-		dec.Findings = append(dec.Findings, Finding{
-			Layer: "mode", Kind: "deny", Detail: "readonly mode refuses an unrestricted terminal",
 		})
 	}
 	return dec
