@@ -1,4 +1,4 @@
-"""Generate/check command metadata from a v0.7.31 binary's help output only.
+"""Generate/check command metadata from a v0.7.37 binary's help output only.
 
 python website/tools/command-reference.py --cli /path/to/ssh-cli [--check]
 Every inventory request ends in --help and uses an isolated config directory.
@@ -17,8 +17,8 @@ parser.add_argument('--check', action='store_true')
 args = parser.parse_args()
 binary = args.cli.resolve(strict=True)
 version = subprocess.check_output([str(binary), 'version'], text=True).strip()
-if version.split()[:2] != ['ssh-cli', '0.7.31']:
-    raise SystemExit('Use a binary built from v0.7.31.')
+if version.split()[:2] != ['ssh-cli', '0.7.37']:
+    raise SystemExit('Use a binary built from v0.7.37.')
 
 headings = {'Usage:', 'Aliases:', 'Examples:', 'Available Commands:', 'Flags:', 'Global Flags:', 'Additional help topics:'}
 
@@ -123,7 +123,7 @@ for command in commands:
         '--' + flag['name'] + (' -' + flag['short'] if flag['short'] else '')
         for flag in command['flags'] + command['globalFlags']
     )
-data = {'version': '0.7.31', 'commit': '5e52d45c277783352d699d7abf2779275a0f2f47', 'commands': commands}
+data = {'version': '0.7.37', 'commit': '5ab4e72cf7a9ceb7c9e6d38b7646fe1fa6cc7811', 'commands': commands}
 index = {'version': data['version'], 'commands': [
     {key: command[key] for key in ('id', 'path', 'summary', 'category', 'searchFlags')} |
     {'title': command['note']['title'], 'effect': command['note']['effect']}
