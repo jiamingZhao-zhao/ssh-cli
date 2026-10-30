@@ -309,3 +309,17 @@ ssh-cli policy sign
 ```
 
 `session run` 在同一个进程里复用一个 shell，命令结束后关闭。空闲默认 5 分钟，最长 60 分钟，忙着也会到点关闭；本机终端会先写出提示，并在页面上显示横幅。连接大约每 30 秒发送 SSH keepalive，对端没有应答就关闭，避免空闲或半开连接把终端和旁边的概况、文件面板挂死。另开一个进程看不到这些会话。UI 进程是会话的持有者。普通 `exec` 每次仍是一条新连接，不会自动复用。要复用必须先在另一个终端运行 `ssh-cli daemon serve`，再对字面量命令使用 `exec --daemon`。daemon 不自动启动，不接受需要确认的命令，不执行 `--stdin`、`--script` 或 `--forward-stdin`，也不覆盖文件传输，失败不重试。`relay` 只经本机转发一个文件，并用远端 `sha256sum`（否则 `md5sum`）核对。配置包保存主机、策略和密钥引用，不写密码明文，也不改 `secrets.json`。
+
+## 排查效率迭代（合并后版本）
+
+readonly 新增网络、路径与过滤查询，允许静态 /dev/null 输出和标准输出／错误流合并。ip 只放行 addr/address/route 查询；hostname 设名、sort -o、file -C、find 执行／删除／文件输出仍被拒绝。自定义白名单不自动扩大。拒绝 JSON 的 denials[].decision.findings[] 带具体 command（可定位时）和原因。
+
+```sh
+ssh-cli exec -H app --auto-daemon --max-line-bytes 512 --max-output-bytes 16384 --json -- "ps -ef | grep nginx; ip addr"
+ssh-cli host metadata app --lan-ip 192.168.0.42 --role nginx --entrypoint zibo-prod
+ssh-cli host list --json
+```
+
+- --auto-daemon 显式启用按需启动，只接收无需确认的 readonly exec。新进程空闲 180 秒退出；已有手动 daemon 保持自己的生命周期。沿用 via、身份失效、主机密钥和审计检查。需要支持 AF_UNIX 的系统；不自动重放或失败回退直连，没有未经实测的倍数承诺。
+- 两个输出限制默认 0，保持兼容。分别限制每行及每个 stdout/stderr 流保留的字节，仍消费完远端输出、保留退出码。JSON 标记 truncated；普通输出给警告。复用服务已有 64 KiB 上限仍生效。截断不代表业务成功。
+- lanIp、publicIp、roles、entrypoints 是人工维护的描述元数据，不修改 SSH 连接地址、via 或权限。metadata 命令只替换传入字段；IP 和列表可用空字符串清除。角色／入口列表最多各 32 项、每项 128 字节。未填写不新增 JSON 字段。

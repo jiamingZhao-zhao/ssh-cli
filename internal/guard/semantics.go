@@ -16,6 +16,10 @@ func semanticDeny(mode config.Mode, args []Arg) string {
 	}
 	name := path.Base(args[0].Value)
 	switch name {
+	case "ip", "hostname", "file", "sort", "find":
+		if mode == config.ModeReadonly {
+			return investigationDeny(name, args)
+		}
 	case "journalctl":
 		return journalctlDeny(mode, args)
 	case "ss":
@@ -25,6 +29,7 @@ func semanticDeny(mode config.Mode, args []Arg) string {
 	default:
 		return ""
 	}
+	return ""
 }
 
 // ssDeny rejects socket-killing and diag-file options. The readonly allow-list
@@ -111,6 +116,10 @@ func journalctlDeny(mode config.Mode, args []Arg) string {
 		}
 		name, _, _ := strings.Cut(a.Value, "=")
 		switch name {
+		case "ip", "hostname", "file", "sort", "find":
+			if mode == config.ModeReadonly {
+				return investigationDeny(name, args)
+			}
 		case "--vacuum-size", "--vacuum-time", "--vacuum-files", "--rotate", "--flush", "--sync", "--relinquish-var", "--setup-keys", "--force":
 			return "journalctl mutating flag " + name
 		}

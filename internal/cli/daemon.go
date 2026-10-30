@@ -16,6 +16,7 @@ import (
 	"os/signal"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
@@ -29,9 +30,10 @@ import (
 )
 
 type daemonRequest struct {
-	Alias   string        `json:"alias"`
-	Command string        `json:"command"`
-	Timeout time.Duration `json:"timeout"`
+	Readonly bool          `json:"readonly,omitempty"`
+	Alias    string        `json:"alias"`
+	Command  string        `json:"command"`
+	Timeout  time.Duration `json:"timeout"`
 }
 type daemonReply struct {
 	Code         int    `json:"code"`
@@ -49,15 +51,22 @@ func daemonPaths(dir string) (string, string) {
 
 func (a *App) daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{Use: "daemon", Short: "Optional local connection reuse for non-confirming exec calls"}
-	cmd.AddCommand(&cobra.Command{Use: "serve", Short: "Run the local reuse service in the foreground until interrupted", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+	var idleExit time.Duration
+	serve := &cobra.Command{Use: "serve", Short: "Run the local reuse service in the foreground until interrupted", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
 		ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 		defer stop()
-		return a.serveDaemon(ctx)
-	}})
+		if idleExit < 0 {
+			return fmt.Errorf("idle exit must be non-negative")
+		}
+		return a.serveDaemonWithIdle(ctx, idleExit)
+	}}
+	serve.Flags().DurationVar(&idleExit, "idle-exit", 0, "exit after this idle duration (0: keep running)")
+	cmd.AddCommand(serve)
 	return cmd
 }
 
-func (a *App) serveDaemon(ctx context.Context) error {
+func (a *App) serveDaemon(ctx context.Context) error { return a.serveDaemonWithIdle(ctx, 0) }
+func (a *App) serveDaemonWithIdle(ctx context.Context, idleExit time.Duration) error {
 	if err := os.MkdirAll(a.Dir, 0o700); err != nil {
 		return err
 	}
@@ -139,6 +148,42 @@ func (a *App) serveDaemon(ctx context.Context) error {
 	defer stopLoop()
 	go pool.Loop(loopCtx)
 	slots := make(chan struct{}, 4)
+	var activityMu sync.Mutex
+	lastActivity := time.Now()
+	active := 0
+	closing := false
+	expired := make(chan struct{})
+	if idleExit > 0 {
+		go func() {
+			interval := idleExit / 4
+			if interval > time.Second {
+				interval = time.Second
+			}
+			if interval < time.Millisecond {
+				interval = time.Millisecond
+			}
+			tick := time.NewTicker(interval)
+			defer tick.Stop()
+			for {
+				select {
+				case <-loopCtx.Done():
+					return
+				case <-tick.C:
+					activityMu.Lock()
+					should := active == 0 && time.Since(lastActivity) >= idleExit
+					if should {
+						closing = true
+					}
+					activityMu.Unlock()
+					if should {
+						close(expired)
+						return
+					}
+				}
+			}
+		}()
+	}
+
 	handler := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json; charset=utf-8")
 		got := r.Header.Get("Authorization")
@@ -150,6 +195,15 @@ func (a *App) serveDaemon(ctx context.Context) error {
 			http.NotFound(w, r)
 			return
 		}
+		activityMu.Lock()
+		if closing {
+			activityMu.Unlock()
+			http.Error(w, "daemon exiting; command not started", 503)
+			return
+		}
+		active++
+		activityMu.Unlock()
+		defer func() { activityMu.Lock(); active--; lastActivity = time.Now(); activityMu.Unlock() }()
 		select {
 		case slots <- struct{}{}:
 			defer func() { <-slots }()
@@ -169,6 +223,10 @@ func (a *App) serveDaemon(ctx context.Context) error {
 	go func() { done <- server.Serve(ln) }()
 	fmt.Fprintln(a.Err, "Local reuse service ready. CLI exec --daemon uses this service; Ctrl+C closes pooled connections.")
 	select {
+	case <-expired:
+		_ = server.Close()
+		pool.Shutdown()
+		return nil
 	case <-ctx.Done():
 		pool.Shutdown()
 		_ = server.Close()
@@ -196,6 +254,9 @@ func (a *App) daemonExec(parent context.Context, pool *session.Pool, in daemonRe
 		return fail(err)
 	}
 	dec := guard.Decide(eff, in.Command)
+	if in.Readonly && eff.Mode != config.ModeReadonly {
+		return fail(fmt.Errorf("automatic reuse requires readonly policy"))
+	}
 	if !dec.Allowed || dec.NeedsConfirm {
 		result := fail(fmt.Errorf("reuse service refuses denied or confirmation-required commands; use direct CLI with a TTY"))
 		_, auditErr := audit.Append(a.Dir, audit.Record{Op: audit.OpPolicyCheck, Host: h.Alias, Group: h.Group, Env: h.EnvName, Command: in.Command, Status: audit.StatusDenied, DeniedByPolicy: true, Source: audit.SourceCLI, Reason: "reuse_policy_check"})
@@ -281,7 +342,7 @@ func (a *App) runViaDaemon(p planned, command string, stdout, stderr io.Writer, 
 	if err != nil {
 		return 0, exitcode.New(exitcode.Connect, "reuse daemon unavailable; start ssh-cli daemon serve: %s", err.Error())
 	}
-	body, err := json.Marshal(daemonRequest{p.host.Alias, command, timeout})
+	body, err := json.Marshal(daemonRequest{Alias: p.host.Alias, Command: command, Timeout: timeout, Readonly: a.AutoDaemon})
 	if err != nil {
 		return 0, err
 	}
@@ -325,6 +386,12 @@ func (a *App) runViaDaemon(p planned, command string, stdout, stderr io.Writer, 
 	_, _ = io.WriteString(stdout, result.Stdout)
 	_, _ = io.WriteString(stderr, result.Stderr)
 	if result.Truncated {
+		if w, ok := stdout.(*outputLimiter); ok {
+			w.cut = true
+		}
+		if w, ok := stderr.(*outputLimiter); ok {
+			w.cut = true
+		}
 		fmt.Fprintln(a.Err, "warning: reuse output truncated to 64 KiB per stream")
 	}
 	return result.Code, nil

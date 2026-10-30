@@ -46,7 +46,7 @@ jobs:
       - name: UI behavior and UTF-8 regressions
         run: node --test scripts/ui.test.cjs
       - name: native console and script policy regressions
-        run: go test ./internal/cli ./internal/guard -run 'Test(WindowsConsole.*|StaticScriptFilePolicy|ScriptFileExplicitRules|ScriptFileDoesNotRelaxDynamicOrInlineChecks|PlanConfirmationExplainsRule)$' -count=1 -timeout 60s
+        run: go test ./internal/cli ./internal/guard -run 'Test(ReadonlyInvestigation|OutputLimitsDrainAndReset|OutputLimitUTF8|DaemonIdleExitCleansSocket|InventoryMetadataAndDenialJSON|WindowsConsole.*|StaticScriptFilePolicy|ScriptFileExplicitRules|ScriptFileDoesNotRelaxDynamicOrInlineChecks|PlanConfirmationExplainsRule)$' -count=1 -timeout 60s
       - name: safety completion regressions
         shell: bash
         run: go test ./internal/cli ./internal/ui ./internal/audit ./internal/transfer ./internal/metrics ./internal/guard ./internal/sshclient -run 'Test(Integrity.*|ShortPasswordRedaction|UploadReaderPreservesOriginal|DownloadCancelPreservesOriginal|RelayFailureAndSymlinkPreserveOriginal|Elevation.*|DaemonIPC|DaemonReusesConnectionAndRechecksPolicy|ParallelBoundAndPartialSnapshot|AgentAuthenticationWithoutPrivateKeyFile|SessionExpiredRejectedBeforeDispatch|AuditPreflightStopsDispatch|TransferAdmissionAndMalformedControls)$' -count=1
