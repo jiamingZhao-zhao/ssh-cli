@@ -13,7 +13,7 @@ func TestReadonlyInvestigation(t *testing.T) {
 			t.Errorf("query %s: %+v", s, d)
 		}
 	}
-	for _, s := range []string{"ls >/tmp/out", "ls >&/tmp/out", "ls >/dev/null; rm /tmp/x", "ls >$DEST", "ls >$(touch /tmp/x)", "ip route add default via 192.0.2.1", "ip addr flush dev eth0", "ip -batch /tmp/cmd", "hostname changed", "file -C", "sort -o /tmp/x", "sort --out=/tmp/x", "sort --compress-program=sh", "find / -delete", "find / -exec touch /tmp/x \\;", "find / -execdir sh \\;", "find / -fprint /tmp/x"} {
+	for _, s := range []string{">/tmp/out", "ls; >/tmp/out", "ls >/tmp/out", "ls >&/tmp/out", "ls >/dev/null; rm /tmp/x", "ls >$DEST", "ls >$(touch /tmp/x)", "ip route add default via 192.0.2.1", "ip addr flush dev eth0", "ip -batch /tmp/cmd", "hostname changed", "file -C", "sort -o /tmp/x", "sort --out=/tmp/x", "sort --compress-program=sh", "find / -delete", "find / -exec touch /tmp/x \\;", "find / -execdir sh \\;", "find / -fprint /tmp/x"} {
 		if d := Decide(eff, s); d.Allowed {
 			t.Errorf("mutation allowed: %s", s)
 		}

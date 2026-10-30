@@ -94,7 +94,7 @@ func (p *parsed) feed(src string) {
 }
 
 func (p *parsed) stmt(s *syntax.Stmt) {
-	if s == nil || s.Cmd == nil {
+	if s == nil {
 		return
 	}
 	if _, ok := s.Cmd.(*syntax.BinaryCmd); ok {
