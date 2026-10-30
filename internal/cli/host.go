@@ -17,7 +17,7 @@ func (a *App) hostCmd() *cobra.Command {
 		Use:   "host",
 		Short: "Manage hosts",
 	}
-	cmd.AddCommand(a.hostAdd(), a.hostList(), a.hostRemove(), a.hostEdit())
+	cmd.AddCommand(a.hostAdd(), a.hostList(), a.hostRemove(), a.hostEdit(), a.hostMetadata())
 	return cmd
 }
 
@@ -152,6 +152,10 @@ func (a *App) hostList() *cobra.Command {
 				Tags        []string `json:"tags,omitempty"`
 				Policy      string   `json:"policy,omitempty"`
 				PasswordRef string   `json:"passwordRef,omitempty"`
+				LANIP       string   `json:"lanIp,omitempty"`
+				PublicIP    string   `json:"publicIp,omitempty"`
+				Roles       []string `json:"roles,omitempty"`
+				Entrypoints []string `json:"entrypoints,omitempty"`
 			}
 			views := make([]view, 0, len(aliases))
 			for _, alias := range aliases {
@@ -161,7 +165,7 @@ func (a *App) hostList() *cobra.Command {
 					Host: h.Host.Host, Port: h.Host.PortOrDefault(), User: h.Host.User,
 					AgentKey: h.Host.AgentKey, Auth: authLabel(h.Host), Via: strings.TrimSpace(h.Host.Via),
 					Tags: h.Host.Tags, Policy: h.Host.Policy,
-					PasswordRef: h.Host.PasswordRef,
+					PasswordRef: h.Host.PasswordRef, LANIP: h.Host.LANIP, PublicIP: h.Host.PublicIP, Roles: h.Host.Roles, Entrypoints: h.Host.Entrypoints,
 				})
 			}
 			if a.JSON {

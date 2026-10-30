@@ -11,6 +11,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -185,6 +186,11 @@ type Group struct {
 
 // Host is connection info plus optional tighter policy. It has no env field.
 type Host struct {
+	LANIP       string   `yaml:"lanIp,omitempty" json:"lanIp,omitempty"`
+	PublicIP    string   `yaml:"publicIp,omitempty" json:"publicIp,omitempty"`
+	Roles       []string `yaml:"roles,omitempty" json:"roles,omitempty"`
+	Entrypoints []string `yaml:"entrypoints,omitempty" json:"entrypoints,omitempty"`
+
 	Host           string        `yaml:"host"`
 	Port           int           `yaml:"port,omitempty"`
 	User           string        `yaml:"user"`
@@ -571,6 +577,19 @@ func (c *Config) Validate() error {
 			}
 			if h.User == "" {
 				return fmt.Errorf("host %q: user is required", alias)
+			}
+			for _, ip := range []string{h.LANIP, h.PublicIP} {
+				if ip != "" && net.ParseIP(ip) == nil {
+					return fmt.Errorf("host %q: metadata IP must be an IP literal", alias)
+				}
+			}
+			if len(h.Roles) > 32 || len(h.Entrypoints) > 32 {
+				return fmt.Errorf("host %q: at most 32 metadata labels per list", alias)
+			}
+			for _, label := range append(append([]string{}, h.Roles...), h.Entrypoints...) {
+				if len(label) > 128 || strings.ContainsAny(label, "\r\n\x00") {
+					return fmt.Errorf("host %q: invalid metadata label", alias)
+				}
 			}
 			if h.Port < 0 || h.Port > 65535 {
 				return fmt.Errorf("host %q: invalid port %d", alias, h.Port)

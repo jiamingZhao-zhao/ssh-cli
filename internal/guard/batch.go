@@ -15,9 +15,9 @@ const (
 
 // HostDecision is one host's preflight result.
 type HostDecision struct {
-	Alias    string
-	Env      string
-	Decision Decision
+	Alias    string   `json:"host"`
+	Env      string   `json:"env"`
+	Decision Decision `json:"decision"`
 }
 
 // CrossEnv reports whether the selection spans more than one environment.

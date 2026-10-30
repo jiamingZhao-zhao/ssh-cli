@@ -71,6 +71,7 @@ func (a *App) plan(cfg *config.Config, hosts []config.ResolvedHost, meta auditMe
 	if err != nil {
 		for _, p := range all {
 			if !p.dec.Allowed {
+				a.PolicyDenials = append(a.PolicyDenials, guard.HostDecision{Alias: p.host.Alias, Env: p.host.EnvName, Decision: p.dec})
 				a.logDenial(meta, p.host, &p.dec, "")
 			}
 		}

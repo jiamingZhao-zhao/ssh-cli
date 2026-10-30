@@ -13,9 +13,10 @@ import (
 
 // Finding explains one rule that affected a decision.
 type Finding struct {
-	Layer  string `json:"layer"`
-	Kind   string `json:"kind"`
-	Detail string `json:"detail"`
+	Layer   string `json:"layer"`
+	Kind    string `json:"kind"`
+	Detail  string `json:"detail"`
+	Command string `json:"command,omitempty"`
 }
 
 // Decision is the result of checking one command or capability.
@@ -521,7 +522,7 @@ func Decide(eff Effective, command string) (dec Decision) {
 		}
 		if why := semanticDeny(eff.Mode, c.args); why != "" {
 			dec.Allowed = false
-			dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why})
+			dec.Findings = append(dec.Findings, Finding{Layer: "builtin", Kind: "deny", Detail: why + ": " + renderArgs(c.args), Command: renderArgs(c.args)})
 			continue
 		}
 		for _, l := range eff.layers {
@@ -539,14 +540,14 @@ func Decide(eff Effective, command string) (dec Decision) {
 			if !l.allow.allows(c.args) {
 				dec.Allowed = false
 				dec.Findings = append(dec.Findings, Finding{
-					Layer: l.name, Kind: "allow", Detail: "not in allow-list",
+					Layer: l.name, Kind: "allow", Detail: "not in allow-list: " + renderArgs(c.args), Command: renderArgs(c.args),
 				})
 			}
 		}
 		if !eff.fallback.universal && !eff.fallback.allows(c.args) {
 			dec.Allowed = false
 			dec.Findings = append(dec.Findings, Finding{
-				Layer: "mode", Kind: "allow", Detail: "not in the built-in readonly whitelist",
+				Layer: "mode", Kind: "allow", Detail: "not in the built-in readonly whitelist: " + renderArgs(c.args), Command: renderArgs(c.args),
 			})
 		}
 		for _, l := range eff.layers {

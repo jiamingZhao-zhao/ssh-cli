@@ -24,6 +24,7 @@ func (a *App) execCmd() *cobra.Command {
 	var allowOutflow bool
 	var parallel int
 	var forwardStdin bool
+	var autoDaemon bool
 	cmd := &cobra.Command{
 		Use:   "exec [--] <command>",
 		Short: "Run a remote command",
@@ -55,6 +56,9 @@ with --script or --stdin. --script and --stdin still send a script body.
 policy show -H <host> lists the gates before you run a command. It does
 not connect.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if a.MaxLineBytes < 0 || a.MaxOutputBytes < 0 {
+				return exitcode.New(exitcode.Usage, "output limits must be non-negative")
+			}
 			if err := a.rejectYesWithoutTTY(); err != nil {
 				return err
 			}
@@ -135,9 +139,27 @@ not connect.`,
 			if err != nil {
 				return err
 			}
+			if autoDaemon {
+				if a.UseDaemon || script != "" || fromStdin || forwardStdin || a.Insecure {
+					return exitcode.New(exitcode.Usage, "--auto-daemon requires literal exec, verified host keys, and no --daemon/stdin/script")
+				}
+				for _, p := range plan {
+					if p.eff.Mode != "readonly" || p.dec.NeedsConfirm {
+						return exitcode.New(exitcode.Denied, "--auto-daemon requires non-confirming readonly targets")
+					}
+				}
+				if err := a.ensureAutoDaemon(); err != nil {
+					return err
+				}
+				a.UseDaemon = true
+				a.AutoDaemon = true
+			}
 			return a.runAll(meta, plan, remote, scriptBody, dur, allowOutflow, parallel, stdin, warnings)
 		},
 	}
+	cmd.Flags().BoolVar(&autoDaemon, "auto-daemon", false, "start/reuse a local daemon for readonly exec; exits after 180 idle seconds")
+	cmd.Flags().IntVar(&a.MaxLineBytes, "max-line-bytes", 0, "retain at most N bytes per output line (0: unlimited)")
+	cmd.Flags().IntVar(&a.MaxOutputBytes, "max-output-bytes", 0, "retain at most N bytes per stdout/stderr stream (0: unlimited)")
 	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds); also bounds SSH connect")
 	cmd.Flags().StringVar(&script, "script", "", "read the remote script from a file")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read the remote script from stdin")
@@ -148,6 +170,7 @@ not connect.`,
 }
 
 type execResult struct {
+	Truncated        bool   `json:"truncated,omitempty"`
 	Host             string `json:"host"`
 	Group            string `json:"group"`
 	Env              string `json:"env"`
@@ -201,8 +224,15 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 			stdout = io.MultiWriter(a.Out, outCap)
 			stderr = io.MultiWriter(a.Err, errCap)
 		}
+		outLimit := &outputLimiter{dst: stdout, maxLine: a.MaxLineBytes, maxTotal: a.MaxOutputBytes}
+		errLimit := &outputLimiter{dst: stderr, maxLine: a.MaxLineBytes, maxTotal: a.MaxOutputBytes}
+		stdout, stderr = outLimit, errLimit
 		start := time.Now()
 		code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, stdin, timeout)
+		res.Truncated = outLimit.cut || errLimit.cut
+		if res.Truncated && !a.JSON {
+			fmt.Fprintln(a.Err, "warning: output truncated; remote command was drained, not replayed")
+		}
 		hostMeta := meta
 		hostMeta.started = start
 		if runErr != nil {
@@ -222,7 +252,7 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 		if runErr != nil {
 			extra = runErr.Error()
 		}
-		summary := summarizeOutputs(outCap.buf.String(), errCap.buf.String(), outCap.cut || errCap.cut, extra)
+		summary := summarizeOutputs(outCap.buf.String(), errCap.buf.String(), outCap.cut || errCap.cut || res.Truncated, extra)
 		if suppress {
 			summary = guard.OutflowDiscarded
 			if extra != "" {
@@ -333,8 +363,15 @@ func (a *App) execCaptured(meta auditMeta, p planned, remote, scriptBody string,
 		stdout = io.MultiWriter(&outBuf, outCap)
 		stderr = io.MultiWriter(&errBuf, errCap)
 	}
+	outLimit := &outputLimiter{dst: stdout, maxLine: a.MaxLineBytes, maxTotal: a.MaxOutputBytes}
+	errLimit := &outputLimiter{dst: stderr, maxLine: a.MaxLineBytes, maxTotal: a.MaxOutputBytes}
+	stdout, stderr = outLimit, errLimit
 	start := time.Now()
 	code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, nil, timeout)
+	res.Truncated = outLimit.cut || errLimit.cut
+	if res.Truncated && !a.JSON {
+		fmt.Fprintln(a.Err, "warning: output truncated; remote command was drained, not replayed")
+	}
 	hostMeta := meta
 	hostMeta.started = start
 	if runErr != nil {
@@ -365,7 +402,7 @@ func (a *App) execCaptured(meta auditMeta, p planned, remote, scriptBody string,
 	if runErr != nil {
 		extra = runErr.Error()
 	}
-	summary := summarizeOutputs(outCap.buf.String(), errCap.buf.String(), outCap.cut || errCap.cut, extra)
+	summary := summarizeOutputs(outCap.buf.String(), errCap.buf.String(), outCap.cut || errCap.cut || res.Truncated, extra)
 	if suppress {
 		summary = guard.OutflowDiscarded
 		if extra != "" {

@@ -121,7 +121,7 @@ func (p *parsed) stmt(s *syntax.Stmt) {
 		if r.Hdoc != nil {
 			p.word(r.Hdoc)
 		}
-		if isWriteRedirect(r.Op) {
+		if isWriteRedirect(r.Op) && !safeNullRedirect(r) {
 			arg := Arg{}
 			if r.Word != nil {
 				arg, _ = p.evalOnly(r.Word)
@@ -722,9 +722,22 @@ func stripCommand(args []Arg) ([]Arg, bool) {
 	return args[i:], true
 }
 
+// Only literal /dev/null sinks are exempt. Expansions are still walked above.
+func safeNullRedirect(r *syntax.Redirect) bool {
+	if r.Word == nil {
+		return false
+	}
+	p := &parsed{}
+	a, _ := p.evalOnly(r.Word)
+	if r.Op == syntax.DplOut {
+		return a.Static && (a.Value == "1" || a.Value == "2")
+	}
+	return a.Static && a.Value == "/dev/null" && (r.Op == syntax.RdrOut || r.Op == syntax.RdrAll || r.Op == syntax.AppOut || r.Op == syntax.AppAll)
+}
+
 func isWriteRedirect(op syntax.RedirOperator) bool {
 	switch op {
-	case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.RdrInOut, syntax.ClbOut:
+	case syntax.RdrOut, syntax.AppOut, syntax.RdrAll, syntax.AppAll, syntax.RdrInOut, syntax.ClbOut, syntax.DplOut:
 		return true
 	default:
 		return false

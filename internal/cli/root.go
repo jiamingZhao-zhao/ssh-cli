@@ -18,6 +18,7 @@ import (
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/policyhmac"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/version"
 )
@@ -40,7 +41,11 @@ type App struct {
 	Env              string
 	Dir              string
 	OperationContext context.Context
+	MaxLineBytes     int
+	MaxOutputBytes   int
+	PolicyDenials    []guard.HostDecision
 	UseDaemon        bool
+	AutoDaemon       bool
 	daemonAdmission  sync.Mutex
 }
 
@@ -94,7 +99,11 @@ func Execute(args []string, in io.Reader, out, errw io.Writer) int {
 	if a.JSON {
 		enc := json.NewEncoder(out)
 		enc.SetEscapeHTML(false)
-		_ = enc.Encode(map[string]any{"ok": false, "error": err.Error(), "code": code})
+		body := map[string]any{"ok": false, "error": err.Error(), "code": code}
+		if len(a.PolicyDenials) > 0 {
+			body["denials"] = a.PolicyDenials
+		}
+		_ = enc.Encode(body)
 	} else {
 		fmt.Fprintf(errw, "error: %s\n", err.Error())
 	}
