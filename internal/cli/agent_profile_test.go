@@ -35,7 +35,7 @@ func TestAgentFlagsAndErrors(t *testing.T) {
 	out.Reset()
 	errout.Reset()
 	code = Execute([]string{"--config", dir, "keys", "--max-output-bytes", "1"}, strings.NewReader(""), &out, &errout)
-	if code != 250 || !strings.Contains(errout.String(), "output limits currently support") {
-		t.Fatalf("keys cannot parse truncated output: %d %s", code, errout.String())
+	if code != 250 || strings.Contains(errout.String(), "output limits support") {
+		t.Fatalf("keys should accept output limits and report a missing target: %d %s", code, errout.String())
 	}
 }

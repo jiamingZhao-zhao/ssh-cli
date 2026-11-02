@@ -22,7 +22,7 @@ func diagnosticDeny(name string, args []Arg) string {
 	switch name {
 	case "env", "printenv":
 		return "readonly refuses environment dumps; use a specific non-secret query"
-	case "curl", "jps", "java", "diff", "sha256sum", "md5sum", "zcat", "zgrep", "zless", "sed", "awk", "docker", "ping", "nc", "lsof":
+	case "curl", "wget", "jps", "java", "diff", "sha256sum", "md5sum", "zcat", "zgrep", "zless", "sed", "awk", "docker", "ping", "nc", "lsof":
 	default:
 		return ""
 	}
@@ -37,6 +37,8 @@ func diagnosticDeny(name string, args []Arg) string {
 	switch name {
 	case "curl":
 		ok = loopbackHEAD(v)
+	case "wget":
+		ok = loopbackWgetHEAD(v)
 	case "jps":
 		ok = true
 		for _, s := range v[1:] {
@@ -104,12 +106,13 @@ func fileQuery(args []string, short string, long map[string]bool, operands int) 
 }
 
 var sedSlice = regexp.MustCompile(`^([0-9]+|\$)(,([0-9]+|\$))?p$`)
-var awkPrint = regexp.MustCompile(`^\{[ \t]*print[ \t]+(\$[0-9]+|NF|NR)([ \t]*,[ \t]*(\$[0-9]+|NF|NR))*[ \t]*\}$`)
+var sedRegexPrint = regexp.MustCompile(`^/(?:[^/\\\r\n]|\\.)+/p$`)
+var awkPrint = regexp.MustCompile(`^(?:/(?:[^/\\\r\n]|\\.)+/[ \t]*)?\{[ \t]*print[ \t]+(\$[0-9]+|NF|NR)([ \t]*,[ \t]*(\$[0-9]+|NF|NR))*[ \t]*\}$`)
 
 func sedQuery(v []string) bool {
 	// Start with the high-frequency slice form; -e/-f and e/r/w commands can
 	// execute programs or access extra files even without -i.
-	return len(v) >= 3 && v[1] == "-n" && sedSlice.MatchString(v[2]) && fileQuery(v[3:], "", map[string]bool{}, -1)
+	return len(v) >= 3 && v[1] == "-n" && (sedSlice.MatchString(v[2]) || sedRegexPrint.MatchString(v[2])) && fileQuery(v[3:], "", map[string]bool{}, -1)
 }
 
 func awkQuery(v []string) bool {
@@ -200,6 +203,55 @@ func loopbackHEAD(v []string) bool {
 	return head && proxy && bounded && urls == 1
 }
 
+// Wget reads startup files and may persist HSTS metadata by default. Permit
+// only a fully explicit GNU Wget HEAD form that disables those behaviours,
+// proxies, redirects and retries. It is intentionally not a general wget rule.
+func loopbackWgetHEAD(v []string) bool {
+	if len(v) < 2 || v[1] != "--no-config" {
+		return false
+	}
+	required := map[string]bool{"--no-proxy": false, "--no-netrc": false, "--no-hsts": false, "--no-cookies": false, "--method=HEAD": false, "--max-redirect=0": false, "--tries=1": false, "--output-document=/dev/null": false}
+	timeout := false
+	urls := 0
+	for _, arg := range v[2:] {
+		if _, ok := required[arg]; ok {
+			required[arg] = true
+			continue
+		}
+		if arg == "--quiet" || arg == "-q" || arg == "--server-response" || arg == "-S" {
+			continue
+		}
+		if strings.HasPrefix(arg, "--timeout=") {
+			n, e := strconv.Atoi(strings.TrimPrefix(arg, "--timeout="))
+			if e != nil || n < 1 || n > 30 {
+				return false
+			}
+			timeout = true
+			continue
+		}
+		if strings.HasPrefix(arg, "-") {
+			return false
+		}
+		u, e := url.Parse(arg)
+		if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Fragment != "" || u.RawQuery != "" || (u.Hostname() != "127.0.0.1" && u.Hostname() != "::1") || strings.ContainsAny(u.EscapedPath(), "{}[]") {
+			return false
+		}
+		if port := u.Port(); port != "" {
+			n, e := strconv.Atoi(port)
+			if e != nil || n < 1 || n > 65535 {
+				return false
+			}
+		}
+		urls++
+	}
+	for _, present := range required {
+		if !present {
+			return false
+		}
+	}
+	return timeout && urls == 1
+}
+
 func boundedPing(v []string) bool {
 	count, host := false, false
 	for i := 1; i < len(v); i++ {
@@ -266,7 +318,11 @@ func diagnosticHost(v string) bool { return net.ParseIP(v) != nil || queryHost.M
 
 var inspectFormats = map[string]bool{
 	"{{json .NetworkSettings.Networks}}": true, "{{json .Mounts}}": true,
-	"{{.State.Status}}": true, "{{.Config.Image}}": true, "{{.Id}}": true,
+	"{{json .NetworkSettings.Ports}}": true, "{{json .HostConfig.PortBindings}}": true,
+	"{{.NetworkSettings.IPAddress}}": true, "{{.State.Status}}": true,
+	"{{.State.Running}}": true, "{{.State.Restarting}}": true,
+	"{{.State.ExitCode}}": true, "{{.State.StartedAt}}": true,
+	"{{.Config.Image}}": true, "{{.Id}}": true, "{{.Name}}": true,
 }
 
 func dockerQuery(v []string) string {

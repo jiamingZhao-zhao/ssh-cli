@@ -166,7 +166,8 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 			if a.MaxLineBytes < 0 || a.MaxOutputBytes < 0 {
 				return exitcode.New(exitcode.Usage, "output limits must be non-negative")
 			}
-			if a.JSON && (cmd.Name() == "exec" || cmd.Name() == "status" || cmd.Name() == "check" || cmd.Name() == "logs" || cmd.Name() == "service") {
+			boundedRead := cmd.Name() == "exec" || cmd.Name() == "status" || cmd.Name() == "check" || cmd.Name() == "logs" || cmd.Name() == "service" || cmd.Name() == "ls" || cmd.Name() == "history" || cmd.Name() == "keys"
+			if a.JSON && boundedRead {
 				if !cmd.Flags().Changed("max-line-bytes") {
 					a.MaxLineBytes = 512
 				}
@@ -175,8 +176,8 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 				}
 			}
 			supportedReuse := cmd.Name() == "exec" || cmd.Name() == "status" || cmd.Name() == "check" || cmd.Name() == "logs" || cmd.Name() == "service"
-			if !supportedReuse && (a.MaxLineBytes > 0 || a.MaxOutputBytes > 0) {
-				return exitcode.New(exitcode.Usage, "output limits currently support exec, status, check, logs and service")
+			if !boundedRead && (a.MaxLineBytes > 0 || a.MaxOutputBytes > 0) {
+				return exitcode.New(exitcode.Usage, "output limits support remote read commands exec, status, check, logs, service, ls, history and keys")
 			}
 			if (a.UseDaemon || a.RequestAuto) && !supportedReuse {
 				return exitcode.New(exitcode.Usage, "connection reuse supports exec, status, check, logs and service only")

@@ -403,8 +403,15 @@
       "title": "前台启动本机连接复用服务",
       "effect": "local-server",
       "example": "ssh-cli daemon serve",
-      "noteZh": "需显式启动，再用 exec --daemon。不会自动启动、失败回退或重试；不接受需要确认的命令、stdin 脚本或文件传输。",
-      "noteEn": "Start explicitly, then use exec --daemon. No auto-start, fallback or retry; confirmation-required commands, stdin scripts and transfers are unsupported."
+      "noteZh": "可手动启动，符合条件的只读查询也会按需启动；发送命令后不自动重试，不接受需要确认的命令、stdin 脚本或文件传输。",
+      "noteEn": "Start manually or let eligible readonly queries start the daemon. No replay after dispatch; confirmation-required commands, stdin scripts and transfers are unsupported."
+    },
+    "daemon-stop": {
+      "title": "停止空闲的本机连接复用服务",
+      "effect": "local-write",
+      "example": "ssh-cli daemon stop",
+      "noteZh": "只停止空闲服务；有命令运行时返回忙碌，不强行中断。",
+      "noteEn": "Stops only an idle service and refuses to interrupt running commands."
     },
     "elevate": {
       "title": "人工确认的单命令破窗操作",

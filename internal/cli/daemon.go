@@ -63,6 +63,9 @@ func (a *App) daemonCmd() *cobra.Command {
 	}}
 	serve.Flags().DurationVar(&idleExit, "idle-exit", 0, "exit after this idle duration (0: keep running)")
 	cmd.AddCommand(serve)
+	cmd.AddCommand(&cobra.Command{Use: "stop", Short: "Stop an idle local reuse daemon", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, _ []string) error {
+		return a.stopReuseDaemon(cmd.Context())
+	}})
 	return cmd
 }
 
@@ -117,6 +120,9 @@ func (a *App) serveDaemonWithIdle(ctx context.Context, idleExit time.Duration) e
 	if err != nil {
 		return err
 	}
+	// Capture once at startup: checking the on-disk path later could identify
+	// a replacement binary rather than this already-running process.
+	digest, digestErr := executableDigest()
 	idle, life := session.DefaultIdle, session.DefaultMaxLife
 	if cfg.Session != nil {
 		idle, err = session.ParseWindow(cfg.Session.Idle, idle)
@@ -154,6 +160,8 @@ func (a *App) serveDaemonWithIdle(ctx context.Context, idleExit time.Duration) e
 	active := 0
 	closing := false
 	expired := make(chan struct{})
+	stopRequested := make(chan struct{})
+	var stopOnce sync.Once
 	if idleExit > 0 {
 		go func() {
 			interval := idleExit / 4
@@ -192,6 +200,27 @@ func (a *App) serveDaemonWithIdle(ctx context.Context, idleExit time.Duration) e
 			http.Error(w, "unauthorized", 401)
 			return
 		}
+		if r.Method == "GET" && r.URL.Path == "/capabilities" {
+			if digestErr != nil {
+				http.Error(w, "daemon binary identity unavailable", http.StatusServiceUnavailable)
+				return
+			}
+			_ = json.NewEncoder(w).Encode(map[string]string{"protocol": "bounded-exec-v1", "executableSha256": digest})
+			return
+		}
+		if r.Method == "POST" && r.URL.Path == "/stop" {
+			activityMu.Lock()
+			if closing || active != 0 {
+				activityMu.Unlock()
+				http.Error(w, "daemon busy or stopping", http.StatusConflict)
+				return
+			}
+			closing = true
+			activityMu.Unlock()
+			_ = json.NewEncoder(w).Encode(map[string]bool{"stopping": true})
+			stopOnce.Do(func() { close(stopRequested) })
+			return
+		}
 		if r.Method != "POST" || r.URL.Path != "/exec" {
 			http.NotFound(w, r)
 			return
@@ -224,6 +253,12 @@ func (a *App) serveDaemonWithIdle(ctx context.Context, idleExit time.Duration) e
 	go func() { done <- server.Serve(ln) }()
 	fmt.Fprintln(a.Err, "Local reuse service ready. CLI exec --daemon uses this service; Ctrl+C closes pooled connections.")
 	select {
+	case <-stopRequested:
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+		defer cancel()
+		_ = server.Shutdown(shutdownCtx)
+		pool.Shutdown()
+		return nil
 	case <-expired:
 		_ = server.Close()
 		pool.Shutdown()

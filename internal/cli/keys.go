@@ -26,6 +26,8 @@ SHA256 fingerprints. The default path is .ssh/authorized_keys, relative to
 the login home. The path is a single literal (no shell syntax, no "..").
 
 cat and ls are checked by the policy engine. The attempt is audited.
+Authorized keys are read with a 1 MiB safety cap. Output limits omit complete
+key records; truncated means the returned list is incomplete.
 
 keys known list and keys known remove manage the local TOFU known_hosts
 file. Removing an entry does not accept a mismatched key while that entry
@@ -71,15 +73,18 @@ func (a *App) keysRemote(pathFlag, timeout string) error {
 		return err
 	}
 	type view struct {
-		Host     string                 `json:"host"`
-		Group    string                 `json:"group"`
-		Env      string                 `json:"env"`
-		Path     string                 `json:"path"`
-		MTime    string                 `json:"mtime,omitempty"`
-		ExitCode int                    `json:"exitCode"`
-		Keys     []remote.AuthorizedKey `json:"keys"`
-		Warnings []string               `json:"warnings,omitempty"`
-		Error    string                 `json:"error,omitempty"`
+		Host             string                 `json:"host"`
+		Group            string                 `json:"group"`
+		Env              string                 `json:"env"`
+		Path             string                 `json:"path"`
+		MTime            string                 `json:"mtime,omitempty"`
+		ExitCode         int                    `json:"exitCode"`
+		Keys             []remote.AuthorizedKey `json:"keys"`
+		Warnings         []string               `json:"warnings,omitempty"`
+		Error            string                 `json:"error,omitempty"`
+		Truncated        bool                   `json:"truncated,omitempty"`
+		StdoutSuppressed bool                   `json:"stdoutSuppressed,omitempty"`
+		Guidance         *guidance              `json:"guidance,omitempty"`
 	}
 	views := make([]view, 0, len(plan))
 	final := 0
@@ -89,8 +94,10 @@ func (a *App) keysRemote(pathFlag, timeout string) error {
 		}
 		a.header(p.host)
 		start := time.Now()
-		outputs, runErr := a.runCommands(p, []string{listCmd, catCmd}, dur)
-		v := view{Host: p.host.Alias, Group: p.host.Group, Env: p.host.EnvName, Path: remotePath, Keys: []remote.AuthorizedKey{}}
+		reader := a.queryCopy(a.OperationContext)
+		reader.MaxLineBytes, reader.MaxOutputBytes = 0, 1<<20
+		outputs, runErr := reader.runCommands(p, []string{listCmd, catCmd}, dur)
+		v := view{Host: p.host.Alias, Group: p.host.Group, Env: p.host.EnvName, Path: remotePath, Keys: []remote.AuthorizedKey{}, StdoutSuppressed: p.eff.NoDataOut}
 		summary := ""
 		if runErr != nil {
 			v.Error = runErr.Error()
@@ -104,8 +111,16 @@ func (a *App) keysRemote(pathFlag, timeout string) error {
 			if len(outputs) > 1 {
 				v.ExitCode = outputs[1].ExitCode
 				keys, warnings := remote.ParseAuthorizedKeys([]byte(outputs[1].Stdout))
-				v.Keys = keys
+				var limited bool
+				v.Keys, limited = limitRecords(keys, a.MaxLineBytes, a.MaxOutputBytes)
+				v.Truncated = outputs[0].Truncated || outputs[1].Truncated || limited
 				v.Warnings = warnings
+				if v.Truncated {
+					v.Warnings = append(v.Warnings, "key listing truncated; returned keys are incomplete")
+				}
+				if v.StdoutSuppressed {
+					v.Warnings = append(v.Warnings, guard.OutflowDiscarded)
+				}
 				if !a.JSON {
 					if v.MTime != "" {
 						fmt.Fprintf(a.Out, "mtime %s\n", v.MTime)
@@ -113,7 +128,7 @@ func (a *App) keysRemote(pathFlag, timeout string) error {
 					if v.ExitCode != 0 {
 						fmt.Fprintf(a.Err, "error: %s: cat exited %d\n", p.host.Alias, v.ExitCode)
 					}
-					for _, k := range keys {
+					for _, k := range v.Keys {
 						fmt.Fprintf(a.Out, "%d\t%s\t%s\t%s\n", k.Line, k.Type, k.Fingerprint, k.Comment)
 					}
 					for _, w := range warnings {
@@ -122,6 +137,10 @@ func (a *App) keysRemote(pathFlag, timeout string) error {
 				}
 				summary = summarizeOutputs(outputs[1].Stdout, outputs[1].Stderr, false, v.MTime)
 			}
+		}
+		if runErr != nil {
+			hint := errorGuidance(exitcode.From(runErr), runErr.Error())
+			v.Guidance = &hint
 		}
 		if err := a.auditHost(meta, p, start, v.ExitCode, runErr, summary); err != nil {
 			return err
