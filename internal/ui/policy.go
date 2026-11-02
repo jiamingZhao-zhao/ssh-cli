@@ -2,9 +2,9 @@ package ui
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/catalog"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
@@ -62,7 +62,8 @@ func AddPolicy(dir string, in PolicyDraft) error {
 			return err
 		}
 	}
-	return config.Update(dir, func(cfg *config.Config) error {
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
 		if cfg.Policies != nil {
 			if _, ok := cfg.Policies[name]; ok {
 				return fmt.Errorf("policy %q already exists", name)
@@ -73,12 +74,28 @@ func AddPolicy(dir string, in PolicyDraft) error {
 			pol = b
 		}
 		applyPolicy(pol, in)
+		if base, ok := guard.BuiltinPolicy(name); ok {
+			if catalog.PoliciesEqual(base, pol) {
+				return nil
+			}
+			if confirmgate.PolicyWider(base, pol) {
+				needs = []confirmgate.Need{confirmgate.WidenNeed(name, "policy "+name+" would widen")}
+				if err := confirmgate.Require(dir, in.Actor, in.HumanConfirm, needs); err != nil {
+					return err
+				}
+			}
+		}
 		if cfg.Policies == nil {
 			cfg.Policies = map[string]*config.Policy{}
 		}
 		cfg.Policies[name] = pol
 		return nil
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, in.Actor, needs)
+	return nil
 }
 
 // UpdatePolicy edits a policy that is already stored in hosts.yaml.
@@ -129,30 +146,7 @@ func UpdatePolicy(dir string, in PolicyDraft) error {
 // RemovePolicy deletes a stored policy. A custom policy still referenced by an
 // env, group, or host is kept. Removing a built-in override restores the
 // built-in definition.
-func RemovePolicy(dir, name string) error {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return fmt.Errorf("policy is required")
-	}
-	return config.Update(dir, func(cfg *config.Config) error {
-		if cfg.Policies == nil {
-			return fmt.Errorf("policy %q is not in the config", name)
-		}
-		if _, ok := cfg.Policies[name]; !ok {
-			return fmt.Errorf("policy %q is not in the config", name)
-		}
-		if _, builtin := guard.BuiltinPolicy(name); !builtin {
-			if users := policyUsers(cfg, name); len(users) > 0 {
-				return fmt.Errorf("policy %q is still used by %s", name, strings.Join(users, ", "))
-			}
-		}
-		delete(cfg.Policies, name)
-		if len(cfg.Policies) == 0 {
-			cfg.Policies = nil
-		}
-		return nil
-	})
-}
+func RemovePolicy(dir, name string) error { return catalog.RemovePolicy(dir, name) }
 
 func applyPolicy(pol *config.Policy, in PolicyDraft) {
 	if in.HasMode {
@@ -167,30 +161,6 @@ func applyPolicy(pol *config.Policy, in PolicyDraft) {
 	if in.HasConfirm {
 		pol.Confirm = append([]string(nil), in.Confirm...)
 	}
-}
-
-func policyUsers(cfg *config.Config, name string) []string {
-	var users []string
-	for ename, e := range cfg.Envs {
-		if e != nil && e.DefaultPolicy == name {
-			users = append(users, "env "+ename)
-		}
-	}
-	for gname, g := range cfg.Groups {
-		if g == nil {
-			continue
-		}
-		if g.Policy == name {
-			users = append(users, "group "+gname)
-		}
-		for alias, h := range g.Hosts {
-			if h != nil && h.Policy == name {
-				users = append(users, "host "+alias)
-			}
-		}
-	}
-	sort.Strings(users)
-	return users
 }
 
 // AddEnv defines an env label. maxMode is required, matching `env add`.

@@ -852,7 +852,17 @@
                     <template x-for="p in filteredPolicies()" :key="p.name">
                       <tr>
                         <td x-text="p.name"></td>
-                        <td><span class="badge bg-secondary-lt" x-text="sourceLabel(p)"></span></td>
+                        <td><span class="badge bg-secondary-lt" x-text="sourceLabel(p)"></span>
+                          <details class="policy-diff" x-show="p.overridden && p.builtinDifference">
+                            <summary>与当前内置比较</summary>
+                            <p class="text-secondary">覆盖项不会随版本自动更新。恢复内置会替换整份策略，之后随版本更新。</p>
+                            <p x-text="p.builtinDifference && p.builtinDifference.restoreWidens ? '恢复会放宽权限，需要输入策略名确认。' : '恢复不会放宽当前权限。'"></p>
+                            <template x-for="row in policyDifferenceRows(p)" :key="row.field">
+                              <div class="policy-diff-row"><strong x-text="row.label"></strong><div>当前：<span x-text="row.current"></span></div><div>内置：<span x-text="row.builtin"></span></div></div>
+                            </template>
+                            <p x-show="p.builtinDifference && !(p.builtinDifference.changedFields || []).length">当前内容与内置相同；覆盖项仍保持固定，不会自动移除。</p>
+                          </details>
+                        </td>
                         <td x-text="p.mode"></td>
                         <td x-text="allowLabel(p)"></td>
                         <td x-text="listLabel(p.deny)"></td>

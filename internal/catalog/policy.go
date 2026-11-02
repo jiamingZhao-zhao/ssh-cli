@@ -53,21 +53,22 @@ type PolicyDraft struct {
 
 // PolicyView is the list form shared by the CLI and the localhost UI.
 type PolicyView struct {
-	Name           string   `json:"name"`
-	Source         string   `json:"source"`
-	Mode           string   `json:"mode,omitempty"`
-	Allow          []string `json:"allow,omitempty"`
-	AllowUniversal bool     `json:"allowUniversal,omitempty"`
-	AllowEmpty     bool     `json:"allowEmpty,omitempty"`
-	Deny           []string `json:"deny,omitempty"`
-	Confirm        []string `json:"confirm,omitempty"`
-	ProtectedPaths []string `json:"protectedPaths,omitempty"`
-	Upload         *bool    `json:"upload,omitempty"`
-	Download       *bool    `json:"download,omitempty"`
-	Forward        *bool    `json:"forward,omitempty"`
-	Relay          string   `json:"relay,omitempty"`
-	Service        []string `json:"service,omitempty"`
-	ServiceEmpty   bool     `json:"serviceEmpty,omitempty"`
+	BuiltinDifference *BuiltinDifference `json:"builtinDifference,omitempty"`
+	Name              string             `json:"name"`
+	Source            string             `json:"source"`
+	Mode              string             `json:"mode,omitempty"`
+	Allow             []string           `json:"allow,omitempty"`
+	AllowUniversal    bool               `json:"allowUniversal,omitempty"`
+	AllowEmpty        bool               `json:"allowEmpty,omitempty"`
+	Deny              []string           `json:"deny,omitempty"`
+	Confirm           []string           `json:"confirm,omitempty"`
+	ProtectedPaths    []string           `json:"protectedPaths,omitempty"`
+	Upload            *bool              `json:"upload,omitempty"`
+	Download          *bool              `json:"download,omitempty"`
+	Forward           *bool              `json:"forward,omitempty"`
+	Relay             string             `json:"relay,omitempty"`
+	Service           []string           `json:"service,omitempty"`
+	ServiceEmpty      bool               `json:"serviceEmpty,omitempty"`
 }
 
 // ListPolicies returns file policies and built-ins. A file entry with a built-in
@@ -99,7 +100,11 @@ func ListPolicies(cfg *config.Config) []PolicyView {
 			source = "builtin"
 		}
 		pol := effectivePolicy(cfg, name)
-		out = append(out, viewOf(name, source, pol))
+		v := viewOf(name, source, pol)
+		if source == "override" {
+			v.BuiltinDifference = CompareBuiltin(name, pol)
+		}
+		out = append(out, v)
 	}
 	return out
 }
@@ -220,6 +225,9 @@ func editPolicy(dir string, cfg *config.Config, in PolicyDraft) ([]confirmgate.N
 	if err != nil {
 		return nil, err
 	}
+	if !inFile && PoliciesEqual(base, pol) {
+		return nil, nil
+	}
 	var needs []confirmgate.Need
 	if confirmgate.PolicyWider(base, pol) {
 		needs = []confirmgate.Need{confirmgate.WidenNeed(name, "policy "+name+" would widen")}
@@ -236,10 +244,29 @@ func editPolicy(dir string, cfg *config.Config, in PolicyDraft) ([]confirmgate.N
 
 // RemovePolicy deletes a file entry. A built-in that was overridden becomes the
 // built-in again. A custom policy that is still referenced is refused.
-func RemovePolicy(dir, name string) error {
-	return config.Update(dir, func(cfg *config.Config) error {
+func RemovePolicy(dir, name string) error { return RemovePolicyConfirmed(dir, name, "", "") }
+
+// RemovePolicyConfirmed restores an override only after checking the complete
+// replacement policy. Recompute under the config lock, including on a retry.
+func RemovePolicyConfirmed(dir, name, phrase, actor string) error {
+	var needs []confirmgate.Need
+	err := config.Update(dir, func(cfg *config.Config) error {
+		name = strings.TrimSpace(name)
+		if current, ok := filePolicy(cfg, name); ok {
+			if builtin, exists := guard.BuiltinPolicy(name); exists && confirmgate.PolicyWider(current, builtin) {
+				needs = []confirmgate.Need{confirmgate.WidenNeed(name, "restoring builtin policy "+name+" would widen permissions; review the builtinDifference in policy list")}
+				if err := confirmgate.Require(dir, actor, phrase, needs); err != nil {
+					return err
+				}
+			}
+		}
 		return removePolicy(cfg, name)
 	})
+	if err != nil {
+		return err
+	}
+	confirmgate.RecordOK(dir, actor, needs)
+	return nil
 }
 
 func removePolicy(cfg *config.Config, name string) error {

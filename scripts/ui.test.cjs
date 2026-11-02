@@ -1259,3 +1259,21 @@ test('workspace cache respects aggregate entry budget and retains the most recen
   assert.ok(Object.keys(app.workspaceCache).length <= 8); assert.ok(app.workspaceCache.h11);
   assert.equal(app.workspaceCache.h0, undefined);
 });
+
+test('builtin policy differences retain allow semantics and complete restrictions', () => {
+  const { app } = fixture();
+  const rows = app.policyDifferenceRows({ builtinDifference: { changedFields:['allow','protectedPaths','capabilities'],current:{allowEmpty:true,protectedPaths:['/srv/private'],download:false},builtin:{allowUniversal:true,download:true} } });
+  assert.match(rows[0].current, /全部拒绝/); assert.match(rows[0].builtin, /不限制/);
+  assert.equal(rows[1].current, '/srv/private'); assert.match(rows[1].builtin, /无|未设置/);
+  assert.match(rows[2].current, /"download":false/); assert.match(rows[2].builtin, /"download":true/);
+  assert.equal(app.policyDifferenceRows({}).length, 0);
+});
+
+test('a corrected policy restore phrase replaces the rejected phrase on retry', async () => {
+  const { app } = fixture(); const requests=[]; const phrases=['wrong','readonly'];
+  app.ensureSession=async()=>{}; app.parseJSON=async response=>response.body;
+  app.ask=async()=>phrases.shift();
+  app.api=async (url,options)=>{ const payload=JSON.parse(options.body);requests.push(payload);return payload.humanConfirm==='readonly' ? {status:200,ok:true,body:{ok:true}} : {status:409,ok:false,body:{needsConfirm:true,confirm:'readonly',error:'restore would widen'}}; };
+  await app.postJSON('/api/policies/remove',{name:'readonly'});
+  assert.equal(requests.length,3);assert.equal(requests[1].humanConfirm,'wrong');assert.equal(requests[2].humanConfirm,'readonly');
+});

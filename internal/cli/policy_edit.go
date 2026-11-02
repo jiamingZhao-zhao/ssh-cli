@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"fmt"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -25,6 +26,10 @@ func (a *App) policyList() *cobra.Command {
 			}
 			rows := make([][]string, len(views))
 			for i, v := range views {
+				if v.BuiltinDifference != nil {
+					d := v.BuiltinDifference
+					fmt.Fprintf(a.Err, "policy %s overrides builtin: added allow=%s; removed allow=%s; changed fields=%s; restore widens=%t\n", v.Name, strings.Join(d.AddedAllow, ", "), strings.Join(d.RemovedAllow, ", "), strings.Join(d.ChangedFields, ", "), d.RestoreWidens)
+				}
 				mode := v.Mode
 				if mode == "" {
 					mode = "-"
@@ -60,7 +65,7 @@ func (a *App) policyEdit() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "edit <name>",
 		Short: "Edit a named policy, or override a built-in",
-		Long:  "Partial flags change only those fields. Overriding readonly, standard, or admin writes a hosts.yaml entry that replaces the built-in of the same name. HMAC signing is not implemented.",
+		Long:  "Partial flags change only those fields. Overriding readonly, standard, or admin writes a hosts.yaml entry that replaces the built-in of the same name. Unchanged built-ins remain inherited; restoring an override may require confirmation.",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			draft, err := d.draft(cmd, args[0], true)
@@ -86,10 +91,10 @@ func (a *App) policyEdit() *cobra.Command {
 func (a *App) policyRemove() *cobra.Command {
 	return &cobra.Command{
 		Use:   "remove <name>",
-		Short: "Remove a named policy from hosts.yaml",
+		Short: "Remove a stored policy; restoring a builtin may require confirmation",
 		Args:  cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return catalogErr(catalog.RemovePolicy(a.Dir, args[0]))
+			return a.withConfirm(func(phrase string) error { return catalog.RemovePolicyConfirmed(a.Dir, args[0], phrase, "") })
 		},
 	}
 }

@@ -323,3 +323,17 @@ ssh-cli host list --json
 - --auto-daemon 显式启用按需启动，只接收无需确认的 readonly exec。新进程空闲 180 秒退出；已有手动 daemon 保持自己的生命周期。沿用 via、身份失效、主机密钥和审计检查。需要支持 AF_UNIX 的系统；不自动重放或失败回退直连，没有未经实测的倍数承诺。
 - 两个输出限制默认 0，保持兼容。分别限制每行及每个 stdout/stderr 流保留的字节，仍消费完远端输出、保留退出码。JSON 标记 truncated；普通输出给警告。复用服务已有 64 KiB 上限仍生效。截断不代表业务成功。
 - lanIp、publicIp、roles、entrypoints 是人工维护的描述元数据，不修改 SSH 连接地址、via 或权限。metadata 命令只替换传入字段；IP 和列表可用空字符串清除。角色／入口列表最多各 32 项、每项 128 字节。未填写不新增 JSON 字段。
+
+## 内置策略覆盖与恢复
+
+`policy list --json` 中 source 为 override 表示配置固定覆盖了内置策略，不会自动跟随新版白名单。新增 builtinDifference 提供当前／内置完整值、新增与移除的允许模式、变化字段及 restoreWidens。网页策略列表可展开“与当前内置比较”。只有原样保存尚未覆盖的内置策略时不落覆盖项；已有 override 即使与内置相同也不会自动删除。
+
+```sh
+ssh-cli policy list --json
+# 比较全部字段后，在自己的交互终端执行：
+ssh-cli policy remove readonly
+ssh-cli policy list --json
+ssh-cli policy explain -H demo --json -- ip addr
+```
+
+恢复是整份替换，不是仅补几条命令；会放宽允许范围、移除拒绝／确认规则或受保护路径、放宽能力时，须按提示输入策略名。非交互调用拒绝，--yes 也不能绕过 TTY 检查。确认失败不修改配置，成功和拒绝均记录审计。恢复后 source 为 builtin，但环境、分组、主机的其他限制仍独立生效。实际配置不会在升级时自动迁移，不建议手改 YAML 绕过检查或破坏签名。

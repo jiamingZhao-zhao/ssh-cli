@@ -978,7 +978,7 @@ function sshui() {
             }
             if (data.confirmField) payload[data.confirmField] = typed;
             else payload.confirm = typed;
-            payload.humanConfirm = payload.humanConfirm || typed;
+            payload.humanConfirm = typed;
             continue;
           }
           if (!res.ok || data.ok === false) {
@@ -3824,8 +3824,19 @@ function sshui() {
       }
     },
 
+    policyDifferenceRows(p) {
+      const d = p.builtinDifference; if (!d) return [];
+      const labels = {mode: "模式", allow: "允许列表", deny: "拒绝规则", confirm: "确认规则", protectedPaths: "受保护路径", capabilities: "能力限制"};
+      const value = (v, field) => {
+        if (field === "capabilities") return JSON.stringify({upload:v.upload, download:v.download, forward:v.forward, relay:v.relay, service:v.service, serviceEmpty:v.serviceEmpty}) || "未设置";
+        if (field === "allow") return v.allowUniversal ? "未设置（不限制此层）" : v.allowEmpty ? "空列表（全部拒绝）" : (v.allow || []).join("、");
+        const item = v[field]; return Array.isArray(item) ? item.join("、") || "无" : item || "未设置";
+      };
+      return (d.changedFields || []).map(field => ({field, label:labels[field] || field, current:value(d.current,field), builtin:value(d.builtin,field)}));
+    },
+
     async removePolicy(p) {
-      const msg = p.overridden ? "恢复内置策略 " + p.name + "？" : "删除策略 " + p.name + "？";
+      const msg = p.overridden ? "恢复内置策略 " + p.name + "？会替换整份覆盖策略，请先查看与内置的差异。" : "删除策略 " + p.name + "？";
       if (!await this.askConfirm(msg)) return;
       this.setError("policy", "");
       try {
