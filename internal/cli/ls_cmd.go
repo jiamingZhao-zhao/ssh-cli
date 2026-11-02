@@ -26,7 +26,7 @@ listing, the same way it refuses download. A missing path is an error for
 that host and does not change the remote tree.
 
 Output is capped at 2000 entries. The attempt is audited as op list with
-source cli.`,
+source cli. Output limits omit whole records; truncated means the list is incomplete.`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			path := "."
@@ -73,6 +73,7 @@ func (a *App) listRemote(pathFlag, timeout string) error {
 		Parent    string               `json:"parent,omitempty"`
 		Entries   []transfer.FileEntry `json:"entries"`
 		Truncated bool                 `json:"truncated,omitempty"`
+		Guidance  *guidance            `json:"guidance,omitempty"`
 		Error     string               `json:"error,omitempty"`
 	}
 	views := make([]view, 0, len(plan))
@@ -100,9 +101,12 @@ func (a *App) listRemote(pathFlag, timeout string) error {
 				v.Parent = listing.Parent
 				v.Entries = listing.Entries
 				v.Truncated = listing.Truncated
+				var limited bool
+				v.Entries, limited = limitRecords(v.Entries, a.MaxLineBytes, a.MaxOutputBytes)
+				v.Truncated = v.Truncated || limited
 				if !a.JSON {
 					fmt.Fprintf(a.Out, "# %s\n", listing.Path)
-					for _, e := range listing.Entries {
+					for _, e := range v.Entries {
 						kind := e.Mode
 						if e.Dir {
 							kind = "dir"
@@ -111,8 +115,8 @@ func (a *App) listRemote(pathFlag, timeout string) error {
 						}
 						fmt.Fprintf(a.Out, "%s\t%d\t%s\t%s\n", kind, e.Size, e.MTime, e.Name)
 					}
-					if listing.Truncated {
-						fmt.Fprintf(a.Err, "note: listing truncated at 2000 entries\n")
+					if v.Truncated {
+						fmt.Fprintf(a.Err, "note: listing truncated; entries were omitted\n")
 					}
 				}
 			}
@@ -132,6 +136,8 @@ func (a *App) listRemote(pathFlag, timeout string) error {
 			} else {
 				code = 1
 			}
+			hint := errorGuidance(code, runErr.Error())
+			v.Guidance = &hint
 		}
 		if err := a.auditHost(meta, p, start, code, runErr, summary); err != nil {
 			return err

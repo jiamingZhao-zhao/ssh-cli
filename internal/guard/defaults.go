@@ -12,7 +12,7 @@ func boolPtr(v bool) *bool { return &v }
 // builtinPolicies are used when hosts.yaml does not override the name.
 func builtinPolicies() map[string]*config.Policy {
 	readonlyAllow := list(
-		"jps", "java -version", "java --version", "curl", "diff", "sha256sum", "md5sum", "zcat", "zgrep", "zless", "sed", "awk", "lsof", "ping", "nc",
+		"jps", "java -version", "java --version", "curl", "wget", "diff", "sha256sum", "md5sum", "zcat", "zgrep", "zless", "sed", "awk", "lsof", "ping", "nc",
 		"ip addr", "ip address", "ip route", "hostname", "uname", "stat", "file", "which", "whereis", "wc", "sort", "uniq", "cut", "tr", "find",
 		"ls", "cat", "head", "tail", "grep", "less", "df", "du", "free", "uptime", "ps", "ss", "netstat",
 		"docker ps", "docker logs", "docker stats --no-stream",

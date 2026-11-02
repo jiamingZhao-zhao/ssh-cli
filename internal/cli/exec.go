@@ -53,7 +53,12 @@ crontab -). It is direct-only: one host, not --daemon, and not combined
 with --script or --stdin. --script and --stdin still send a script body.
 
 policy show -H <host> lists the gates before you run a command. It does
-not connect.`,
+not connect. Eligible readonly calls automatically reuse a local connection
+when the output has a total limit of at most 65536 bytes per stream and the
+timeout is explicit and at most 1h. Other calls remain direct. --direct forces
+direct SSH; --auto-daemon explicitly requests the historical reuse behavior.
+An automatic startup failure can fall back only before dispatch. No command is
+retried or sent again after dispatch.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if a.MaxLineBytes < 0 || a.MaxOutputBytes < 0 {
 				return exitcode.New(exitcode.Usage, "output limits must be non-negative")
@@ -141,20 +146,8 @@ not connect.`,
 			if err != nil {
 				return err
 			}
-			if a.RequestAuto || a.AgentProfile && !a.Direct && !a.UseDaemon && script == "" && !fromStdin && !forwardStdin && !a.Insecure && reusablePlan(plan) {
-				if a.UseDaemon || script != "" || fromStdin || forwardStdin || a.Insecure {
-					return exitcode.New(exitcode.Usage, "--auto-daemon requires literal exec, verified host keys, and no --daemon/stdin/script")
-				}
-				for _, p := range plan {
-					if p.eff.Mode != "readonly" || p.dec.NeedsConfirm {
-						return exitcode.New(exitcode.Denied, "--auto-daemon requires non-confirming readonly targets")
-					}
-				}
-				if err := a.ensureAutoDaemon(); err != nil {
-					return err
-				}
-				a.UseDaemon = true
-				a.AutoDaemon = true
+			if err := a.prepareExecReuse(plan, script != "", fromStdin, forwardStdin, allowOutflow, dur); err != nil {
+				return err
 			}
 			return a.runAll(meta, plan, remote, scriptBody, dur, allowOutflow, parallel, stdin, warnings)
 		},

@@ -68,6 +68,8 @@ Manual copies and native client installers also require a working CLI verified w
 
 The updated skill prefers `--agent-mode` for diagnostics: JSON output is bounded and eligible readonly calls reuse connections on demand. Search by IP, role or entrypoint before comparing hosts. Inventory annotations are maintained by users and must be verified; they do not change SSH routes. Check the installed CLI's `--help` on older versions.
 
+For `ls`, `history` and `keys`, limits omit complete records and are applied per host; `truncated: true` means the list is incomplete. History may still contain secrets. JSON `guidance` distinguishes common authentication, host-key, jump, network and timeout failures; it does not authorize bypassing a gate or replaying a command.
+
 ```sh
 ssh-cli host list --ip 192.0.2.10 --json
 ssh-cli check -H app-a -H app-b --agent-mode --command "ss -tlnp" --command "jps -l"

@@ -38,6 +38,9 @@ most 64KiB. Obvious secrets are redacted with the audit-log patterns
 secrets, including short flags such as -p, can still appear. History text may
 contain secrets.
 
+Output limits omit whole entries rather than cutting commands; truncated means
+the returned history is incomplete.
+
 noDataOutflow discards the lines unless --allow-outflow is set and confirmed.
 The attempt is audited as op history with source cli.
 
@@ -101,6 +104,7 @@ func (a *App) readHistory(timeout string, lines int, allowOutflow bool) error {
 		Truncated bool           `json:"truncated,omitempty"`
 		Notes     []string       `json:"notes,omitempty"`
 		Error     string         `json:"error,omitempty"`
+		Guidance  *guidance      `json:"guidance,omitempty"`
 	}
 	views := make([]view, 0, len(plan))
 	final := 0
@@ -148,12 +152,27 @@ func (a *App) readHistory(timeout string, lines int, allowOutflow bool) error {
 				v.Error = res.Error
 				v.Lines = res.Lines
 				v.Entries = res.Entries
+				var limited bool
+				if len(v.Entries) > 0 {
+					v.Entries, limited = limitRecords(v.Entries, a.MaxLineBytes, a.MaxOutputBytes)
+					v.Lines = make([]string, 0, len(v.Entries))
+					for _, entry := range v.Entries {
+						v.Lines = append(v.Lines, entry.Command)
+					}
+				} else {
+					v.Lines, limited = limitRecords(v.Lines, a.MaxLineBytes, a.MaxOutputBytes)
+				}
+				v.Truncated = v.Truncated || limited
 				if suppress {
 					v.Lines = []string{}
 					v.Entries = nil
 					v.Notes = append(v.Notes, guard.OutflowDiscarded)
 				}
 			}
+		}
+		if runErr != nil {
+			hint := errorGuidance(exitcode.From(runErr), runErr.Error())
+			v.Guidance = &hint
 		}
 		if !a.JSON {
 			if v.Error != "" && runErr != nil {
@@ -228,9 +247,14 @@ func runRemote(ctx context.Context, client *sshclient.Client, command string, ti
 		defer cancel()
 	}
 	var stdout, stderr bytes.Buffer
-	code, err := client.Run(ctx, command, &limitedBuf{buf: &stdout, n: 1 << 20}, &limitedBuf{buf: &stderr, n: 64 << 10}, nil)
+	outLimit := &limitedBuf{buf: &stdout, n: 1 << 20}
+	errLimit := &limitedBuf{buf: &stderr, n: 64 << 10}
+	code, err := client.Run(ctx, command, outLimit, errLimit, nil)
 	if err != nil {
 		return stdout.String(), stderr.String(), code, sshWrapRun(err)
+	}
+	if outLimit.cut || errLimit.cut {
+		return "", "", code, exitcode.New(exitcode.Connect, "history source output exceeded safety limit; partial source is not parsed")
 	}
 	return stdout.String(), stderr.String(), code, nil
 }
@@ -238,14 +262,19 @@ func runRemote(ctx context.Context, client *sshclient.Client, command string, ti
 type limitedBuf struct {
 	buf *bytes.Buffer
 	n   int
+	cut bool
 }
 
 func (b *limitedBuf) Write(p []byte) (int, error) {
 	if b.buf.Len() >= b.n {
+		if len(p) > 0 {
+			b.cut = true
+		}
 		return len(p), nil
 	}
 	remain := b.n - b.buf.Len()
 	if len(p) > remain {
+		b.cut = true
 		_, _ = b.buf.Write(p[:remain])
 		return len(p), nil
 	}

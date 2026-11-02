@@ -68,6 +68,8 @@ sh scripts/install-skill.sh claude --project /path/to/your-project
 
 新版 Skill 会优先使用 `--agent-mode` 进行排查：返回 JSON、限制输出，并在符合条件的只读操作中按需复用连接。可让 Agent 先按 IP、角色或入口缩小范围，再检查两台实例；主机备注仍需人工核实，不会自动改变 SSH 路由。旧版 CLI 请以本机 `--help` 为准。
 
+`ls`、`history`、`keys` 按完整记录限制输出，每台主机分别计算；`truncated: true` 表示列表不完整。历史内容仍可能包含敏感信息。JSON 错误的 `guidance` 区分常见认证、主机密钥、跳板、网络和超时问题，不代表可以自动绕过或重试。
+
 ```sh
 ssh-cli host list --ip 192.0.2.10 --json
 ssh-cli check -H app-a -H app-b --agent-mode --command "ss -tlnp" --command "jps -l"
