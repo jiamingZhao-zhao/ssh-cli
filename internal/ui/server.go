@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/catalog"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/confirmgate"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
@@ -341,14 +342,15 @@ func (s *service) catalog(w http.ResponseWriter, r *http.Request) {
 }
 
 type policyView struct {
-	Name       string   `json:"name"`
-	Builtin    bool     `json:"builtin"`
-	Overridden bool     `json:"overridden,omitempty"`
-	Mode       string   `json:"mode,omitempty"`
-	Allow      []string `json:"allow,omitempty"`
-	AllowSet   bool     `json:"allowSet"`
-	Deny       []string `json:"deny,omitempty"`
-	Confirm    []string `json:"confirm,omitempty"`
+	BuiltinDifference *catalog.BuiltinDifference `json:"builtinDifference,omitempty"`
+	Name              string                     `json:"name"`
+	Builtin           bool                       `json:"builtin"`
+	Overridden        bool                       `json:"overridden,omitempty"`
+	Mode              string                     `json:"mode,omitempty"`
+	Allow             []string                   `json:"allow,omitempty"`
+	AllowSet          bool                       `json:"allowSet"`
+	Deny              []string                   `json:"deny,omitempty"`
+	Confirm           []string                   `json:"confirm,omitempty"`
 }
 
 func fillRules(allow *[]string, allowSet *bool, deny, confirm *[]string, srcAllow *[]string, srcDeny, srcConfirm []string) {
@@ -371,7 +373,9 @@ func policyCatalog(cfg *config.Config) []policyView {
 		seen[name] = true
 		if cfg.Policies != nil {
 			if p, ok := cfg.Policies[name]; ok && p != nil {
-				out = append(out, policyViewFrom(name, p, true, true))
+				v := policyViewFrom(name, p, true, true)
+				v.BuiltinDifference = catalog.CompareBuiltin(name, p)
+				out = append(out, v)
 				continue
 			}
 		}
@@ -778,7 +782,12 @@ func (s *service) removePolicy(w http.ResponseWriter, r *http.Request) {
 		writeFail(w, err)
 		return
 	}
-	if err := RemovePolicy(s.dir, name); err != nil {
+	phrase, _, err := rawString(raw, "humanConfirm")
+	if err != nil {
+		writeFail(w, err)
+		return
+	}
+	if err := catalog.RemovePolicyConfirmed(s.dir, name, phrase, "ui"); err != nil {
 		writeFail(w, err)
 		return
 	}

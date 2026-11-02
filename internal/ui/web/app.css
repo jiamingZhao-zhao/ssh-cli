@@ -1886,3 +1886,7 @@ html, body { overflow-x: clip; }
   .host-picker-close { flex-basis: 44px; height: 44px; }
   .host-picker-hint { width: 100%; margin-left: 0; }
 }
+.policy-diff { text-align: left; min-width: 11rem; max-width: 30rem; white-space: normal; font-size: .8125rem; margin-top: .5rem; }
+.policy-diff summary { cursor: pointer; min-height: 2.75rem; align-content: center; }
+.policy-diff p { margin-block: .5rem; }
+.policy-diff-row { border-top: 1px solid var(--tblr-border-color); padding-block: .5rem; overflow-wrap: anywhere; }

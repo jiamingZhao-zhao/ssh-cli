@@ -265,7 +265,7 @@ groups:
 	if ro.Capabilities == nil || ro.Capabilities.Upload == nil || *ro.Capabilities.Upload {
 		t.Fatalf("override dropped builtin capabilities %+v", ro.Capabilities)
 	}
-	restore := postJSON(t, h, "/api/policies/remove", `{"name":"readonly"}`)
+	restore := postJSON(t, h, "/api/policies/remove", `{"name":"readonly","humanConfirm":"readonly"}`)
 	if restore.Code != 200 {
 		t.Fatalf("restore %d %s", restore.Code, restore.Body.String())
 	}
