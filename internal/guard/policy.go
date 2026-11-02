@@ -463,6 +463,11 @@ func Decide(eff Effective, command string) (dec Decision) {
 	for _, c := range pr.commands {
 		dec.Commands = append(dec.Commands, renderArgs(c.args))
 	}
+	if pr.readonlyHazard != "" && eff.Mode == config.ModeReadonly {
+		dec.Allowed = false
+		dec.Findings = append(dec.Findings, Finding{Layer: "parser", Kind: "deny", Detail: pr.readonlyHazard})
+		return dec
+	}
 	if pr.obfuscated != "" && eff.Mode != config.ModeAdmin {
 		dec.Allowed = false
 		dec.NeedsConfirm = false
@@ -560,6 +565,14 @@ func Decide(eff Effective, command string) (dec Decision) {
 		}
 	}
 	return dec
+}
+
+// DecideQuery adds the builtin readonly ceiling while preserving all current
+// environment/group/host denies, allow intersections and confirmation gates.
+func DecideQuery(eff Effective, command string) Decision {
+	eff.Mode = config.ModeReadonly
+	eff.fallback = allowFrom(builtinPolicies()["readonly"].Allow)
+	return Decide(eff, command)
 }
 
 // applyDangerousCommand records an active catalog or extra-pattern denial.

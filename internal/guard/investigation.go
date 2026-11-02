@@ -19,6 +19,7 @@ func investigationDeny(name string, args []Arg) string {
 			}
 		}
 	case "ip":
+		args = normalizeOps(args)
 		if len(args) < 2 {
 			return "ip requires addr/address/route"
 		}

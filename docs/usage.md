@@ -308,7 +308,28 @@ ssh-cli config import bundle.yaml
 ssh-cli policy sign
 ```
 
-`session run` 在同一个进程里复用一个 shell，命令结束后关闭。空闲默认 5 分钟，最长 60 分钟，忙着也会到点关闭；本机终端会先写出提示，并在页面上显示横幅。连接大约每 30 秒发送 SSH keepalive，对端没有应答就关闭，避免空闲或半开连接把终端和旁边的概况、文件面板挂死。另开一个进程看不到这些会话。UI 进程是会话的持有者。普通 `exec` 每次仍是一条新连接，不会自动复用。要复用必须先在另一个终端运行 `ssh-cli daemon serve`，再对字面量命令使用 `exec --daemon`。daemon 不自动启动，不接受需要确认的命令，不执行 `--stdin`、`--script` 或 `--forward-stdin`，也不覆盖文件传输，失败不重试。`relay` 只经本机转发一个文件，并用远端 `sha256sum`（否则 `md5sum`）核对。配置包保存主机、策略和密钥引用，不写密码明文，也不改 `secrets.json`。
+`session run` 在同一个进程里复用一个 shell，命令结束后关闭。空闲默认 5 分钟，最长 60 分钟，忙着也会到点关闭；本机终端会先写出提示，并在页面上显示横幅。连接大约每 30 秒发送 SSH keepalive，对端没有应答就关闭，避免空闲或半开连接把终端和旁边的概况、文件面板挂死。另开一个进程看不到这些会话。UI 进程是会话的持有者。普通 `exec` 默认直连；需要复用时可使用 `--auto-daemon` 或 Agent 模式，符合条件的只读查询按需启动本地复用进程。也可手动运行 `ssh-cli daemon serve`，再使用 `--daemon`。复用不接受需要确认的命令，不执行 `--stdin`、`--script` 或 `--forward-stdin`，也不覆盖文件传输，失败不重试。`relay` 只经本机转发一个文件，并用远端 `sha256sum`（否则 `md5sum`）核对。配置包保存主机、策略和密钥引用，不写密码明文，也不改 `secrets.json`。
+
+## Agent 排查与日志快照
+
+```sh
+ssh-cli host list --ip 192.0.2.10 --json
+ssh-cli host list --env prod --role nginx --json
+ssh-cli status -H app-a -H app-b --agent-mode --total-timeout 30s
+ssh-cli check -H app-a -H app-b --agent-mode --command "ss -tlnp" --command "jps -l"
+ssh-cli logs -H app-a --unit nginx --since 15m --grep error --agent-mode
+ssh-cli logs -H app-a /var/log/app.log.gz --lines 100 --agent-mode
+```
+
+`--agent-mode` 请求 JSON、有限输出和只读连接复用；可通过 `--direct` 使用直连。支持的 JSON 输出默认每行最多 512 字节、每个输出流最多 16384 字节，显式传 `--max-line-bytes 0` 或 `--max-output-bytes 0` 可取消对应限制。出现 `truncated` 应缩小查询后再判断，不表示远端命令失败。复用进程启动后空闲 180 秒退出，失败不会自动重放。
+
+`status` 在 `facts` 提供成功解析的健康数据，同时保留各探针原始输出、`complete`、`notes` 和每台主机的错误。未读取或截断的数据不能当成零或健康状态。最多 16 台主机、并发上限 4；总时限包含排队、连接和检查。`check` 中每条命令使用独立 shell，并逐条经过当前策略和只读规则；一个主机上有拒绝项时默认整批不发送。执行中断时，后续检查标记为 `not_started`。
+
+`logs` 支持文件、`.gz`、systemd 单元或容器日志；先选最近行数，再按 `--grep` 的字面关键字过滤，所以没匹配并不代表更早日志没有结果。`--since` 只适用于单元和容器日志，普通文件的时间格式不作猜测。日志可能含敏感信息，请按需读取。IP、角色和入口均为人工维护的备注，不会改变 SSH 连接路由，操作前应确认映射是否准确。
+
+新增的只读查询仍按具体参数检查。`curl` 只允许关闭配置文件及代理、限制时间的 `127.0.0.1` 或 `::1` HEAD 请求，不接受需解析的 `localhost`；HEAD 仍可能触发应用自身行为。只读模式拒绝 `env` 包装、裸环境变量输出和日志 `follow`。`nginx -t` 会尝试打开配置引用的文件，因此不加入默认只读白名单；`docker inspect` 默认只允许选定的非环境变量字段。现有自定义 readonly 覆盖项不会自动增加新命令。
+
+readonly 限制命令操作，不是机密隔离：配置、日志和 `/proc` 中仍可能有密码或令牌。只读取排查所需内容，分享结果前检查其中是否含敏感信息。
 
 ## 排查效率迭代（合并后版本）
 
@@ -320,7 +341,7 @@ ssh-cli host metadata app --lan-ip 192.168.0.42 --role nginx --entrypoint zibo-p
 ssh-cli host list --json
 ```
 
-- --auto-daemon 显式启用按需启动，只接收无需确认的 readonly exec。新进程空闲 180 秒退出；已有手动 daemon 保持自己的生命周期。沿用 via、身份失效、主机密钥和审计检查。需要支持 AF_UNIX 的系统；不自动重放或失败回退直连，没有未经实测的倍数承诺。
+- --auto-daemon 显式启用按需启动，只接收无需确认的 readonly 查询。新进程空闲 180 秒退出；已有手动 daemon 保持自己的生命周期。沿用 via、身份失效、主机密钥和审计检查。需要支持 AF_UNIX 的系统；不自动重放或失败回退直连，没有未经实测的倍数承诺。
 - 两个输出限制默认 0，保持兼容。分别限制每行及每个 stdout/stderr 流保留的字节，仍消费完远端输出、保留退出码。JSON 标记 truncated；普通输出给警告。复用服务已有 64 KiB 上限仍生效。截断不代表业务成功。
 - lanIp、publicIp、roles、entrypoints 是人工维护的描述元数据，不修改 SSH 连接地址、via 或权限。metadata 命令只替换传入字段；IP 和列表可用空字符串清除。角色／入口列表最多各 32 项、每项 128 字节。未填写不新增 JSON 字段。
 

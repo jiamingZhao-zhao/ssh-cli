@@ -476,8 +476,8 @@ func TestWrapperAndOptionBypass(t *testing.T) {
 	if d := Decide(admin, deep); d.Allowed && !d.NeedsConfirm {
 		t.Fatalf("shell depth admin: %+v", d)
 	}
-	if d := Decide(ro, "docker --host tcp://192.0.2.1:2375 ps -a"); !d.Allowed {
-		t.Fatalf("docker global option before ps: %+v", d)
+	if d := Decide(ro, "docker --host tcp://192.0.2.1:2375 ps -a"); d.Allowed {
+		t.Fatalf("readonly must not redirect Docker queries to another daemon: %+v", d)
 	}
 	wrapped := []string{
 		"xargs systemctl restart nginx",

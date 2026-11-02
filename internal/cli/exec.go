@@ -24,7 +24,6 @@ func (a *App) execCmd() *cobra.Command {
 	var allowOutflow bool
 	var parallel int
 	var forwardStdin bool
-	var autoDaemon bool
 	cmd := &cobra.Command{
 		Use:   "exec [--] <command>",
 		Short: "Run a remote command",
@@ -114,6 +113,9 @@ not connect.`,
 			if err != nil {
 				return exitcode.New(exitcode.Usage, "%s", err.Error())
 			}
+			if a.AgentProfile && dur == 0 {
+				dur = 30 * time.Second
+			}
 			if parallel < 1 || parallel > guard.MaxParallel {
 				return exitcode.New(exitcode.Usage, "--parallel must be from 1 to %d", guard.MaxParallel)
 			}
@@ -139,7 +141,7 @@ not connect.`,
 			if err != nil {
 				return err
 			}
-			if autoDaemon {
+			if a.RequestAuto || a.AgentProfile && !a.Direct && !a.UseDaemon && script == "" && !fromStdin && !forwardStdin && !a.Insecure && reusablePlan(plan) {
 				if a.UseDaemon || script != "" || fromStdin || forwardStdin || a.Insecure {
 					return exitcode.New(exitcode.Usage, "--auto-daemon requires literal exec, verified host keys, and no --daemon/stdin/script")
 				}
@@ -157,9 +159,6 @@ not connect.`,
 			return a.runAll(meta, plan, remote, scriptBody, dur, allowOutflow, parallel, stdin, warnings)
 		},
 	}
-	cmd.Flags().BoolVar(&autoDaemon, "auto-daemon", false, "start/reuse a local daemon for readonly exec; exits after 180 idle seconds")
-	cmd.Flags().IntVar(&a.MaxLineBytes, "max-line-bytes", 0, "retain at most N bytes per output line (0: unlimited)")
-	cmd.Flags().IntVar(&a.MaxOutputBytes, "max-output-bytes", 0, "retain at most N bytes per stdout/stderr stream (0: unlimited)")
 	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds); also bounds SSH connect")
 	cmd.Flags().StringVar(&script, "script", "", "read the remote script from a file")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read the remote script from stdin")
@@ -170,19 +169,21 @@ not connect.`,
 }
 
 type execResult struct {
-	Truncated        bool   `json:"truncated,omitempty"`
-	Host             string `json:"host"`
-	Group            string `json:"group"`
-	Env              string `json:"env"`
-	ExitCode         int    `json:"exitCode"`
-	Status           string `json:"status"`
-	Outcome          string `json:"outcome"`
-	RetrySafe        bool   `json:"retrySafe"`
-	Stdout           string `json:"stdout,omitempty"`
-	Stderr           string `json:"stderr,omitempty"`
-	StdoutSuppressed bool   `json:"stdoutSuppressed,omitempty"`
-	Notice           string `json:"notice,omitempty"`
-	Error            string `json:"error,omitempty"`
+	Connection       connectionInfo `json:"connection"`
+	Guidance         *guidance      `json:"guidance,omitempty"`
+	Truncated        bool           `json:"truncated,omitempty"`
+	Host             string         `json:"host"`
+	Group            string         `json:"group"`
+	Env              string         `json:"env"`
+	ExitCode         int            `json:"exitCode"`
+	Status           string         `json:"status"`
+	Outcome          string         `json:"outcome"`
+	RetrySafe        bool           `json:"retrySafe"`
+	Stdout           string         `json:"stdout,omitempty"`
+	Stderr           string         `json:"stderr,omitempty"`
+	StdoutSuppressed bool           `json:"stdoutSuppressed,omitempty"`
+	Notice           string         `json:"notice,omitempty"`
+	Error            string         `json:"error,omitempty"`
 }
 
 func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, timeout time.Duration, allowOutflow bool, parallel int, stdin io.Reader, warnings []string) error {
@@ -228,7 +229,7 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 		errLimit := &outputLimiter{dst: stderr, maxLine: a.MaxLineBytes, maxTotal: a.MaxOutputBytes}
 		stdout, stderr = outLimit, errLimit
 		start := time.Now()
-		code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, stdin, timeout)
+		code, runErr := a.runOneObserved(p, remote, scriptBody, stdout, stderr, stdin, timeout, &res.Connection)
 		res.Truncated = outLimit.cut || errLimit.cut
 		if res.Truncated && !a.JSON {
 			fmt.Fprintln(a.Err, "warning: output truncated; remote command was drained, not replayed")
@@ -248,6 +249,13 @@ func (a *App) runAll(meta auditMeta, plan []planned, remote, scriptBody string, 
 		}
 		st, exitCode := statusOf(res.ExitCode, runErr)
 		res.Status, res.Outcome = st, executionOutcome(runErr)
+		if res.Connection.Outcome != "" {
+			res.Outcome = res.Connection.Outcome
+		}
+		if runErr != nil {
+			hint := errorGuidance(res.ExitCode, runErr.Error())
+			res.Guidance = &hint
+		}
 		extra := ""
 		if runErr != nil {
 			extra = runErr.Error()
@@ -367,7 +375,7 @@ func (a *App) execCaptured(meta auditMeta, p planned, remote, scriptBody string,
 	errLimit := &outputLimiter{dst: stderr, maxLine: a.MaxLineBytes, maxTotal: a.MaxOutputBytes}
 	stdout, stderr = outLimit, errLimit
 	start := time.Now()
-	code, runErr := a.runOne(p, remote, scriptBody, stdout, stderr, nil, timeout)
+	code, runErr := a.runOneObserved(p, remote, scriptBody, stdout, stderr, nil, timeout, &res.Connection)
 	res.Truncated = outLimit.cut || errLimit.cut
 	if res.Truncated && !a.JSON {
 		fmt.Fprintln(a.Err, "warning: output truncated; remote command was drained, not replayed")
@@ -398,6 +406,13 @@ func (a *App) execCaptured(meta auditMeta, p planned, remote, scriptBody string,
 	printMu.Unlock()
 	st, exitCode := statusOf(res.ExitCode, runErr)
 	res.Status, res.Outcome = st, executionOutcome(runErr)
+	if res.Connection.Outcome != "" {
+		res.Outcome = res.Connection.Outcome
+	}
+	if runErr != nil {
+		hint := errorGuidance(res.ExitCode, runErr.Error())
+		res.Guidance = &hint
+	}
 	extra := ""
 	if runErr != nil {
 		extra = runErr.Error()
@@ -425,6 +440,11 @@ func executionOutcome(err error) string {
 }
 
 func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Writer, stdin io.Reader, timeout time.Duration) (int, error) {
+	return a.runOneObserved(p, remote, scriptBody, stdout, stderr, stdin, timeout, &connectionInfo{})
+}
+
+func (a *App) runOneObserved(p planned, remote, scriptBody string, stdout, stderr io.Writer, stdin io.Reader, timeout time.Duration, info *connectionInfo) (int, error) {
+	info.Mode, info.Outcome = "direct", "not_started"
 	if a.OperationContext != nil {
 		if err := a.OperationContext.Err(); err != nil {
 			return 0, err
@@ -434,13 +454,16 @@ func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Wri
 		if scriptBody != "" {
 			return 0, exitcode.New(exitcode.Usage, "--daemon accepts literal exec commands, not --stdin/--script")
 		}
-		return a.runViaDaemon(p, remote, stdout, stderr, timeout)
+		return a.runViaDaemonObserved(p, remote, stdout, stderr, timeout, info)
 	}
+	started := time.Now()
 	client, err := a.dial(p.host, timeout)
+	info.ConnectMS = time.Since(started).Milliseconds()
 	if err != nil {
 		return 0, err
 	}
 	defer client.Close()
+	info.Connected = true
 	ctx := context.Background()
 	if a.OperationContext != nil {
 		ctx = a.OperationContext
@@ -453,7 +476,9 @@ func (a *App) runOne(p planned, remote, scriptBody string, stdout, stderr io.Wri
 	if scriptBody != "" {
 		stdin = strings.NewReader(scriptBody)
 	}
+	started = time.Now()
 	code, err := client.Run(ctx, remote, stdout, stderr, stdin)
+	info.ExecutionMS, info.Outcome = time.Since(started).Milliseconds(), executionOutcome(err)
 	if err != nil {
 		return 0, sshWrapRun(err)
 	}
@@ -476,6 +501,9 @@ func parseTimeout(s string) (time.Duration, error) {
 		return 0, nil
 	}
 	if d, err := time.ParseDuration(s); err == nil {
+		if d < 0 {
+			return 0, fmt.Errorf("timeout must be non-negative")
+		}
 		return d, nil
 	}
 	n, err := strconv.Atoi(s)

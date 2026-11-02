@@ -23,8 +23,8 @@ func StatusProbes() []Probe {
 		{Name: "hostname", Command: "cat /etc/hostname"},
 		{Name: "uptime", Command: "uptime"},
 		{Name: "load", Command: "cat /proc/loadavg"},
-		{Name: "memory", Command: "free"},
-		{Name: "disk", Command: "df -h"},
+		{Name: "memory", Command: "free -b"},
+		{Name: "disk", Command: "df -P"},
 		{Name: "listen", Command: "ss -lnt"},
 	}
 }

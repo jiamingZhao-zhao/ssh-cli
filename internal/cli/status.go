@@ -2,141 +2,109 @@ package cli
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
-
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
-	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/metrics"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/remote"
+	"github.com/spf13/cobra"
 )
 
+type statusProbe struct {
+	Name string `json:"name"`
+	commandOutput
+}
+type statusView struct {
+	Host             string         `json:"host"`
+	Group            string         `json:"group"`
+	Env              string         `json:"env"`
+	Connected        bool           `json:"connected"`
+	Complete         bool           `json:"complete"`
+	StdoutSuppressed bool           `json:"stdoutSuppressed,omitempty"`
+	ExitCode         int            `json:"exitCode"`
+	Error            string         `json:"error,omitempty"`
+	Guidance         *guidance      `json:"guidance,omitempty"`
+	Warnings         []string       `json:"warnings,omitempty"`
+	Facts            map[string]any `json:"facts"`
+	Notes            []string       `json:"notes"`
+	Probes           []statusProbe  `json:"probes"`
+}
+
 func (a *App) statusCmd() *cobra.Command {
-	var timeout string
-	cmd := &cobra.Command{
-		Use:   "status",
-		Short: "Check connectivity and basic host health",
-		Long: `Check the selected hosts (the same -H / -g / -t / --env filters as exec).
-
-status dials each host and runs a fixed set of read-only commands: hostname,
-uptime, load, memory, disk, and listening ports. Every command is checked by
-the policy engine before the connection opens. A host that cannot be reached
-is a failed status. A probe that exits non-zero is reported on that host and
-does not by itself mark the host down.
-
-The attempt is appended to the audit log.`,
+	var timeout, total string
+	var parallel int
+	cmd := &cobra.Command{Use: "status", Short: "Check connectivity and basic host health", Args: cobra.NoArgs,
+		Long: `Check selected hosts with bounded read-only probes. Raw probes remain available;
+facts contains parsed hostname, load, memory bytes and disks when complete data
+is available. Missing, failed or truncated probes are noted, never filled as zero.
+All targets are checked before dispatch. Up to 4 hosts run concurrently (16 max).
+--total-timeout includes queueing, connection and commands, and retains partial
+results. A nonzero probe does not mean the host is offline; inspect complete,
+probes[].exitCode and outcome. --agent-mode reuses eligible readonly connections.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if err := a.rejectYesWithoutTTY(); err != nil {
-				return err
-			}
 			dur, err := parseTimeout(timeout)
 			if err != nil {
-				return exitcode.New(exitcode.Usage, "%s", err.Error())
+				return exitcode.New(exitcode.Usage, "%s", err)
 			}
 			if dur == 0 {
 				dur = 15 * time.Second
 			}
+			budget, err := parseTimeout(total)
+			if err != nil {
+				return exitcode.New(exitcode.Usage, "%s", err)
+			}
+			if budget == 0 {
+				budget = 30 * time.Second
+			}
 			probes := remote.StatusProbes()
-			meta := a.auditMeta(audit.OpStatus, remote.StatusCommand(), "", "")
-			cfg, hosts, err := a.loadSelection()
-			if err != nil {
-				a.auditSelectionError(meta, hosts, err)
-				return err
+			commands := make([]string, len(probes))
+			for i, p := range probes {
+				commands[i] = p.Command
 			}
-			plan, err := a.plan(cfg, hosts, meta, func(eff guard.Effective) guard.Decision {
-				parts := make([]guard.Decision, 0, len(probes))
-				for _, probe := range probes {
-					parts = append(parts, guard.Decide(eff, probe.Command))
-				}
-				return guard.Merge(parts...)
-			})
+			results, err := a.collectQueries(audit.OpStatus, commands, dur, budget, parallel, true)
 			if err != nil {
 				return err
 			}
-			type probeView struct {
-				Name     string `json:"name"`
-				Command  string `json:"command"`
-				ExitCode int    `json:"exitCode"`
-				Stdout   string `json:"stdout,omitempty"`
-				Stderr   string `json:"stderr,omitempty"`
-			}
-			type view struct {
-				Host      string      `json:"host"`
-				Group     string      `json:"group"`
-				Env       string      `json:"env"`
-				Connected bool        `json:"connected"`
-				ExitCode  int         `json:"exitCode"`
-				Error     string      `json:"error,omitempty"`
-				Probes    []probeView `json:"probes,omitempty"`
-			}
-			views := make([]view, 0, len(plan))
-			final := 0
-			for _, p := range plan {
-				if err := a.confirmPlanned(meta, p); err != nil {
-					return err
+			views := make([]statusView, len(results))
+			for i, r := range results {
+				v := statusView{Host: r.Host, Group: r.Group, Env: r.Env, Connected: r.Connected, Complete: r.Complete, StdoutSuppressed: r.StdoutSuppressed, Error: r.Error, Guidance: r.Guidance, Warnings: r.Warnings, Facts: map[string]any{}, Notes: []string{}, Probes: []statusProbe{}}
+				// Preserve status's existing contract: individual unavailable probes
+				// mark the snapshot incomplete, not the connection or CLI as failed.
+				if r.Error != "" {
+					v.ExitCode = r.ExitCode
 				}
-				a.header(p.host)
-				start := time.Now()
-				commands := make([]string, len(probes))
-				for i, probe := range probes {
-					commands[i] = probe.Command
-				}
-				outputs, runErr := a.runCommands(p, commands, dur)
-				v := view{Host: p.host.Alias, Group: p.host.Group, Env: p.host.EnvName}
-				var summaryParts []string
-				if runErr != nil {
-					v.Error = runErr.Error()
-					v.ExitCode = exitcode.From(runErr)
-					v.Connected = false
-					fmt.Fprintf(a.Err, "error: %s: %s\n", p.host.Alias, runErr.Error())
-				} else {
-					v.Connected = true
-					v.ExitCode = 0
-				}
-				for i, probe := range probes {
-					pv := probeView{Name: probe.Name, Command: probe.Command}
-					if i < len(outputs) {
-						pv.ExitCode = outputs[i].ExitCode
-						pv.Stdout = outputs[i].Stdout
-						pv.Stderr = outputs[i].Stderr
-						if !a.JSON {
-							fmt.Fprintf(a.Out, "[%s]\n", probe.Name)
-							if pv.Stdout != "" {
-								fmt.Fprint(a.Out, pv.Stdout)
-								if !strings.HasSuffix(pv.Stdout, "\n") {
-									fmt.Fprintln(a.Out)
-								}
-							}
-							if pv.ExitCode != 0 {
-								fmt.Fprintf(a.Err, "%s: exit %d\n", probe.Name, pv.ExitCode)
-								if pv.Stderr != "" {
-									fmt.Fprint(a.Err, pv.Stderr)
-								}
-							}
-						}
-						line := probe.Name + ": " + oneLine(pv.Stdout)
-						if pv.ExitCode != 0 {
-							line += fmt.Sprintf(" (exit %d)", pv.ExitCode)
-						}
-						summaryParts = append(summaryParts, line)
+				for j, c := range r.Commands {
+					v.Probes = append(v.Probes, statusProbe{Name: probes[j].Name, commandOutput: c})
+					if c.Outcome != "completed" || c.ExitCode != 0 || c.Truncated || r.StdoutSuppressed {
+						v.Complete = false
+						v.Notes = append(v.Notes, probes[j].Name+": unavailable, failed, suppressed or truncated; inspect raw probe")
+						continue
 					}
-					v.Probes = append(v.Probes, pv)
+					if !parseStatusFact(v.Facts, probes[j].Name, c.Stdout) {
+						v.Complete = false
+						v.Notes = append(v.Notes, probes[j].Name+": format not recognized; inspect raw probe")
+					}
 				}
-				summary := joinSummary(summaryParts)
-				if err := a.auditHost(meta, p, start, v.ExitCode, runErr, summary); err != nil {
-					return err
-				}
-				views = append(views, v)
-				if runErr != nil {
-					final = preferCode(final, v.ExitCode)
-				}
+				views[i] = v
 			}
 			if a.JSON {
 				if err := a.emit(map[string]any{"results": views}); err != nil {
 					return err
 				}
+			} else {
+				a.printQueries(results)
+				for _, v := range views {
+					for _, note := range v.Notes {
+						fmt.Fprintf(a.Err, "%s: %s\n", v.Host, note)
+					}
+				}
+			}
+			final := 0
+			for _, v := range views {
+				final = preferCode(final, v.ExitCode)
 			}
 			if final != 0 {
 				return exitcode.Silent(final)
@@ -144,6 +112,60 @@ The attempt is appended to the audit log.`,
 			return nil
 		},
 	}
-	cmd.Flags().StringVar(&timeout, "timeout", "", "per-command timeout (duration or seconds; default 15s); also bounds SSH connect")
+	cmd.Flags().StringVar(&timeout, "timeout", "", "per-command timeout (default 15s); also bounds SSH connect")
+	cmd.Flags().StringVar(&total, "total-timeout", "", "total budget including queue and SSH connect (default 30s)")
+	cmd.Flags().IntVar(&parallel, "parallel", 4, "hosts checked concurrently (1-4; at most 16 hosts)")
 	return cmd
+}
+
+func parseStatusFact(facts map[string]any, name, text string) bool {
+	if strings.TrimSpace(text) == "" {
+		return false
+	}
+	switch name {
+	case "hostname":
+		facts["hostname"] = strings.TrimSpace(text)
+	case "uptime":
+		facts["uptime"] = strings.TrimSpace(text)
+	case "load":
+		fields := strings.Fields(text)
+		if len(fields) < 3 {
+			return false
+		}
+		load := make([]float64, 3)
+		for i := range load {
+			n, err := strconv.ParseFloat(fields[i], 64)
+			if err != nil || n < 0 {
+				return false
+			}
+			load[i] = n
+		}
+		facts["loadAverage"] = load
+	case "memory":
+		mem, swap, ok := metrics.ParseFree(text)
+		if !ok || mem.Used > mem.Total {
+			return false
+		}
+		memory := map[string]any{"totalBytes": mem.Total, "usedBytes": mem.Used, "usedPercent": mem.Percent}
+		for _, line := range strings.Split(text, "\n") {
+			fields := strings.Fields(line)
+			if len(fields) >= 7 && strings.EqualFold(strings.TrimSuffix(fields[0], ":"), "mem") {
+				if avail, err := strconv.ParseUint(fields[6], 10, 64); err == nil && avail <= mem.Total {
+					memory["availableBytes"] = avail
+				}
+			}
+			if len(fields) >= 3 && strings.EqualFold(strings.TrimSuffix(fields[0], ":"), "swap") {
+				facts["swap"] = map[string]any{"totalBytes": swap.Total, "usedBytes": swap.Used, "usedPercent": swap.Percent}
+			}
+		}
+		facts["memory"] = memory
+	case "disk":
+		facts["disks"] = metrics.ParseDF(text)
+		facts["diskLimit"] = 8
+	case "listen":
+		facts["listeningPortsRaw"] = strings.TrimSpace(text)
+	default:
+		return false
+	}
+	return true
 }

@@ -43,6 +43,11 @@ On an interactive TTY, installing asks you to type the release version.
 --yes skips that prompt. Without a TTY the install proceeds with no prompt;
 --yes is unnecessary there and does not error.`,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			// Agent shells can inherit a real console. Never open a blocking
+			// confirmation prompt implicitly in this profile.
+			if a.AgentProfile && !a.Yes {
+				check = true
+			}
 			if repo == "" {
 				repo = os.Getenv("SSH_CLI_REPO")
 			}

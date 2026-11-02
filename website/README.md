@@ -1,6 +1,6 @@
 # ssh-cli 产品落地页
 
-独立静态页面，默认中文，支持英文；无构建步骤、第三方依赖、远端字体或统计请求。以 **v0.7.37 / 5ab4e72** 为发布快照，核对日期 **2026-10-22**。更新版本时需核对文案、命令帮助和生成示例，不能只改版本号。
+独立静态页面，默认中文，支持英文；无构建步骤、第三方依赖、远端字体或统计请求。产品介绍中的策略示例以 **v0.7.37 / 5ab4e72** 为快照；命令参考来自 **0.7.40 候选构建**，具体发布版本以本机 `--help` 为准。更新版本时需核对文案、命令帮助和生成示例，不能只改版本号。
 
 ## 预览
 
@@ -46,8 +46,8 @@ python -m http.server 7331 --bind 127.0.0.1 --directory website
 `command-notes.json` 提供用途和边界，生成完整 `command-data.js` 与首页精简 `command-index.js`：
 
 ```sh
-python website/tools/command-reference.py --cli /path/to/ssh-cli
-python website/tools/command-reference.py --cli /path/to/ssh-cli --check
+python website/tools/command-reference.py --cli /path/to/ssh-cli --expected-version 0.7.40
+python website/tools/command-reference.py --cli /path/to/ssh-cli --expected-version 0.7.40 --check
 ```
 
 生成器只在临时配置下调用 version / --help，不执行文档示例。所有真实命令必须有补充说明。

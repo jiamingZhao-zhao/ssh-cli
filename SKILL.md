@@ -31,20 +31,25 @@ Use the installed `ssh-cli` and the user's existing inventory. Check the relevan
 - Confirmation requires the user's interactive TTY. `--yes` does not authorize a noninteractive agent. Stop that operation and explain the exact requested human action; independent authorized reads may continue.
 - `elevate` is a human-only, single-host, single-command break-glass path, disabled by default. Do not invoke it or configure break glass on behalf of an unattended agent. Its TTL closes the SSH operation; it cannot roll back changes or stop detached remote processes.
 - Credentials belong in configured secret storage, a private key reference or the local SSH agent. Never put passwords/tokens into command arguments, audit annotations, generated documentation or chat output. History/audit redaction is heuristic; avoid retrieving secret-bearing files or commands unnecessarily.
+- Readonly is an operation policy, not confidentiality isolation: configuration, logs and `/proc` may contain secrets. Request only the specific data needed; do not assert that a readonly result cannot expose credentials.
 - With agent authentication, honor the saved `agentKey` SHA256 fingerprint. If that identity is absent, report the authentication failure; do not clear the selector, switch identities or change authentication to get around it. `host edit --agent-key` changes configuration, not a per-command credential override; perform it only when the user requested that change.
 - Upload and relay stage a temporary remote file before commit; download stages locally. Directory transfers commit files separately and are not transactions. A canceled/lost reply can still occur after a final rename, so verify the destination.
 - `audit protect` establishes the current logs as an integrity baseline; `audit verify --json` checks it. Local HMAC cannot defeat a process that can read the signing key or roll back logs and their checkpoint together. Keep a checkpoint in an independently trusted store when required. Never re-sign altered records to conceal a verification failure.
-- For consecutive readonly checks, use exec --auto-daemon to start/reuse the authenticated local pool on demand. Newly started daemons exit after 180 idle seconds; existing manual daemons retain their lifetime. Both caller and daemon recheck policy. It refuses non-readonly/confirmation-required targets, script/stdin forwarding and insecure host-key bypass; never retries or falls back after dispatch. Default calls stay direct. File transfers are not pooled.
-- Bound noisy diagnostics with --max-line-bytes 512 --max-output-bytes 16384 --json. Limits apply separately to stdout/stderr; truncated: true means omitted output, not command failure. Denial JSON includes per-host decision findings with the rejected command where identified.
-- Optional inventory lanIp/publicIp/roles/entrypoints are user-maintained annotations, not verified discovery, permissions or SSH routes. Verify candidate mappings before operating; primary host and via still determine connections.
+- On versions whose help lists `--agent-mode`, use it for diagnostic calls: it requests JSON and bounded output, and enables automatic connection reuse for eligible non-confirming readonly operations. A newly started reuse process exits after 180 idle seconds; existing manual daemons retain their configured lifetime. The caller and reuse process recheck policy. There is no retry or fallback after dispatch. Use `--direct` when a direct connection is needed. File transfers are not pooled. Older versions can use `exec --auto-daemon --json` explicitly when supported.
+- JSON defaults to a 512-byte line limit and 16384 bytes per stream on supported commands; `--max-line-bytes` and `--max-output-bytes` change the limits (explicit zero means unlimited). Inspect `truncated` before drawing conclusions; omitted output is not command failure. If a command/version does not support these defaults, set explicit supported limits. Denial JSON includes findings for rejected commands where identified.
+- Use `host list --ip`, `--role`, `--entrypoint` or `--search` when available to narrow candidates. LAN/public IPs, roles and entrypoints are user-maintained annotations, not verified discovery, permissions or SSH routes. Verify candidate mappings before operating; primary host and via still determine connections.
+- When supported, `check --command ...` runs independent readonly commands on selected hosts after policy preflight. Review each command's status and `outcome`, including `not_started`. `status` reports structured facts only for readable, complete samples and retains raw probe output; inspect `complete`, `notes` and individual probes before claiming a host is healthy. `logs` reads a bounded snapshot; `--grep` filters the selected recent window, not the entire log, and `--since` applies only to unit/container logs. Logs can contain sensitive data: request only the minimum needed.
+- On supported versions `ssh-cli update --agent-mode` checks without prompting or installing. Only install an update when requested; `update --yes` explicitly skips the release confirmation. Human confirmations for remote operations remain mandatory and must not be bypassed.
 
 Examples (adapt aliases and paths to the inventory):
 
 ```text
-ssh-cli status -H app --json
+ssh-cli host list --ip 192.0.2.10 --json
+ssh-cli status -H app --agent-mode
+ssh-cli check -H app --agent-mode --command "ss -tlnp" --command "jps -l"
+ssh-cli logs -H app --unit nginx --since 15m --grep error --agent-mode
 ssh-cli policy show -H app --json
-ssh-cli exec -H app --json -- df -h
-ssh-cli exec -H app --json -- curl -d '{"k":"v"}' http://127.0.0.1/api
+ssh-cli exec -H app --agent-mode -- df -h
 ssh-cli ls -H app /var/log --json
 ssh-cli audit list --host app --json
 ssh-cli upload -H app ./artifact.jar /tmp/artifact.jar --json

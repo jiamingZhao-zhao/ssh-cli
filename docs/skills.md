@@ -66,6 +66,16 @@ sh scripts/install-skill.sh claude --project /path/to/your-project
 
 ## 装好后，直接这样说
 
+新版 Skill 会优先使用 `--agent-mode` 进行排查：返回 JSON、限制输出，并在符合条件的只读操作中按需复用连接。可让 Agent 先按 IP、角色或入口缩小范围，再检查两台实例；主机备注仍需人工核实，不会自动改变 SSH 路由。旧版 CLI 请以本机 `--help` 为准。
+
+```sh
+ssh-cli host list --ip 192.0.2.10 --json
+ssh-cli check -H app-a -H app-b --agent-mode --command "ss -tlnp" --command "jps -l"
+ssh-cli logs -H app-a --unit nginx --since 15m --grep error --agent-mode
+```
+
+`check` 会分别返回每项检查的状态；日志关键字只在选出的最近日志窗口内查找。确认提示仍由用户在交互终端完成，Agent 不代替确认。
+
 Claude Code / Copilot CLI：
 
 ```text
