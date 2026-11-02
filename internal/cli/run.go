@@ -89,7 +89,7 @@ func (a *App) plan(cfg *config.Config, hosts []config.ResolvedHost, meta auditMe
 		}
 		out = append(out, p)
 	}
-	if !ttyCheck() {
+	if !ttyCheck() || a.AgentProfile {
 		var confirmErr error
 		for _, p := range out {
 			if !p.dec.NeedsConfirm {

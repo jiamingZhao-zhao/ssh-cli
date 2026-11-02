@@ -63,7 +63,7 @@ func TestJSONExecutionOutcomes(t *testing.T) {
 	if err := json.Unmarshal([]byte(raw), &body); err != nil || len(body.Results) != 1 {
 		t.Fatalf("lost result: %s (%v)", raw, err)
 	}
-	if body.Results[0].Outcome != "unknown" || body.Results[0].Status != "connect" || body.Results[0].RetrySafe {
+	if body.Results[0].Outcome != "not_started" || body.Results[0].Status != "connect" || body.Results[0].RetrySafe {
 		t.Fatalf("transport error: %s", raw)
 	}
 }

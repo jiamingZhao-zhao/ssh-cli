@@ -46,6 +46,9 @@ type App struct {
 	PolicyDenials    []guard.HostDecision
 	UseDaemon        bool
 	AutoDaemon       bool
+	RequestAuto      bool
+	AgentProfile     bool
+	Direct           bool
 	daemonAdmission  sync.Mutex
 }
 
@@ -99,7 +102,7 @@ func Execute(args []string, in io.Reader, out, errw io.Writer) int {
 	if a.JSON {
 		enc := json.NewEncoder(out)
 		enc.SetEscapeHTML(false)
-		body := map[string]any{"ok": false, "error": err.Error(), "code": code}
+		body := map[string]any{"ok": false, "error": err.Error(), "code": code, "guidance": errorGuidance(code, err.Error())}
 		if len(a.PolicyDenials) > 0 {
 			body["denials"] = a.PolicyDenials
 		}
@@ -157,8 +160,29 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		PersistentPreRunE: func(cmd *cobra.Command, _ []string) error {
-			if a.UseDaemon && cmd.Name() != "exec" {
-				return exitcode.New(exitcode.Usage, "--daemon currently supports exec only; other commands use direct connections")
+			if a.AgentProfile {
+				a.JSON = true
+			}
+			if a.MaxLineBytes < 0 || a.MaxOutputBytes < 0 {
+				return exitcode.New(exitcode.Usage, "output limits must be non-negative")
+			}
+			if a.JSON && (cmd.Name() == "exec" || cmd.Name() == "status" || cmd.Name() == "check" || cmd.Name() == "logs" || cmd.Name() == "service") {
+				if !cmd.Flags().Changed("max-line-bytes") {
+					a.MaxLineBytes = 512
+				}
+				if !cmd.Flags().Changed("max-output-bytes") {
+					a.MaxOutputBytes = 16384
+				}
+			}
+			supportedReuse := cmd.Name() == "exec" || cmd.Name() == "status" || cmd.Name() == "check" || cmd.Name() == "logs" || cmd.Name() == "service"
+			if !supportedReuse && (a.MaxLineBytes > 0 || a.MaxOutputBytes > 0) {
+				return exitcode.New(exitcode.Usage, "output limits currently support exec, status, check, logs and service")
+			}
+			if (a.UseDaemon || a.RequestAuto) && !supportedReuse {
+				return exitcode.New(exitcode.Usage, "connection reuse supports exec, status, check, logs and service only")
+			}
+			if a.Direct && (a.UseDaemon || a.RequestAuto) {
+				return exitcode.New(exitcode.Usage, "--direct cannot be combined with --daemon or --auto-daemon")
 			}
 			// update installs when there is no TTY, so --yes is redundant there
 			// and must not fail. Every other command still rejects --yes without a TTY.
@@ -171,7 +195,7 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 			}
 			a.Dir = dir
 			switch cmd.Name() {
-			case "exec", "upload", "download", "relay", "service", "keys", "run":
+			case "exec", "status", "check", "logs", "upload", "download", "relay", "service", "keys", "run":
 				if err := audit.Preflight(dir, audit.SourceCLI, cmd.CommandPath()); err != nil {
 					return exitcode.New(exitcode.Denied, "audit unavailable; operation not started: %s", err.Error())
 				}
@@ -190,7 +214,12 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 	f := root.PersistentFlags()
 	f.StringVar(&a.ConfigFlag, "config", "", "config directory (default: SSH_CLI_HOME, else %APPDATA%\\ssh-cli or ~/.config/ssh-cli)")
 	f.BoolVar(&a.JSON, "json", false, "print JSON on stdout")
-	f.BoolVar(&a.UseDaemon, "daemon", false, "reuse a running local daemon for exec; never auto-start or fall back")
+	f.BoolVar(&a.AgentProfile, "agent-mode", false, "JSON diagnostics with bounded output, 30s exec timeout and automatic readonly connection reuse")
+	f.BoolVar(&a.Direct, "direct", false, "use direct SSH even in the Agent profile")
+	f.BoolVar(&a.RequestAuto, "auto-daemon", false, "start/reuse the local daemon for non-confirming readonly queries (180s idle exit)")
+	f.IntVar(&a.MaxLineBytes, "max-line-bytes", 0, "retain N bytes per output line (JSON default 512; explicit 0: unlimited)")
+	f.IntVar(&a.MaxOutputBytes, "max-output-bytes", 0, "retain N bytes per stdout/stderr stream (JSON default 16384; explicit 0: unlimited)")
+	f.BoolVar(&a.UseDaemon, "daemon", false, "reuse a running local daemon for supported queries; never auto-start or fall back")
 	f.BoolVar(&a.Yes, "yes", false, "skip confirmation; only valid on an interactive TTY (update installs without a TTY)")
 	f.BoolVar(&a.Insecure, "insecure-ignore-host-key", false, "do not verify host keys (escape hatch)")
 	f.BoolVar(&a.AllowCrossEnv, "allow-cross-env", false, "allow one operation to target hosts in more than one env")
@@ -210,6 +239,8 @@ import ssh-ops reads a local YAML or JSON inventory. The localhost UI edits the 
 		a.groupCmd(),
 		a.envCmd(),
 		a.execCmd(),
+		a.checkCmd(),
+		a.logsCmd(),
 		a.elevateCmd(),
 		a.daemonCmd(),
 		a.sessionCmd(),

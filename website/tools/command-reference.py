@@ -1,4 +1,4 @@
-"""Generate/check command metadata from a v0.7.37 binary's help output only.
+"""Generate/check command metadata from an explicitly selected binary's help output only.
 
 python website/tools/command-reference.py --cli /path/to/ssh-cli [--check]
 Every inventory request ends in --help and uses an isolated config directory.
@@ -14,11 +14,13 @@ import tempfile
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--cli', type=Path, required=True)
 parser.add_argument('--check', action='store_true')
+parser.add_argument('--expected-version', default='dev', help='require this binary version (default: dev)')
+parser.add_argument('--commit', default='working-tree', help='reviewed source commit, or working-tree for unreleased changes')
 args = parser.parse_args()
 binary = args.cli.resolve(strict=True)
 version = subprocess.check_output([str(binary), 'version'], text=True).strip()
-if version.split()[:2] != ['ssh-cli', '0.7.37']:
-    raise SystemExit('Use a binary built from v0.7.37.')
+if version.split()[:2] != ['ssh-cli', args.expected_version]:
+    raise SystemExit(f'Expected binary version {args.expected_version}; got {version}.')
 
 headings = {'Usage:', 'Aliases:', 'Examples:', 'Available Commands:', 'Flags:', 'Global Flags:', 'Additional help topics:'}
 
@@ -111,7 +113,7 @@ for command in commands:
     root = command['path'].split()[1:2]
     root = root[0] if root else 'root'
     command['category'] = (
-        'execution' if root in ('exec', 'ui', 'session', 'daemon') else
+        'execution' if root in ('exec', 'check', 'logs', 'ui', 'session', 'daemon') else
         'files' if root in ('upload', 'download', 'ls', 'relay') else
         'inventory' if root in ('host', 'group', 'env') else
         'policy' if root in ('policy', 'elevate') else
@@ -123,7 +125,7 @@ for command in commands:
         '--' + flag['name'] + (' -' + flag['short'] if flag['short'] else '')
         for flag in command['flags'] + command['globalFlags']
     )
-data = {'version': '0.7.37', 'commit': '5ab4e72cf7a9ceb7c9e6d38b7646fe1fa6cc7811', 'commands': commands}
+data = {'version': args.expected_version, 'commit': args.commit, 'commands': commands}
 index = {'version': data['version'], 'commands': [
     {key: command[key] for key in ('id', 'path', 'summary', 'category', 'searchFlags')} |
     {'title': command['note']['title'], 'effect': command['note']['effect']}

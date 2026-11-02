@@ -58,17 +58,22 @@ The attempt is appended to the audit log.`,
 			if err != nil {
 				return err
 			}
+			if err := a.prepareQueryReuse(plan); err != nil {
+				return err
+			}
 			type view struct {
-				Host     string `json:"host"`
-				Group    string `json:"group"`
-				Env      string `json:"env"`
-				Action   string `json:"action"`
-				Service  string `json:"service"`
-				Command  string `json:"command"`
-				ExitCode int    `json:"exitCode"`
-				Stdout   string `json:"stdout,omitempty"`
-				Stderr   string `json:"stderr,omitempty"`
-				Error    string `json:"error,omitempty"`
+				Truncated  bool            `json:"truncated,omitempty"`
+				Connection *connectionInfo `json:"connection,omitempty"`
+				Host       string          `json:"host"`
+				Group      string          `json:"group"`
+				Env        string          `json:"env"`
+				Action     string          `json:"action"`
+				Service    string          `json:"service"`
+				Command    string          `json:"command"`
+				ExitCode   int             `json:"exitCode"`
+				Stdout     string          `json:"stdout,omitempty"`
+				Stderr     string          `json:"stderr,omitempty"`
+				Error      string          `json:"error,omitempty"`
 			}
 			views := make([]view, 0, len(plan))
 			final := 0
@@ -84,6 +89,10 @@ The attempt is appended to the audit log.`,
 					Action: action, Service: strings.TrimSpace(args[1]), Command: command,
 				}
 				summary := ""
+				if len(outputs) > 0 {
+					v.Stdout, v.Stderr, v.Truncated = outputs[0].Stdout, outputs[0].Stderr, outputs[0].Truncated
+					v.Connection = &outputs[0].Connection
+				}
 				if runErr != nil {
 					v.Error = runErr.Error()
 					v.ExitCode = exitcode.From(runErr)
@@ -93,7 +102,7 @@ The attempt is appended to the audit log.`,
 					v.ExitCode = outputs[0].ExitCode
 					v.Stdout = outputs[0].Stdout
 					v.Stderr = outputs[0].Stderr
-					summary = summarizeOutputs(outputs[0].Stdout, outputs[0].Stderr, false, "")
+					summary = summarizeOutputs(outputs[0].Stdout, outputs[0].Stderr, outputs[0].Truncated, "")
 					if !a.JSON {
 						fmt.Fprint(a.Out, outputs[0].Stdout)
 						fmt.Fprint(a.Err, outputs[0].Stderr)

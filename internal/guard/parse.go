@@ -32,8 +32,9 @@ type parsed struct {
 	dynamic    string
 	// unresolved means the real command cannot be seen. Readonly denies it.
 	// Standard and admin require confirmation instead of allowing it.
-	unresolved string
-	depth      int
+	unresolved     string
+	readonlyHazard string
+	depth          int
 }
 
 const maxShellDepth = 6
@@ -90,6 +91,9 @@ func (p *parsed) feed(src string) {
 	}
 	if inner.unresolved != "" {
 		p.noteUnresolved(inner.unresolved)
+	}
+	if p.readonlyHazard == "" {
+		p.readonlyHazard = inner.readonlyHazard
 	}
 }
 
@@ -204,6 +208,8 @@ func (p *parsed) walkCommand(cmd syntax.Command) {
 			p.stmt(st)
 		}
 	case *syntax.ForClause:
+		// The loop variable can change PATH, BASH_ENV, or loader variables.
+		p.readonlyHazard = "shell loops can alter the execution environment"
 		if w, ok := c.Loop.(*syntax.WordIter); ok {
 			for _, item := range w.Items {
 				p.word(item)
@@ -241,6 +247,8 @@ func (p *parsed) walkCommand(cmd syntax.Command) {
 		p.word(c.Description)
 		p.stmt(c.Body)
 	case *syntax.DeclClause:
+		// export/declare without operands may also dump the environment.
+		p.readonlyHazard = "shell declarations can expose or change the execution environment"
 		for _, as := range c.Args {
 			p.assign(as)
 		}
@@ -258,6 +266,9 @@ func (p *parsed) walkCommand(cmd syntax.Command) {
 }
 
 func (p *parsed) call(call *syntax.CallExpr) {
+	if len(call.Assigns) > 0 && len(call.Args) > 0 {
+		p.readonlyHazard = "inline environment assignments can change executable or library behavior"
+	}
 	for _, as := range call.Assigns {
 		p.assign(as)
 	}
@@ -271,6 +282,17 @@ func (p *parsed) call(call *syntax.CallExpr) {
 	if len(args) == 0 {
 		return
 	}
+	// An env wrapper can replace PATH, loaders, shell startup files, proxy
+	// settings and tool-specific options. Parsing only its inner command does
+	// not make those changes readonly.
+	if args[0].Static && (wrapperNames[commandBase(args[0].Value)] || commandBase(args[0].Value) == "env") {
+		for _, arg := range args {
+			if arg.Static && commandBase(arg.Value) == "env" {
+				p.readonlyHazard = "env wrappers are not inspected as readonly execution contexts"
+				break
+			}
+		}
+	}
 	rest, kind, why := unwrapWrappers(args)
 	switch kind {
 	case unwrapDynamic:
@@ -281,6 +303,14 @@ func (p *parsed) call(call *syntax.CallExpr) {
 		return
 	}
 	if len(rest) == 0 {
+		// A wrapper without a command can itself print sensitive state (env).
+		// Keep it visible to the policy instead of treating it as an empty script.
+		for _, arg := range args {
+			if arg.Static && commandBase(arg.Value) == "env" {
+				p.commands = append(p.commands, command{args: []Arg{{Static: true, Value: "env"}}})
+				break
+			}
+		}
 		return
 	}
 	if rest[0].Static && rest[0].Value == "eval" {
@@ -352,6 +382,7 @@ func (p *parsed) assign(as *syntax.Assign) {
 	if as == nil {
 		return
 	}
+	p.readonlyHazard = "shell assignments can change executable or library behavior"
 	if as.Value != nil {
 		p.word(as.Value)
 	}

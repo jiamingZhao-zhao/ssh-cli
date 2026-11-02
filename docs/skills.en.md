@@ -66,6 +66,16 @@ Manual copies and native client installers also require a working CLI verified w
 
 ## Start with a clear request
 
+The updated skill prefers `--agent-mode` for diagnostics: JSON output is bounded and eligible readonly calls reuse connections on demand. Search by IP, role or entrypoint before comparing hosts. Inventory annotations are maintained by users and must be verified; they do not change SSH routes. Check the installed CLI's `--help` on older versions.
+
+```sh
+ssh-cli host list --ip 192.0.2.10 --json
+ssh-cli check -H app-a -H app-b --agent-mode --command "ss -tlnp" --command "jps -l"
+ssh-cli logs -H app-a --unit nginx --since 15m --grep error --agent-mode
+```
+
+`check` reports each command independently. Log filters cover only the selected recent window. Required confirmations remain the user's responsibility in an interactive terminal.
+
 Claude Code / Copilot CLI:
 
 ```text

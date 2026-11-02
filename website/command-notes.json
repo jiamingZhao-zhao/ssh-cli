@@ -39,8 +39,8 @@
       "title": "检查连接与主机健康状态",
       "effect": "remote-read",
       "example": "ssh-cli status -H demo --timeout 20s --json",
-      "noteZh": "会连接目标主机；缺失采样和连接失败不能当成健康状态。可用 -H、-g、-t 和 --env 选择目标。",
-      "noteEn": "Connects to the selected hosts. Missing samples or connection failures are not healthy results."
+      "noteZh": "检查前先校验策略。结果保留各项探针，并提供可解析的结构化信息；不完整或截断的数据不能视为健康。支持 --parallel 和 --total-timeout。",
+      "noteEn": "Each probe is policy-checked and retained alongside parsed facts; incomplete or truncated data is not evidence of health. Supports --parallel and --total-timeout."
     },
     "service": {
       "title": "查看或变更 systemd 服务",
@@ -465,6 +465,27 @@
       "title": "生成 Zsh 补全脚本",
       "effect": "local-output",
       "example": "ssh-cli completion zsh"
+    },
+    "check": {
+      "title": "多主机独立只读检查",
+      "effect": "remote-read",
+      "example": "ssh-cli check -H app-a -H app-b --agent-mode --command \"ss -tlnp\" --command \"jps -l\"",
+      "noteZh": "每条命令独立执行，并先检查主机策略和只读规则。查看每项结果及未开始、截断状态；失败不会自动重放。",
+      "noteEn": "Commands run independently after policy and readonly checks. Inspect each result, including not-started and truncated states; failures are not automatically replayed."
+    },
+    "logs": {
+      "title": "读取近期日志快照",
+      "effect": "remote-read",
+      "example": "ssh-cli logs -H demo --unit nginx --since 15m --grep error --agent-mode",
+      "noteZh": "支持文件、压缩日志、systemd 单元或容器日志。关键字在最近行数内筛选；--since 仅适用于单元和容器。日志可能包含敏感信息。",
+      "noteEn": "Reads files, compressed logs, systemd units or containers. Filtering applies to the recent-line window; --since applies to unit and container logs only. Logs may contain sensitive data."
+    },
+    "host-metadata": {
+      "title": "维护主机地址和用途备注",
+      "effect": "local-write",
+      "example": "ssh-cli host metadata demo --lan-ip 192.0.2.10 --role nginx --entrypoint test-web",
+      "noteZh": "备注由用户维护，适合查找入口和关联 IP；不会改变 SSH 地址或跳板路由，使用前需核实。",
+      "noteEn": "User-maintained annotations help find addresses and service entrypoints. They do not change SSH routing and must be verified."
     }
   }
 }

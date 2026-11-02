@@ -14,6 +14,13 @@ func normalizeOps(args []Arg) []Arg {
 		return stripLeadingOptions(args, systemctlTakesArg)
 	case "docker":
 		return stripLeadingOptions(args, dockerTakesArg)
+	case "ip":
+		out := []Arg{args[0]}
+		i := 1
+		for i < len(args) && args[i].Static && ipQueryFlag(args[i].Value) {
+			i++
+		}
+		return append(out, args[i:]...)
 	default:
 		return args
 	}

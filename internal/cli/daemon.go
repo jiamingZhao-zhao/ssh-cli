@@ -36,13 +36,14 @@ type daemonRequest struct {
 	Timeout  time.Duration `json:"timeout"`
 }
 type daemonReply struct {
-	Code         int    `json:"code"`
-	Stdout       string `json:"stdout"`
-	Stderr       string `json:"stderr"`
-	Error        string `json:"error,omitempty"`
-	Outcome      string `json:"outcome"`
-	Truncated    bool   `json:"truncated"`
-	AuditWarning bool   `json:"auditWarning,omitempty"`
+	Connection   connectionInfo `json:"connection"`
+	Code         int            `json:"code"`
+	Stdout       string         `json:"stdout"`
+	Stderr       string         `json:"stderr"`
+	Error        string         `json:"error,omitempty"`
+	Outcome      string         `json:"outcome"`
+	Truncated    bool           `json:"truncated"`
+	AuditWarning bool           `json:"auditWarning,omitempty"`
 }
 
 func daemonPaths(dir string) (string, string) {
@@ -275,12 +276,14 @@ func (a *App) daemonExec(parent context.Context, pool *session.Pool, in daemonRe
 	ctx, cancel := context.WithTimeout(parent, in.Timeout)
 	defer cancel()
 	fp := cfg.SessionFingerprint(h)
+	connectStart := time.Now()
 	a.daemonAdmission.Lock()
 	want := map[string]string{}
 	for alias, h := range cfg.Index() {
 		want[alias] = cfg.SessionFingerprint(h)
 	}
 	pool.Retain(want)
+	_, reused := pool.Client(h.Alias, fp)
 	if _, exists := pool.Client(h.Alias, fp); !exists && len(pool.List()) >= 16 {
 		a.daemonAdmission.Unlock()
 		return fail(fmt.Errorf("reuse host limit reached (16)"))
@@ -292,7 +295,7 @@ func (a *App) daemonExec(parent context.Context, pool *session.Pool, in daemonRe
 	a.daemonAdmission.Unlock()
 	start := time.Now()
 	out, stderr := &daemonCapture{}, &daemonCapture{}
-	res := daemonReply{Outcome: "completed"}
+	res := daemonReply{Outcome: "completed", Connection: connectionInfo{Mode: "daemon", Connected: true, Reused: reused, ConnectMS: time.Since(connectStart).Milliseconds()}}
 	err = pool.Use(h.Alias, fp, func() error {
 		raw, ok := pool.Client(h.Alias, fp)
 		if !ok {
@@ -309,6 +312,7 @@ func (a *App) daemonExec(parent context.Context, pool *session.Pool, in daemonRe
 	if err != nil {
 		res.Error, res.Outcome = err.Error(), "unknown"
 	}
+	res.Connection.ExecutionMS, res.Connection.Outcome = time.Since(start).Milliseconds(), res.Outcome
 	res.Stdout, res.Stderr, res.Truncated = out.String(), stderr.String(), out.cut || stderr.cut
 	summary := res.Stdout + res.Stderr
 	if eff.NoDataOut {
@@ -337,6 +341,11 @@ func (b *daemonCapture) Write(p []byte) (int, error) {
 }
 
 func (a *App) runViaDaemon(p planned, command string, stdout, stderr io.Writer, timeout time.Duration) (int, error) {
+	return a.runViaDaemonObserved(p, command, stdout, stderr, timeout, &connectionInfo{})
+}
+
+func (a *App) runViaDaemonObserved(p planned, command string, stdout, stderr io.Writer, timeout time.Duration, info *connectionInfo) (int, error) {
+	info.Mode, info.Outcome = "daemon", "not_started"
 	sock, tokenPath := daemonPaths(a.Dir)
 	token, err := os.ReadFile(tokenPath)
 	if err != nil {
@@ -362,6 +371,7 @@ func (a *App) runViaDaemon(p planned, command string, stdout, stderr io.Writer, 
 	r.Header.Set("Authorization", "Bearer "+strings.TrimSpace(string(token)))
 	r.Header.Set("Content-Type", "application/json")
 	// Exactly one attempt. No automatic fallback, reconnect or write replay.
+	info.Outcome = "unknown"
 	resp, err := client.Do(r)
 	if err != nil {
 		return 0, exitcode.New(exitcode.Connect, "reuse reply lost; verify remote state before retry: %s", err.Error())
@@ -377,12 +387,8 @@ func (a *App) runViaDaemon(p planned, command string, stdout, stderr io.Writer, 
 	if result.AuditWarning {
 		fmt.Fprintln(a.Err, "warning: daemon audit write failed; do not repeat the command")
 	}
-	if result.Error != "" {
-		return 0, exitcode.New(exitcode.Connect, "%s (outcome=%s)", result.Error, result.Outcome)
-	}
-	if result.Outcome != "completed" {
-		return 0, exitcode.New(exitcode.Connect, "reuse result unknown; verify remote state")
-	}
+	*info = result.Connection
+	info.Mode, info.Outcome = "daemon", result.Outcome
 	_, _ = io.WriteString(stdout, result.Stdout)
 	_, _ = io.WriteString(stderr, result.Stderr)
 	if result.Truncated {
@@ -393,6 +399,12 @@ func (a *App) runViaDaemon(p planned, command string, stdout, stderr io.Writer, 
 			w.cut = true
 		}
 		fmt.Fprintln(a.Err, "warning: reuse output truncated to 64 KiB per stream")
+	}
+	if result.Error != "" {
+		return 0, exitcode.New(exitcode.Connect, "%s (outcome=%s)", result.Error, result.Outcome)
+	}
+	if result.Outcome != "completed" {
+		return 0, exitcode.New(exitcode.Connect, "reuse result unknown; verify remote state")
 	}
 	return result.Code, nil
 }

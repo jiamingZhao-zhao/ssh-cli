@@ -116,7 +116,9 @@ func (a *App) hostAdd() *cobra.Command {
 }
 
 func (a *App) hostList() *cobra.Command {
-	return &cobra.Command{
+	var search, ip string
+	var roles, entries []string
+	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List hosts (secrets are never shown)",
 		RunE: func(cmd *cobra.Command, _ []string) error {
@@ -139,6 +141,25 @@ func (a *App) hostList() *cobra.Command {
 				}
 				aliases = filtered
 			}
+			filtered := aliases[:0]
+			for _, alias := range aliases {
+				h := index[alias]
+				if len(a.Hosts) > 0 && !containsText(a.Hosts, alias) || len(a.Groups) > 0 && !containsText(a.Groups, h.Group) || len(a.Tags) > 0 && !overlapText(a.Tags, h.Host.Tags) {
+					continue
+				}
+				if len(roles) > 0 && !overlapText(splitList(roles), h.Host.Roles) || len(entries) > 0 && !overlapText(splitList(entries), h.Host.Entrypoints) {
+					continue
+				}
+				if ip != "" && ip != h.Host.Host && ip != h.Host.LANIP && ip != h.Host.PublicIP {
+					continue
+				}
+				text := strings.Join(append([]string{alias, h.Group, h.EnvName, h.Host.Host, h.Host.LANIP, h.Host.PublicIP}, append(append(append([]string{}, h.Host.Tags...), h.Host.Roles...), h.Host.Entrypoints...)...), " ")
+				if search != "" && !strings.Contains(strings.ToLower(text), strings.ToLower(search)) {
+					continue
+				}
+				filtered = append(filtered, alias)
+			}
+			aliases = filtered
 			type view struct {
 				Alias       string   `json:"alias"`
 				Group       string   `json:"group"`
@@ -183,6 +204,28 @@ func (a *App) hostList() *cobra.Command {
 			return nil
 		},
 	}
+	cmd.Flags().StringVar(&search, "search", "", "case-insensitive search of aliases, addresses, groups, environments, tags, roles and entrypoints")
+	cmd.Flags().StringVar(&ip, "ip", "", "exact primary, LAN or public address annotation (does not change SSH routing)")
+	cmd.Flags().StringArrayVar(&roles, "role", nil, "filter role annotation (OR within roles; AND with other filters)")
+	cmd.Flags().StringArrayVar(&entries, "entrypoint", nil, "filter served entrypoint annotation (OR within entries)")
+	return cmd
+}
+
+func containsText(list []string, value string) bool {
+	for _, s := range list {
+		if s == value {
+			return true
+		}
+	}
+	return false
+}
+func overlapText(a, b []string) bool {
+	for _, s := range a {
+		if containsText(b, s) {
+			return true
+		}
+	}
+	return false
 }
 
 func (a *App) hostRemove() *cobra.Command {

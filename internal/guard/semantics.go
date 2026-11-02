@@ -15,6 +15,11 @@ func semanticDeny(mode config.Mode, args []Arg) string {
 		return ""
 	}
 	name := path.Base(args[0].Value)
+	if mode == config.ModeReadonly {
+		if why := diagnosticDeny(name, args); why != "" {
+			return why
+		}
+	}
 	switch name {
 	case "ip", "hostname", "file", "sort", "find":
 		if mode == config.ModeReadonly {
@@ -22,6 +27,18 @@ func semanticDeny(mode config.Mode, args []Arg) string {
 		}
 	case "journalctl":
 		return journalctlDeny(mode, args)
+	case "tail":
+		if mode == config.ModeReadonly {
+			for _, a := range args[1:] {
+				if !a.Static {
+					return "readonly tail arguments must be static"
+				}
+				v := a.Value
+				if len(v) > 2 && strings.HasPrefix("--follow", strings.SplitN(v, "=", 2)[0]) || strings.HasPrefix(v, "-") && !strings.HasPrefix(v, "--") && strings.ContainsAny(v, "fF") {
+					return "readonly diagnostics refuse tail follow; request a bounded snapshot"
+				}
+			}
+		}
 	case "ss":
 		return ssDeny(mode, args)
 	case "less", "more", "most":
@@ -115,11 +132,15 @@ func journalctlDeny(mode config.Mode, args []Arg) string {
 			continue
 		}
 		name, _, _ := strings.Cut(a.Value, "=")
-		switch name {
-		case "ip", "hostname", "file", "sort", "find":
-			if mode == config.ModeReadonly {
-				return investigationDeny(name, args)
+		for _, blocked := range []string{"--vacuum-size", "--vacuum-time", "--vacuum-files", "--rotate", "--flush", "--sync", "--relinquish-var", "--setup-keys", "--force"} {
+			if len(name) > 2 && strings.HasPrefix(blocked, name) {
+				return "journalctl mutating flag " + name
 			}
+		}
+		if mode == config.ModeReadonly && ((strings.HasPrefix(name, "--") && len(name) > 2 && strings.HasPrefix("--follow", name)) || (strings.HasPrefix(name, "-") && !strings.HasPrefix(name, "--") && strings.Contains(name, "f"))) {
+			return "readonly diagnostics refuse journalctl follow; request a bounded snapshot with -n"
+		}
+		switch name {
 		case "--vacuum-size", "--vacuum-time", "--vacuum-files", "--rotate", "--flush", "--sync", "--relinquish-var", "--setup-keys", "--force":
 			return "journalctl mutating flag " + name
 		}
