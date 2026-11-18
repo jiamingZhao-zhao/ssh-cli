@@ -391,7 +391,7 @@
                               </td>
                               <td class="text-secondary" x-text="fileSize(e)"></td>
                               <td class="text-secondary" x-text="formatTime(e.mtime)"></td>
-                              <td class="text-end"><button type="button" class="btn btn-outline-secondary btn-sm" x-show="!e.dir" @click.stop="wsDownload(e)">下载</button></td>
+                              <td class="text-end text-nowrap"><button type="button" class="btn btn-outline-secondary btn-sm" x-show="canOpenText(e)" :disabled="textOpening" @click.stop="openFileText(e)">打开文本</button> <button type="button" class="btn btn-outline-secondary btn-sm" x-show="!e.dir" @click.stop="wsDownload(e)">下载</button></td>
                             </tr>
                           </template>
                         </tbody>
@@ -1564,6 +1564,22 @@
             <button type="submit" class="btn btn-primary" :disabled="batchBusy || batchUncertain" x-text="batchBusy ? '处理中…' : (batchPreview ? '确认执行' : '预检所选')">预检所选</button>
           </div>
         </form>
+      </div>
+    </div>
+    <div class="modal modal-blur" tabindex="-1" role="dialog" aria-modal="true" x-show="dialog.text" :class="{ show: dialog.text, 'd-block': dialog.text }">
+      <div class="modal-dialog modal-lg modal-dialog-centered" role="document">
+        <template x-if="textEdit">
+          <form class="modal-content" @submit.prevent="saveFileText()">
+            <div class="modal-header"><h5 class="modal-title" x-text="textEdit.name"></h5><button type="button" class="btn-close" aria-label="关闭编辑器" :disabled="textEdit.busy" @click="closeFileText()"></button></div>
+            <div class="modal-body">
+              <p class="small text-secondary text-break mb-2" x-text="textEdit.scope.alias + ' · ' + textEdit.path"></p>
+              <label for="remote-file-text" class="visually-hidden">文件内容</label>
+              <textarea id="remote-file-text" class="form-control remote-text-editor" rows="16" x-model="textEdit.value" :readonly="!textEdit.writable || textEdit.busy" spellcheck="false" autocomplete="off"></textarea>
+              <p class="small mt-2 mb-0" role="status" x-show="textEdit.message" x-text="textEdit.message"></p>
+            </div>
+            <div class="modal-footer"><span class="text-secondary small me-auto">UTF-8 · 最大 5 MiB</span><button type="button" class="btn btn-outline-secondary" :disabled="textEdit.busy" @click="closeFileText()">关闭</button><button type="submit" class="btn btn-primary" x-show="textEdit.writable" :disabled="textEdit.busy || textEdit.uncertain || textEdit.value === textEdit.original">保存</button></div>
+          </form>
+        </template>
       </div>
     </div>
     <div class="modal modal-blur confirm-modal" tabindex="-1" role="dialog" aria-modal="true" aria-labelledby="confirm-title" x-show="dialog.confirm" :class="{ show: dialog.confirm, 'd-block': dialog.confirm }">

@@ -51,6 +51,7 @@ type UploadOptions struct {
 	Protected       []string
 	Check           func(dest string, protected []string) error
 	RejectOverwrite bool
+	FileMode        *os.FileMode
 	// Backup copies an existing regular file to <path>.ssh-cli.bak before
 	// replacement. A name that already exists gets a unix-second suffix.
 	Backup bool
@@ -189,7 +190,11 @@ func UploadWithOptions(client *ssh.Client, local, remote string, log LogFunc, op
 		if meter != nil {
 			tee = meter
 		}
-		if err := uploadFile(sf, item.local, item.remote, item.mode, log, opt.RejectOverwrite, checkPath, prog, tee); err != nil {
+		mode := item.mode
+		if opt.FileMode != nil {
+			mode = *opt.FileMode
+		}
+		if err := uploadFile(sf, item.local, item.remote, mode, log, opt.RejectOverwrite, opt.FileMode != nil, checkPath, prog, tee); err != nil {
 			if prog != nil {
 				prog.report(true)
 			}
@@ -427,17 +432,17 @@ func download(client *ssh.Client, remote, local string, log LogFunc, progress fu
 	return err
 }
 
-func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error, prog *byteProgress, tee io.Writer) error {
+func uploadFile(sf *sftp.Client, local, remote string, mode os.FileMode, log LogFunc, rejectOverwrite, strictMode bool, check func(string) error, prog *byteProgress, tee io.Writer) error {
 	src, err := os.Open(local)
 	if err != nil {
 		return err
 	}
 	defer src.Close()
-	return uploadReader(sf, src, remote, mode, log, rejectOverwrite, check, prog, nil, tee)
+	return uploadReader(sf, src, remote, mode, log, rejectOverwrite, strictMode, check, prog, nil, tee)
 }
 
 // uploadReader commits only after the entire stream and optional verification succeed.
-func uploadReader(sf *sftp.Client, src io.Reader, remote string, mode os.FileMode, log LogFunc, rejectOverwrite bool, check func(string) error, prog *byteProgress, verify func(string) error, tee io.Writer) error {
+func uploadReader(sf *sftp.Client, src io.Reader, remote string, mode os.FileMode, log LogFunc, rejectOverwrite, strictMode bool, check func(string) error, prog *byteProgress, verify func(string) error, tee io.Writer) error {
 	if dir := path.Dir(remote); dir != "" && dir != "." {
 		if err := sf.MkdirAll(dir); err != nil {
 			return fmt.Errorf("mkdir %s: %w", dir, err)
@@ -448,6 +453,16 @@ func uploadReader(sf *sftp.Client, src io.Reader, remote string, mode os.FileMod
 		return err
 	}
 	tmp := path.Join(path.Dir(remote), ".ssh-cli-upload-"+hex.EncodeToString(nonce[:]))
+	if strictMode {
+		if err := sf.Mkdir(tmp); err != nil {
+			return fmt.Errorf("create upload staging directory: %w", err)
+		}
+		defer sf.RemoveDirectory(tmp)
+		if err := sf.Chmod(tmp, 0o700); err != nil {
+			return fmt.Errorf("restrict upload staging directory: %w", err)
+		}
+		tmp = path.Join(tmp, "content")
+	}
 	dst, err := sf.OpenFile(tmp, os.O_WRONLY|os.O_CREATE|os.O_EXCL)
 	if err != nil {
 		return fmt.Errorf("create %s: %w", remote, err)
@@ -476,6 +491,9 @@ func uploadReader(sf *sftp.Client, src io.Reader, remote string, mode os.FileMod
 		}
 	}
 	if err := sf.Chmod(tmp, mode.Perm()); err != nil {
+		if strictMode {
+			return fmt.Errorf("apply upload mode before replacing %s: %w", remote, err)
+		}
 		note(log, fmt.Sprintf("chmod %s: %v", remote, err))
 	}
 	if err := check(remote); err != nil {

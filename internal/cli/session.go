@@ -11,14 +11,16 @@ import (
 )
 
 type commandOutput struct {
-	Truncated  bool           `json:"truncated,omitempty"`
-	Outcome    string         `json:"outcome"`
-	Error      string         `json:"error,omitempty"`
-	Connection connectionInfo `json:"connection"`
-	Command    string         `json:"command"`
-	ExitCode   int            `json:"exitCode"`
-	Stdout     string         `json:"stdout,omitempty"`
-	Stderr     string         `json:"stderr,omitempty"`
+	Truncated             bool           `json:"truncated,omitempty"`
+	Redacted              bool           `json:"redacted,omitempty"`
+	SkippedTimestampLines int            `json:"skippedTimestampLines,omitempty"`
+	Outcome               string         `json:"outcome"`
+	Error                 string         `json:"error,omitempty"`
+	Connection            connectionInfo `json:"connection"`
+	Command               string         `json:"command"`
+	ExitCode              int            `json:"exitCode"`
+	Stdout                string         `json:"stdout,omitempty"`
+	Stderr                string         `json:"stderr,omitempty"`
 }
 
 // runCommands dials once and runs each command. A remote non-zero status is
@@ -59,6 +61,13 @@ func (a *App) runCommands(p planned, commands []string, timeout time.Duration) (
 		}
 		outLimit := &outputLimiter{dst: outDst, maxLine: a.MaxLineBytes, maxTotal: a.MaxOutputBytes}
 		errLimit := &outputLimiter{dst: errDst, maxLine: a.MaxLineBytes, maxTotal: a.MaxOutputBytes}
+		var outWriter, errWriter io.Writer = outLimit, errLimit
+		var outLog, errLog *logOutput
+		if a.logOutput != nil && !p.eff.NoDataOut {
+			outLog = &logOutput{dst: outLimit, opts: *a.logOutput}
+			errLog = &logOutput{dst: errLimit, opts: logOutputOptions{redact: a.logOutput.redact}}
+			outWriter, errWriter = outLog, errLog
+		}
 		info := connection
 		started := time.Now()
 		var code int
@@ -71,14 +80,23 @@ func (a *App) runCommands(p planned, commands []string, timeout time.Duration) (
 			if info.Reused {
 				info.ConnectMS = 0
 			}
-			code, runErr = clientRun(commandCtx, command, outLimit, errLimit)
+			code, runErr = clientRun(commandCtx, command, outWriter, errWriter)
 			info.ExecutionMS = time.Since(started).Milliseconds()
 			info.Outcome = executionOutcome(runErr)
 		}
 		if cancel != nil {
 			cancel()
 		}
+		if outLog != nil {
+			outLog.finish(runErr == nil)
+			errLog.finish(runErr == nil)
+		}
 		row := commandOutput{Command: command, ExitCode: code, Stdout: stdout.String(), Stderr: stderr.String(), Truncated: outLimit.cut || errLimit.cut, Outcome: info.Outcome, Connection: info}
+		if outLog != nil {
+			row.Redacted = outLog.redacted || errLog.redacted
+			row.SkippedTimestampLines = outLog.unstamped
+			row.Truncated = row.Truncated || outLog.cut || errLog.cut || runErr != nil
+		}
 		if runErr != nil {
 			row.Error = runErr.Error()
 			row.ExitCode = exitcode.Connect

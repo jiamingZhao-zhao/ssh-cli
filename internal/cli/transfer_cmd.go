@@ -3,6 +3,8 @@ package cli
 import (
 	"errors"
 	"fmt"
+	"os"
+	"strconv"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +20,7 @@ import (
 func (a *App) uploadCmd() *cobra.Command {
 	var backup bool
 	var confirmOverwrite bool
+	var mode string
 	cmd := &cobra.Command{
 		Use:   "upload <local> <remote>",
 		Short: "Upload a file or directory over SFTP",
@@ -33,11 +36,21 @@ in upload plan order, not directory names or modes. backups lists copy paths
 when --backup wrote any.`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return a.transfer("upload", args[0], args[1], uploadOpts{backup: backup, confirmOverwrite: confirmOverwrite})
+			opts := uploadOpts{backup: backup, confirmOverwrite: confirmOverwrite}
+			if cmd.Flags().Changed("mode") {
+				value, err := strconv.ParseUint(mode, 8, 9)
+				if err != nil || len(mode) != 3 && (len(mode) != 4 || mode[0] != '0') {
+					return exitcode.New(exitcode.Usage, "--mode requires an octal permission such as 600 or 0640")
+				}
+				perm := os.FileMode(value)
+				opts.fileMode = &perm
+			}
+			return a.transfer("upload", args[0], args[1], opts)
 		},
 	}
 	cmd.Flags().BoolVar(&backup, "backup", false, "copy an existing remote file to <path>.ssh-cli.bak before replacing it")
 	cmd.Flags().BoolVar(&confirmOverwrite, "confirm-overwrite", false, "require host-alias confirmation before replacing a remote file")
+	cmd.Flags().StringVar(&mode, "mode", "", "apply octal permission to uploaded regular files before publishing (e.g. 600)")
 	return cmd
 }
 
@@ -55,6 +68,7 @@ func (a *App) downloadCmd() *cobra.Command {
 type uploadOpts struct {
 	backup           bool
 	confirmOverwrite bool
+	fileMode         *os.FileMode
 }
 
 func (a *App) transfer(kind, src, dst string, up uploadOpts) error {
@@ -121,6 +135,7 @@ func (a *App) transfer(kind, src, dst string, up uploadOpts) error {
 			already := p.dec.NeedsConfirm
 			confirmedOverwrite := false
 			err = transfer.UploadWithOptions(client.Raw(), local, remote, log, transfer.UploadOptions{
+				FileMode:  up.fileMode,
 				Protected: p.eff.Protected,
 				Backup:    up.backup,
 				Stats:     &stats,

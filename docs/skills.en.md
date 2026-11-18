@@ -76,7 +76,7 @@ ssh-cli check -H app-a -H app-b --agent-mode --command "ss -tlnp" --command "jps
 ssh-cli logs -H app-a --unit nginx --since 15m --grep error --agent-mode
 ```
 
-`check` reports each command independently. Log filters cover only the selected recent window. Required confirmations remain the user's responsibility in an interactive terminal.
+`check` reports each command independently. On newer builds, `check --tcp` checks one registered IP and port from the selected SSH host, and `logs --agent-mode` masks common authentication headers. Log filters cover only the selected recent window. Required confirmations remain the user's responsibility in an interactive terminal.
 
 Claude Code / Copilot CLI:
 

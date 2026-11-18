@@ -322,7 +322,7 @@ func (p *parsed) call(call *syntax.CallExpr) {
 		}
 		return
 	}
-	if script, isShell, skind, swhy := shellScript(rest); isShell {
+	if script, isShell, skind, swhy := p.shellScript(rest); isShell {
 		switch skind {
 		case unwrapUnresolved:
 			p.noteUnresolved(swhy)
@@ -1222,7 +1222,7 @@ func stripExec(args []Arg) ([]Arg, unwrapKind, string) {
 	return args[i:], unwrapOK, ""
 }
 
-func shellScript(args []Arg) (script string, isShell bool, kind unwrapKind, why string) {
+func (p *parsed) shellScript(args []Arg) (script string, isShell bool, kind unwrapKind, why string) {
 	if len(args) == 0 || !args[0].Static {
 		return "", false, unwrapOK, ""
 	}
@@ -1248,7 +1248,11 @@ func shellScript(args []Arg) (script string, isShell bool, kind unwrapKind, why 
 				return "", true, unwrapScriptFile, ""
 			}
 			return "", true, unwrapDynamic, "shell invocation reads its script from stdin or a dynamic path"
-		case "-e", "-u", "-x", "-v", "-n", "-f", "-l", "--noprofile", "--norc":
+		case "-l", "--login":
+			p.readonlyHazard = "readonly refuses shell login startup scripts"
+			p.noteDynamic("shell login startup scripts are not inspected")
+			continue
+		case "-e", "-u", "-x", "-v", "-n", "-f", "--noprofile", "--norc":
 			continue
 		}
 		v := args[i].Value

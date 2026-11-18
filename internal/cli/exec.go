@@ -5,14 +5,17 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/audit"
+	"github.com/jiamingZhao-zhao/ssh-cli/internal/config"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/exitcode"
 	"github.com/jiamingZhao-zhao/ssh-cli/internal/guard"
 )
@@ -24,6 +27,7 @@ func (a *App) execCmd() *cobra.Command {
 	var allowOutflow bool
 	var parallel int
 	var forwardStdin bool
+	var login bool
 	cmd := &cobra.Command{
 		Use:   "exec [--] <command>",
 		Short: "Run a remote command",
@@ -32,14 +36,14 @@ func (a *App) execCmd() *cobra.Command {
 Transmission depends on how many arguments follow --.
 
   One argument is a remote shell script and is sent unchanged. The remote
-  login shell parses it once, so pipes, redirects and quotes in that string
+  non-interactive shell parses it once, so pipes, redirects and quotes in that string
   are shell syntax:
     ssh-cli exec -H main -- "df -h / | head"
     ssh-cli exec -H main -- "curl -d '{\"k\":\"v\"}' http://127.0.0.1/api"
 
   Two or more arguments are an argv array. ssh-cli POSIX-single-quotes any
   element that the shell would otherwise reinterpret, then joins them. The
-  remote login shell parses that line once and executes the restored argv.
+  remote non-interactive shell parses that line once and executes the restored argv.
   Quotes, spaces and metacharacters inside an argument are data, not syntax,
   and are not parsed a second time:
     ssh-cli exec -H main -- sh -c 'mkdir -p /a /b'
@@ -48,6 +52,15 @@ Transmission depends on how many arguments follow --.
   A plain command whose words are all literal is unchanged:
     ssh-cli exec -H main -- systemctl status nginx
 
+  PowerShell: use single quotes to send a remote variable without local expansion:
+    ssh-cli exec -H main -- 'echo $PATH'
+
+SSH does not request a login shell by default. --login explicitly runs Bash
+as a non-interactive login shell, which can load /etc/profile. It is direct-only,
+denied in readonly, and requires host confirmation in standard mode.
+Non-interactive and agent calls default to a 30s timeout; set --timeout 0
+explicitly to disable the command deadline. A timeout does not prove remote exit.
+
 --forward-stdin copies local stdin to that remote command (for example
 crontab -). It is direct-only: one host, not --daemon, and not combined
 with --script or --stdin. --script and --stdin still send a script body.
@@ -55,7 +68,7 @@ with --script or --stdin. --script and --stdin still send a script body.
 policy show -H <host> lists the gates before you run a command. It does
 not connect. Eligible readonly calls automatically reuse a local connection
 when the output has a total limit of at most 65536 bytes per stream and the
-timeout is explicit and at most 1h. Other calls remain direct. --direct forces
+timeout is positive and at most 1h. Other calls remain direct. --direct forces
 direct SSH; --auto-daemon explicitly requests the historical reuse behavior.
 An automatic startup failure can fall back only before dispatch. No command is
 retried or sent again after dispatch.`,
@@ -118,13 +131,24 @@ retried or sent again after dispatch.`,
 			if err != nil {
 				return exitcode.New(exitcode.Usage, "%s", err.Error())
 			}
-			if a.AgentProfile && dur == 0 {
+			input, fromTerminal := a.In.(*os.File)
+			output, toTerminal := a.Out.(*os.File)
+			interactive := fromTerminal && toTerminal && term.IsTerminal(int(input.Fd())) && term.IsTerminal(int(output.Fd()))
+			if !cmd.Flags().Changed("timeout") && (a.AgentProfile || !interactive || login) {
 				dur = 30 * time.Second
+			}
+			if login && (a.UseDaemon || a.RequestAuto) {
+				return exitcode.New(exitcode.Usage, "--login requires direct SSH; remove --daemon or --auto-daemon")
 			}
 			if parallel < 1 || parallel > guard.MaxParallel {
 				return exitcode.New(exitcode.Usage, "--parallel must be from 1 to %d", guard.MaxParallel)
 			}
-			meta := a.auditMeta(audit.OpExec, command, "", "")
+			auditedCommand := command
+			if login {
+				auditedCommand = "[login shell] " + command
+				remote = shellCommand([]string{"bash", "-lc", remote})
+			}
+			meta := a.auditMeta(audit.OpExec, auditedCommand, "", "")
 			cfg, hosts, err := a.loadSelection()
 			if err != nil {
 				a.auditSelectionError(meta, hosts, err)
@@ -141,7 +165,15 @@ retried or sent again after dispatch.`,
 				stdin = a.In
 			}
 			plan, err := a.plan(cfg, hosts, meta, func(eff guard.Effective) guard.Decision {
-				return guard.Decide(eff, command)
+				dec := guard.Decide(eff, command)
+				if login && eff.Mode == config.ModeReadonly {
+					dec.Allowed = false
+					dec.Findings = append(dec.Findings, guard.Finding{Layer: "mode", Kind: "deny", Detail: "readonly refuses login startup scripts; use an allowed command with an explicit executable path"})
+				} else if login && dec.Allowed && eff.Mode == config.ModeStandard {
+					dec.NeedsConfirm = true
+					dec.Findings = append(dec.Findings, guard.Finding{Layer: "mode", Kind: "confirm", Detail: "login startup scripts require host confirmation"})
+				}
+				return dec
 			})
 			if err != nil {
 				return err
@@ -152,7 +184,8 @@ retried or sent again after dispatch.`,
 			return a.runAll(meta, plan, remote, scriptBody, dur, allowOutflow, parallel, stdin, warnings)
 		},
 	}
-	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (duration or seconds); also bounds SSH connect")
+	cmd.Flags().StringVar(&timeout, "timeout", "", "command timeout (non-interactive default 30s; 0 disables the command deadline)")
+	cmd.Flags().BoolVar(&login, "login", false, "run via a non-interactive Bash login shell (direct SSH, policy applies)")
 	cmd.Flags().StringVar(&script, "script", "", "read the remote script from a file")
 	cmd.Flags().BoolVar(&fromStdin, "stdin", false, "read the remote script from stdin")
 	cmd.Flags().BoolVar(&allowOutflow, "allow-outflow", false, "return stdout and stderr from a noDataOutflow env; requires typing outflow")
@@ -465,12 +498,17 @@ func (a *App) runOneObserved(p planned, remote, scriptBody string, stdout, stder
 	if timeout > 0 {
 		ctx, cancel = context.WithTimeout(ctx, timeout)
 		defer cancel()
+		stop := context.AfterFunc(ctx, func() { _ = client.Close() })
+		defer stop()
 	}
 	if scriptBody != "" {
 		stdin = strings.NewReader(scriptBody)
 	}
 	started = time.Now()
 	code, err := client.Run(ctx, remote, stdout, stderr, stdin)
+	if err != nil && ctx.Err() == context.DeadlineExceeded {
+		err = fmt.Errorf("command timed out; remote command did not report completion: %w", ctx.Err())
+	}
 	info.ExecutionMS, info.Outcome = time.Since(started).Milliseconds(), executionOutcome(err)
 	if err != nil {
 		return 0, sshWrapRun(err)

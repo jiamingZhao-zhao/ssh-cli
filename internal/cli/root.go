@@ -9,7 +9,6 @@ import (
 	"io"
 	"os"
 	"strings"
-	"sync"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -49,7 +48,8 @@ type App struct {
 	RequestAuto      bool
 	AgentProfile     bool
 	Direct           bool
-	daemonAdmission  sync.Mutex
+	logOutput        *logOutputOptions
+	daemonAdmission  chan struct{}
 }
 
 // ttyCheck reports whether an interactive console is available.

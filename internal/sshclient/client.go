@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -118,27 +119,44 @@ func (c *Client) Run(ctx context.Context, command string, stdout, stderr io.Writ
 
 // RunChannel isolates a probe's cancellation from other channels on conn.
 func RunChannel(ctx context.Context, conn *ssh.Client, command string, stdout, stderr io.Writer, stdin io.Reader) (int, error) {
-	sess, err := conn.NewSession()
+	sess, err := openRunSession(ctx, conn)
 	if err != nil {
 		return 0, err
 	}
-	defer sess.Close()
+	if err := ctx.Err(); err != nil {
+		go sess.Close()
+		return 0, err
+	}
+	var writers runWriters
 	if stdout != nil {
-		sess.Stdout = stdout
+		sess.Stdout = runWriter{&writers, stdout}
 	}
 	if stderr != nil {
-		sess.Stderr = stderr
+		sess.Stderr = runWriter{&writers, stderr}
 	}
 	if stdin != nil {
 		sess.Stdin = stdin
 	}
 	errCh := make(chan error, 1)
-	go func() { errCh <- sess.Run(command) }()
+	go func() {
+		if err := ctx.Err(); err != nil {
+			errCh <- err
+			return
+		}
+		errCh <- sess.Run(command)
+	}()
 	select {
 	case <-ctx.Done():
-		_ = sess.Close()
-		return 0, fmt.Errorf("command timed out: %w", ctx.Err())
+		writers.mu.Lock()
+		writers.closed = true
+		writers.mu.Unlock()
+		go sess.Close()
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return 0, fmt.Errorf("command timed out; remote command did not report completion: %w", ctx.Err())
+		}
+		return 0, fmt.Errorf("command canceled; remote command did not report completion: %w", ctx.Err())
 	case err := <-errCh:
+		_ = sess.Close()
 		if err == nil {
 			return 0, nil
 		}
@@ -147,6 +165,52 @@ func RunChannel(ctx context.Context, conn *ssh.Client, command string, stdout, s
 			return ee.ExitStatus(), nil
 		}
 		return 0, err
+	}
+}
+
+type runWriters struct {
+	mu     sync.Mutex
+	closed bool
+}
+
+type runWriter struct {
+	parent *runWriters
+	dst    io.Writer
+}
+
+func (w runWriter) Write(data []byte) (int, error) {
+	w.parent.mu.Lock()
+	defer w.parent.mu.Unlock()
+	if w.parent.closed {
+		return len(data), nil
+	}
+	return w.dst.Write(data)
+}
+
+func openRunSession(ctx context.Context, conn *ssh.Client) (*ssh.Session, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	type result struct {
+		session *ssh.Session
+		err     error
+	}
+	opened := make(chan result)
+	go func() {
+		session, err := conn.NewSession()
+		select {
+		case opened <- result{session, err}:
+		case <-ctx.Done():
+			if session != nil {
+				_ = session.Close()
+			}
+		}
+	}()
+	select {
+	case result := <-opened:
+		return result.session, result.err
+	case <-ctx.Done():
+		return nil, fmt.Errorf("SSH session did not open: %w", ctx.Err())
 	}
 }
 

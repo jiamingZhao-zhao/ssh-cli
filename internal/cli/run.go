@@ -69,11 +69,29 @@ func (a *App) plan(cfg *config.Config, hosts []config.ResolvedHost, meta auditMe
 	}
 	kept, err := guard.Filter(hd, a.SkipDenied)
 	if err != nil {
+		var hints []string
 		for _, p := range all {
 			if !p.dec.Allowed {
-				a.PolicyDenials = append(a.PolicyDenials, guard.HostDecision{Alias: p.host.Alias, Env: p.host.EnvName, Decision: p.dec})
+				denial := guard.HostDecision{Alias: p.host.Alias, Env: p.host.EnvName, Decision: p.dec}
+				if example, known := guard.DiagnosticExample(p.eff, p.dec); known {
+					denial.Example = example
+					if example == "" {
+						denial.Hint = "no built-in alternative passes this host's policy"
+					} else {
+						denial.Hint = "policy-checked form; review the sample path, unit or endpoint before running"
+					}
+					hint := p.host.Alias + ": " + denial.Hint
+					if example != "" {
+						hint += ": " + example
+					}
+					hints = append(hints, hint)
+				}
+				a.PolicyDenials = append(a.PolicyDenials, denial)
 				a.logDenial(meta, p.host, &p.dec, "")
 			}
+		}
+		if len(hints) > 0 {
+			return nil, exitcode.New(exitcode.Denied, "%s; %s", err, strings.Join(hints, "; "))
 		}
 		return nil, exitcode.New(exitcode.Denied, "%s", err.Error())
 	}

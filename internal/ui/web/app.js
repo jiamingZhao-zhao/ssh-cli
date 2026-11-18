@@ -451,7 +451,7 @@ function sshui() {
     pickAll: false,
     tagDraft: {},
     tagBulk: {},
-    dialog: { host: false, group: false, policy: false, env: false, batch: false, detail: false, proc: false, confirm: false },
+    dialog: { host: false, group: false, policy: false, env: false, batch: false, detail: false, proc: false, text: false, confirm: false },
     confirmView: { message: "", value: "", kind: "text", detail: "" },
     bundleYaml: "",
     bundleImport: "",
@@ -520,6 +520,8 @@ function sshui() {
     execSnapshot: null,
     fileBusy: false,
     fileAction: null,
+    textEdit: null,
+    textOpening: false,
     auditWarning: "",
     readAbort: {},
     files: { alias: "", mode: "files", path: "", parent: "", home: "", crumbs: [], entries: [], truncated: false },
@@ -2796,8 +2798,7 @@ function sshui() {
         this.refreshFiles();
         return;
       }
-      if (entry.dir) this.listFiles(entry.path);
-      else this.wsDownload(entry);
+      this.openEntry(entry);
     },
 
     dirEntries() {
@@ -2814,7 +2815,83 @@ function sshui() {
     openEntry(entry) {
       if (!entry) return;
       if (entry.dir) this.listFiles(entry.path);
+      else if (this.canOpenText(entry)) this.openFileText(entry);
       else this.wsDownload(entry);
+    },
+
+    canOpenText(entry) {
+      if (!entry || entry.dir || entry.link || entry.size > 5 * 1024 * 1024) return false;
+      return !String(entry.name).includes(".") || /(?:^\.(?:env|profile|bashrc|gitignore)$|\.(?:txt|log|conf|cfg|ini|env|properties|json|jsonl|yaml|yml|toml|xml|html|css|js|ts|sh|bash|zsh|py|rb|pl|ps1|bat|cmd|md|csv|sql|service|socket|timer)$)/i.test(entry.name);
+    },
+
+    async openFileText(entry) {
+      const scope = this.fileScope();
+      if (this.textOpening || this.textEdit || !this.fileScopeCurrent(scope) || !this.canOpenText(entry)) return;
+      const guard = () => {
+        if (!this.fileScopeCurrent(scope)) {
+          const error = new Error("主机、连接或目录已变化，请重新打开文件。");
+          error.outcome = "not_started";
+          throw error;
+        }
+      };
+      this.textOpening = true;
+      try {
+        const data = await this.postJSON("/api/files/text", { alias: scope.alias, path: entry.path }, guard);
+        guard();
+        const original = data.snapshot.content;
+        const value = original.replace(/\r\n?/g, "\n");
+        const rest = original.replace(/\r\n/g, "");
+        const mixed = rest.includes("\r") || (rest.includes("\n") && original.includes("\r\n"));
+        this.textEdit = { scope, path: entry.path, name: entry.name, fingerprint: data.fingerprint,
+          version: data.snapshot.version, crlf: original.includes("\r\n"), value, original: value,
+          writable: !!data.writable && !mixed, busy: false, uncertain: false,
+          message: mixed ? "文件有混合换行格式，当前只读。" : (data.writable ? "" : "当前策略或远端 SFTP 只允许查看这个文件。") };
+        this.openDialog("text");
+      } catch (error) {
+        this.toast(error.message || "无法打开文本文件", "bad");
+      } finally { this.textOpening = false; }
+    },
+
+    async saveFileText() {
+      const editor = this.textEdit;
+      if (!editor || editor.busy || editor.uncertain || !editor.writable || editor.value === editor.original) return;
+      const guard = () => {
+        if (this.textEdit !== editor || !this.fileScopeCurrent(editor.scope)) {
+          const error = new Error("主机、连接或目录已变化，未保存。请保留编辑内容并重新打开。");
+          error.outcome = "not_started";
+          throw error;
+        }
+      };
+      const content = editor.crlf ? editor.value.replace(/\n/g, "\r\n") : editor.value;
+      if (new TextEncoder().encode(content).length > 5 * 1024 * 1024) {
+        editor.message = "内容超过 5 MiB，未保存。";
+        return;
+      }
+      editor.busy = true;
+      editor.message = "正在保存到 " + editor.scope.alias + " …";
+      try {
+        guard();
+        const result = await this.postJSON("/api/files/text/save", { alias: editor.scope.alias,
+          path: editor.path, fingerprint: editor.fingerprint, version: editor.version, content }, guard);
+        if (result.outcome !== "completed") throw new Error("未收到完整的保存结果");
+        this.toast("已保存 · " + editor.name, "good");
+        this.dialog.text = false;
+        this.textEdit = null;
+        this.restoreDialogFocus();
+        if (this.fileScopeCurrent(editor.scope)) this.refreshFiles();
+      } catch (error) {
+        editor.uncertain = error.outcome !== "not_started";
+        editor.message = (error.message || "保存失败") + (editor.uncertain ? "；请先核对远端文件，再决定是否重试。" : "；编辑内容已保留。");
+      } finally { editor.busy = false; }
+    },
+
+    async closeFileText() {
+      const editor = this.textEdit;
+      if (!editor || editor.busy) return;
+      if (editor.writable && editor.value !== editor.original && !await this.askConfirm("关闭编辑器？本地编辑内容将被丢弃。")) return;
+      this.textEdit = null;
+      this.dialog.text = false;
+      this.restoreDialogFocus();
     },
 
     pickUpload() {
@@ -4379,6 +4456,7 @@ function sshui() {
     closeDialogs() {
       if (this.hostPickerOpen) { this.closeHostPicker(); return; }
       if (this.dialog.confirm) { this.answerPrompt(false); return; }
+      if (this.dialog.text) { this.closeFileText(); return; }
       Object.keys(this.dialog).forEach((key) => { this.dialog[key] = false; });
       this.restoreDialogFocus();
     },
