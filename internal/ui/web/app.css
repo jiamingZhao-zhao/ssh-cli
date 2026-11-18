@@ -1890,3 +1890,10 @@ html, body { overflow-x: clip; }
 .policy-diff summary { cursor: pointer; min-height: 2.75rem; align-content: center; }
 .policy-diff p { margin-block: .5rem; }
 .policy-diff-row { border-top: 1px solid var(--tblr-border-color); padding-block: .5rem; overflow-wrap: anywhere; }
+.remote-text-editor {
+  font-family: var(--tblr-font-monospace, monospace);
+  min-height: 12rem;
+  max-height: 55vh;
+  resize: vertical;
+  tab-size: 4;
+}

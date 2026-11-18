@@ -3,6 +3,7 @@ package guard
 import (
 	"net"
 	"net/url"
+	"path"
 	"regexp"
 	"strconv"
 	"strings"
@@ -36,7 +37,7 @@ func diagnosticDeny(name string, args []Arg) string {
 	ok := false
 	switch name {
 	case "curl":
-		ok = loopbackHEAD(v)
+		return loopbackHEADReason(v)
 	case "wget":
 		ok = loopbackWgetHEAD(v)
 	case "jps":
@@ -49,7 +50,10 @@ func diagnosticDeny(name string, args []Arg) string {
 	case "java":
 		ok = len(v) == 2 && (v[1] == "-version" || v[1] == "--version")
 	case "sed":
-		ok = sedQuery(v)
+		if !sedQuery(v) {
+			return "readonly sed accepts -n followed by one line range or /regex/p; -i, -e, -f and write/execute scripts are not supported"
+		}
+		return ""
 	case "awk":
 		ok = awkQuery(v)
 	case "docker":
@@ -78,9 +82,44 @@ func diagnosticDeny(name string, args []Arg) string {
 		}
 	}
 	if !ok {
-		return name + " options are outside the supported readonly query form; see diagnostics help"
+		return name + " options are outside the supported readonly query form"
 	}
 	return ""
+}
+
+func DiagnosticExample(eff Effective, decision Decision) (string, bool) {
+	known := false
+	for _, finding := range decision.Findings {
+		words := strings.Fields(finding.Command)
+		if len(words) == 0 {
+			continue
+		}
+		var example string
+		switch path.Base(strings.Trim(words[0], "\"'")) {
+		case "curl":
+			example = `curl -q --noproxy '*' -sI --max-time 5 http://127.0.0.1/`
+		case "sed":
+			example = `sed -n '1,20p' /path/to/file`
+		case "awk":
+			example = `awk '{print $1}' /path/to/file`
+		case "jps":
+			example = "jps -l"
+		case "journalctl":
+			example = "journalctl --no-pager -n 100 -u example.service"
+		case "docker":
+			if len(words) > 1 && words[1] == "logs" {
+				example = "docker logs --tail 100 example-container"
+			}
+		}
+		if example == "" {
+			continue
+		}
+		known = true
+		if check := DecideQuery(eff, example); check.Allowed && !check.NeedsConfirm {
+			return example, true
+		}
+	}
+	return "", known
 }
 
 func fileQuery(args []string, short string, long map[string]bool, operands int) bool {
@@ -134,9 +173,9 @@ func awkQuery(v []string) bool {
 	return true
 }
 
-func loopbackHEAD(v []string) bool {
-	if len(v) < 3 || (v[1] != "-q" && v[1] != "--disable") {
-		return false // Disable ~/.curlrc before any other option.
+func loopbackHEADReason(v []string) string {
+	if len(v) < 2 || (v[1] != "-q" && v[1] != "--disable") {
+		return "readonly curl requires -q or --disable as the first argument to ignore ~/.curlrc"
 	}
 	head, proxy, bounded := false, false, false
 	urls := 0
@@ -151,17 +190,17 @@ func loopbackHEAD(v []string) bool {
 		case "--noproxy":
 			i++
 			if i >= len(v) || v[i] != "*" {
-				return false
+				return "readonly curl requires --noproxy '*'"
 			}
 			proxy = true
 		case "-m", "--max-time", "--connect-timeout":
 			i++
 			if i >= len(v) {
-				return false
+				return "readonly curl timeout option is missing a value: " + s
 			}
 			n, e := strconv.ParseFloat(v[i], 64)
 			if e != nil || !(n > 0 && n <= 30) {
-				return false
+				return "readonly curl timeout must be greater than 0 and at most 30 seconds: " + s
 			}
 			if s != "--connect-timeout" {
 				bounded = true
@@ -169,30 +208,30 @@ func loopbackHEAD(v []string) bool {
 		case "-o", "--output":
 			i++
 			if i >= len(v) || v[i] != "/dev/null" {
-				return false
+				return "readonly curl may only write output to /dev/null"
 			}
 		default:
 			if strings.HasPrefix(s, "-") {
-				return false
+				return "unsupported readonly curl option: " + strings.SplitN(s, "=", 2)[0]
 			}
 			u, e := url.Parse(s)
 			if e != nil || (u.Scheme != "http" && u.Scheme != "https") || u.User != nil || u.Fragment != "" || u.RawQuery != "" {
-				return false
+				return "readonly curl requires a plain HTTP(S) URL without credentials, queries or fragments"
 			}
 			h := u.Hostname()
 			// A hosts file or DNS can map localhost elsewhere. Literal addresses
 			// keep the actual destination inside the requested network boundary.
 			if h != "127.0.0.1" && h != "::1" {
-				return false
+				return "readonly curl requires the literal address 127.0.0.1 or ::1"
 			}
 			// curl URL glob expansion can issue many requests despite one URL.
 			if strings.ContainsAny(u.EscapedPath(), "{}[]") {
-				return false
+				return "readonly curl disallows URL globbing"
 			}
 			if port := u.Port(); port != "" {
 				n, e := strconv.Atoi(port)
 				if e != nil || n < 1 || n > 65535 {
-					return false
+					return "readonly curl requires a valid port"
 				}
 			}
 			urls++
@@ -200,7 +239,10 @@ func loopbackHEAD(v []string) bool {
 	}
 	// HEAD still invokes an application endpoint: this is bounded probing,
 	// not a promise that a poorly designed HTTP application has no side effects.
-	return head && proxy && bounded && urls == 1
+	if !head || !proxy || !bounded || urls != 1 {
+		return "readonly curl requires HEAD (-I), --noproxy '*', --max-time and exactly one loopback URL"
+	}
+	return ""
 }
 
 // Wget reads startup files and may persist HSTS metadata by default. Permit

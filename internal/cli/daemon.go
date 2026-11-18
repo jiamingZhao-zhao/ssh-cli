@@ -155,6 +155,8 @@ func (a *App) serveDaemonWithIdle(ctx context.Context, idleExit time.Duration) e
 	defer stopLoop()
 	go pool.Loop(loopCtx)
 	slots := make(chan struct{}, 4)
+	waiters := make(chan struct{}, 8)
+	a.daemonAdmission = make(chan struct{}, 1)
 	var activityMu sync.Mutex
 	lastActivity := time.Now()
 	active := 0
@@ -234,19 +236,26 @@ func (a *App) serveDaemonWithIdle(ctx context.Context, idleExit time.Duration) e
 		active++
 		activityMu.Unlock()
 		defer func() { activityMu.Lock(); active--; lastActivity = time.Now(); activityMu.Unlock() }()
-		select {
-		case slots <- struct{}{}:
-			defer func() { <-slots }()
-		default:
-			_ = json.NewEncoder(w).Encode(daemonReply{Error: "reuse service busy; command not started", Outcome: "not_started"})
-			return
-		}
 		var in daemonRequest
 		if json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&in) != nil || in.Alias == "" || strings.TrimSpace(in.Command) == "" {
 			http.Error(w, "invalid request", 400)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(a.daemonExec(r.Context(), pool, in))
+		if in.Timeout < 0 || in.Timeout > time.Hour {
+			_ = json.NewEncoder(w).Encode(daemonReply{Error: "reuse timeout must be 0..1h", Outcome: "not_started"})
+			return
+		}
+		if in.Timeout == 0 {
+			in.Timeout = time.Minute
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), in.Timeout)
+		defer cancel()
+		if err := takeDaemonSlot(ctx, slots, waiters, in.Readonly); err != nil {
+			_ = json.NewEncoder(w).Encode(daemonReply{Error: err.Error(), Outcome: "not_started"})
+			return
+		}
+		defer func() { <-slots }()
+		_ = json.NewEncoder(w).Encode(a.daemonExec(ctx, pool, in))
 	})
 	server := &http.Server{Handler: handler, ReadHeaderTimeout: 5 * time.Second, ReadTimeout: 10 * time.Second, IdleTimeout: 30 * time.Second}
 	done := make(chan error, 1)
@@ -273,6 +282,38 @@ func (a *App) serveDaemonWithIdle(ctx context.Context, idleExit time.Duration) e
 		}
 		return err
 	}
+}
+
+func takeDaemonSlot(ctx context.Context, slots, waiters chan struct{}, readonly bool) error {
+	if err := ctx.Err(); err != nil {
+		return fmt.Errorf("reuse queue expired; command not started: %w", err)
+	}
+	select {
+	case slots <- struct{}{}:
+		return nil
+	default:
+	}
+	busy := errors.New("reuse service busy; command not started")
+	if !readonly {
+		return busy
+	}
+	select {
+	case waiters <- struct{}{}:
+		defer func() { <-waiters }()
+	default:
+		return busy
+	}
+	queue, cancel := context.WithTimeout(ctx, 2*time.Second)
+	defer cancel()
+	select {
+	case slots <- struct{}{}:
+		if queue.Err() == nil {
+			return nil
+		}
+		<-slots
+	case <-queue.Done():
+	}
+	return fmt.Errorf("reuse queue timed out; command not started: %w", queue.Err())
 }
 
 func (a *App) daemonExec(parent context.Context, pool *session.Pool, in daemonRequest) daemonReply {
@@ -310,28 +351,46 @@ func (a *App) daemonExec(parent context.Context, pool *session.Pool, in daemonRe
 	}
 	ctx, cancel := context.WithTimeout(parent, in.Timeout)
 	defer cancel()
+	if err := ctx.Err(); err != nil {
+		return fail(err)
+	}
 	fp := cfg.SessionFingerprint(h)
 	connectStart := time.Now()
-	a.daemonAdmission.Lock()
+	unlock := func() {}
+	if admission := a.daemonAdmission; admission != nil {
+		select {
+		case admission <- struct{}{}:
+			unlock = func() { <-admission }
+		case <-ctx.Done():
+			return fail(fmt.Errorf("reuse connection admission expired; command not started: %w", ctx.Err()))
+		}
+	}
+	if err := ctx.Err(); err != nil {
+		unlock()
+		return fail(err)
+	}
 	want := map[string]string{}
 	for alias, h := range cfg.Index() {
 		want[alias] = cfg.SessionFingerprint(h)
 	}
 	pool.Retain(want)
 	_, reused := pool.Client(h.Alias, fp)
-	if _, exists := pool.Client(h.Alias, fp); !exists && len(pool.List()) >= 16 {
-		a.daemonAdmission.Unlock()
+	if !reused && len(pool.List()) >= 16 {
+		unlock()
 		return fail(fmt.Errorf("reuse host limit reached (16)"))
 	}
 	if err := pool.OpenConn(ctx, h.Alias, fp); err != nil {
-		a.daemonAdmission.Unlock()
+		unlock()
 		return fail(err)
 	}
-	a.daemonAdmission.Unlock()
+	unlock()
 	start := time.Now()
 	out, stderr := &daemonCapture{}, &daemonCapture{}
-	res := daemonReply{Outcome: "completed", Connection: connectionInfo{Mode: "daemon", Connected: true, Reused: reused, ConnectMS: time.Since(connectStart).Milliseconds()}}
+	res := daemonReply{Outcome: "not_started", Connection: connectionInfo{Mode: "daemon", Connected: true, Reused: reused, ConnectMS: time.Since(connectStart).Milliseconds()}}
 	err = pool.Use(h.Alias, fp, func() error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
 		raw, ok := pool.Client(h.Alias, fp)
 		if !ok {
 			return fmt.Errorf("session closed")
@@ -341,11 +400,15 @@ func (a *App) daemonExec(parent context.Context, pool *session.Pool, in daemonRe
 			stdout, errout = io.Discard, io.Discard
 		}
 		var err error
+		res.Outcome = "unknown"
 		res.Code, err = sshclient.RunChannel(ctx, raw, in.Command, stdout, errout, nil)
+		if err == nil {
+			res.Outcome = "completed"
+		}
 		return err
 	})
 	if err != nil {
-		res.Error, res.Outcome = err.Error(), "unknown"
+		res.Error = err.Error()
 	}
 	res.Connection.ExecutionMS, res.Connection.Outcome = time.Since(start).Milliseconds(), res.Outcome
 	res.Stdout, res.Stderr, res.Truncated = out.String(), stderr.String(), out.cut || stderr.cut
@@ -386,13 +449,18 @@ func (a *App) runViaDaemonObserved(p planned, command string, stdout, stderr io.
 	if err != nil {
 		return 0, exitcode.New(exitcode.Connect, "reuse daemon unavailable; start ssh-cli daemon serve: %s", err.Error())
 	}
-	body, err := json.Marshal(daemonRequest{Alias: p.host.Alias, Command: command, Timeout: timeout, Readonly: a.AutoDaemon})
+	body, err := json.Marshal(daemonRequest{Alias: p.host.Alias, Command: command, Timeout: timeout, Readonly: a.AutoDaemon || p.eff.Mode == config.ModeReadonly && p.dec.Allowed && !p.dec.NeedsConfirm})
 	if err != nil {
 		return 0, err
 	}
 	ctx := context.Background()
 	if a.OperationContext != nil {
 		ctx = a.OperationContext
+	}
+	if timeout > 0 {
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, timeout+5*time.Second)
+		defer cancel()
 	}
 	transport := &http.Transport{DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
 		return (&net.Dialer{Timeout: 5 * time.Second}).DialContext(ctx, "unix", sock)

@@ -18,6 +18,8 @@ type HostDecision struct {
 	Alias    string   `json:"host"`
 	Env      string   `json:"env"`
 	Decision Decision `json:"decision"`
+	Example  string   `json:"allowedExample,omitempty"`
+	Hint     string   `json:"hint,omitempty"`
 }
 
 // CrossEnv reports whether the selection spans more than one environment.

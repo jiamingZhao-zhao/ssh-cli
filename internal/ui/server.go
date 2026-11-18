@@ -71,6 +71,8 @@ func (s *service) routes() *http.ServeMux {
 	mux.HandleFunc("POST /api/history", s.historyAPI)
 	mux.HandleFunc("POST /api/files/list", s.listAPI)
 	mux.HandleFunc("POST /api/files/change", s.fileChangeAPI)
+	mux.HandleFunc("POST /api/files/text", s.fileTextAPI)
+	mux.HandleFunc("POST /api/files/text/save", s.fileTextAPI)
 	mux.HandleFunc("POST /api/metrics", s.metricsAPI)
 	mux.HandleFunc("POST /api/metrics/proc", s.procDetailAPI)
 	mux.HandleFunc("POST /api/upload", s.uploadAPI)
@@ -186,6 +188,7 @@ type service struct {
 	pool            *session.Pool
 	opMu            sync.Mutex
 	operations      map[string]*operation
+	textSaves       map[string]bool
 	// A pool close has no HTTP response; retain its audit failure for the UI.
 	auditCloseFailed bool
 	activeTransfers  int
@@ -209,7 +212,7 @@ func (s *service) guard(next http.Handler) http.Handler {
 			return
 		}
 		switch r.URL.Path {
-		case "/api/exec", "/api/exec/batch", "/api/upload", "/api/download", "/api/relay", "/api/files/change", "/api/terminal/open":
+		case "/api/exec", "/api/exec/batch", "/api/upload", "/api/download", "/api/relay", "/api/files/change", "/api/files/text", "/api/files/text/save", "/api/terminal/open":
 			if r.Method == http.MethodPost {
 				if err := audit.Preflight(s.dir, audit.SourceUI, r.URL.Path); err != nil {
 					writeJSON(w, http.StatusServiceUnavailable, map[string]any{"ok": false, "error": "审计不可写，已阻止操作：" + err.Error(), "outcome": "not_started", "retrySafe": true})

@@ -76,7 +76,7 @@ ssh-cli check -H app-a -H app-b --agent-mode --command "ss -tlnp" --command "jps
 ssh-cli logs -H app-a --unit nginx --since 15m --grep error --agent-mode
 ```
 
-`check` 会分别返回每项检查的状态；日志关键字只在选出的最近日志窗口内查找。确认提示仍由用户在交互终端完成，Agent 不代替确认。
+`check` 会分别返回每项检查的状态。支持新参数的版本可以用 `check --tcp` 从指定 SSH 主机测试一个已登记的地址和端口。`logs --agent-mode` 会自动遮盖常见认证头；时间和关键字只在选出的最近日志窗口内查找。确认提示仍由用户在交互终端完成，Agent 不代替确认。
 
 Claude Code / Copilot CLI：
 

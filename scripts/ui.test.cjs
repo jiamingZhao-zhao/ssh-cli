@@ -36,6 +36,38 @@ function fixture() {
   return { app, timers, sandbox };
 }
 
+test('text editor preserves CRLF and pins saves to the opened host and version', async () => {
+  const { app } = fixture();
+  const scope = { alias: 'box', dir: '/etc', seq: 1 };
+  let current = true, posted;
+  app.fileScope = () => scope;
+  app.fileScopeCurrent = () => current;
+  app.openDialog = (key) => { app.dialog[key] = true; };
+  app.restoreDialogFocus = app.refreshFiles = app.toast = () => {};
+  app.postJSON = async (path, payload, guard) => {
+    guard();
+    if (path === '/api/files/text') return { snapshot: { content: 'first\r\n', version: 'revision' }, fingerprint: 'connection', writable: true };
+    posted = { path, payload };
+    return { outcome: 'completed' };
+  };
+  await app.openFileText({ name: 'app.conf', path: '/etc/app.conf', size: 7 });
+  assert.equal(app.textEdit.value, 'first\n');
+  assert.equal(app.dialog.text, true);
+  app.textEdit.value = 'changed\n';
+  current = false;
+  await app.saveFileText();
+  assert.equal(posted, undefined);
+  assert.match(app.textEdit.message, /未保存/);
+  current = true;
+  await app.saveFileText();
+  assert.equal(posted.path, '/api/files/text/save');
+  assert.equal(posted.payload.alias, 'box');
+  assert.equal(posted.payload.fingerprint, 'connection');
+  assert.equal(posted.payload.version, 'revision');
+  assert.equal(posted.payload.content, 'changed\r\n');
+  assert.equal(app.textEdit, null);
+});
+
 function hostFilterFixture() {
   const f = fixture();
   f.app.catalog = {

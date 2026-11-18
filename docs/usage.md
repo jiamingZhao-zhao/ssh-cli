@@ -327,7 +327,20 @@ ssh-cli logs -H app-a /var/log/app.log.gz --lines 100 --agent-mode
 
 `status` 在 `facts` 提供成功解析的健康数据，同时保留各探针原始输出、`complete`、`notes` 和每台主机的错误。未读取或截断的数据不能当成零或健康状态。最多 16 台主机、并发上限 4；总时限包含排队、连接和检查。`check` 中每条命令使用独立 shell，并逐条经过当前策略和只读规则；一个主机上有拒绝项时默认整批不发送。执行中断时，后续检查标记为 `not_started`。
 
-`logs` 支持文件、`.gz`、systemd 单元或容器日志；先选最近行数，再按 `--grep` 的字面关键字过滤，所以没匹配并不代表更早日志没有结果。`--since` 只适用于单元和容器日志，普通文件的时间格式不作猜测。日志可能含敏感信息，请按需读取。IP、角色和入口均为人工维护的备注，不会改变 SSH 连接路由，操作前应确认映射是否准确。
+`logs` 支持文件、`.gz`、systemd 单元或容器。`--grep` 按字面值、`--regex` 按正则匹配；可用 `--since` 和 `--until` 缩小时间窗。文件日志从最近 `--lines` 行中识别开头的 RFC3339 或 `YYYY-MM-DD HH:MM:SS` 时间，后续堆栈行沿用该时间。无时区的时间默认按 UTC，国内业务日志可显式传 `--file-offset +08:00`。没有匹配不代表整份文件没有结果。
+
+```sh
+ssh-cli logs -H app-a /var/log/app.log --lines 2000 --since 10m --until 5m --file-offset +08:00 --regex 'ERROR|timeout' --agent-mode
+ssh-cli check -H app-a --tcp 192.0.2.10:3306 --agent-mode
+ssh-cli upload -H demo --mode 600 config.env /opt/app/config.env
+```
+
+- `logs --agent-mode` 或 `--redact` 在截断和写审计之前遮盖常见认证头，包括 `Authorization`、`blade-auth` 和 `Cookie`。它们与本地过滤使用直连，避免旧复用进程保存原始输出。脱敏不保证覆盖所有自定义字段或编码。
+- `check --tcp` 只检查一个端口，从 `-H` 指定的 SSH 目标机发起，不发送应用数据。目标 IP 必须为回环或同环境清单地址；跨环境仍需显式允许。沿用限定 `nc` 查询的策略，无需安装 `nc`。SSH 服务端可能拒绝该连接通道；结果会区分允许建立、端口拒绝、超时、通道被禁和无法确认的失败。
+- `exec` 默认不请求登录 shell。PowerShell 中用 `ssh-cli exec -H demo -- 'echo $PATH'` 让远端解析变量。`--login` 显式启用 Bash 登录配置；只读拒绝、标准模式需确认，直连执行。非交互执行默认 30 秒，显式 `--timeout 0` 可关闭命令时限。超时表示未收到远端结束状态，先核验再决定是否重试。
+- 复用繁忙时，无需确认的只读请求可在剩余预算内等待最多 2 秒。未派发的请求明确返回 `not_started`，已派发的请求不会重放。策略拒绝时，`denials[].allowedExample` 只在示例通过该主机策略时提供。
+- `upload --mode` 在私有暂存区写入内容和权限，再提交普通文件。设置失败时保留目标原文件；目录权限不由该参数修改。
+- 工作台文件区可打开常见文本和脚本，支持 UTF-8、最多 5 MiB。保存遵循文件能力和受保护路径检查；如果文件改过，先重新打开核对。保存要求远端 SFTP 支持原子替换，并保留权限和所有者；带特殊 ACL、扩展属性或硬链接的文件宜用原有运维流程。
 
 新增的只读查询仍按具体参数检查。`curl` 只允许关闭配置文件及代理、限制时间的 `127.0.0.1` 或 `::1` HEAD 请求，不接受需解析的 `localhost`；HEAD 仍可能触发应用自身行为。GNU `wget` 也可按下面的完整受限形式发起 HEAD；该形式禁用配置文件、代理、netrc、cookie、HSTS 文件、重定向和重试，输出写到 `/dev/null`。旧版 Wget 或 BusyBox 若不支持这些参数会报错。HTTPS 仍会校验证书；禁用 HSTS 意味着不自动将 HTTP 升级为 HTTPS，因此有 HTTPS 时应直接使用 HTTPS 地址。
 
